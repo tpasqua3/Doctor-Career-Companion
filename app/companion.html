@@ -182,6 +182,33 @@ const TRACKS=[
   {id:'flow',name:'Workflow and Practice Management',w:2,src:'AMA STEPS Forward, AAFP, MGMA, IHI',topics:['Pre-visit planning and agenda setting','Team-based care and standing orders','Panel management','Scheduling templates and access','Prior authorization','Time management and burnout prevention']}]}];
 const SEC={},TOP={};
 TRACKS.forEach(tr=>tr.sections.forEach(s=>{s.track=tr;SEC[s.id]=s;s.t=s.topics.map(n=>{const inp=n.endsWith('~');const name=inp?n.slice(0,-1):n;const t={id:s.id+'.'+slug(name),name,inp,sec:s};TOP[t.id]=t;return t})}));
+/* ---------- The board blueprint ----------
+   The ABIM publishes what its internal medicine examination covers: content categories with a share of the exam each, and under them
+   topics rated high, medium or low relevance for four tasks. The physician keeps that document in Google Drive; the page reads it once,
+   keeps the parsed outline in the record, and builds a Boards track from it so lessons, questions and cards follow the exam itself. */
+function parseBlueprint(text){const u=s=>s.replace(/\\+/g,'').trim(),cats=[],by={};let cur=null,sub='',started=false;
+  text.split('\n').forEach(raw=>{const l=u(raw);let m;
+    if(!started&&(m=/^\|\s*([A-Z][A-Za-z ,&\/\-]+?)\s*\|\s*(\d+(?:\.\d+)?)%\s*\|/.exec(l))){const c={name:m[1].trim(),pct:Number(m[2]),topics:[]};if(!by[c.name.toUpperCase()]){by[c.name.toUpperCase()]=c;cats.push(c)}return}
+    if((m=/\*\*([A-Z][A-Z ,&\/\-]+?)\*\*/.exec(l))&&by[m[1].trim()]){cur=by[m[1].trim()];started=true;if(!/% of exam/.test(l.replace(m[0],''))||/^\|/.test(l))return}
+    if((m=/^\*\*([A-Z][^*]+?)\*\*\s*\*[^(]*\(\s*<?\s*\d+(?:\.\d+)?\s*% of exam\)/.exec(l))&&!by[m[1].trim()]){sub=m[1].trim();return}
+    if(cur&&(m=/^\|\s*(.+?)\s*\|\s*\*\*(HIGH|MEDIUM|LOW)\*\*\s*\|\s*\*\*(HIGH|MEDIUM|LOW)\*\*\s*\|\s*\*\*(HIGH|MEDIUM|LOW)\*\*\s*\|\s*\*\*(HIGH|MEDIUM|LOW)\*\*/.exec(l))){
+      const lf=/\*\*LF\*\*/.test(m[1])||/L[dn]?F(?=[a-z])/.test(m[1]),name=m[1].replace(/\*\*LF\*\*/g,'').replace(/L([dn])F(?=[a-z])/,'$1').replace(/\*/g,'').replace(/\s+/g,' ').trim();
+      if(!cur.topics.some(t=>t.n===name))cur.topics.push({n:name,lf:lf?1:0,sub:sub.charAt(0)+sub.slice(1).toLowerCase(),r:m.slice(2,6).map(x=>x[0]).join('')})}});
+  return cats.filter(c=>c.topics.length)}
+const BPLIB=[[/cardio/i,['Cardiology'],'ACC/AHA, ESC'],[/dermat/i,['Dermatology'],'AAD'],[/endocr/i,['Endocrinology'],'ADA Standards of Care, Endocrine Society, AACE, ATA'],[/gastro/i,['Gastroenterology','Hepatology'],'ACG, AGA, AASLD'],[/hemat/i,['Hematology'],'ASH'],[/infect/i,['Infectious Disease'],'IDSA, CDC'],[/nephro/i,['Nephrology'],'KDIGO, AUA'],[/neuro/i,['Neurology'],'AAN, AHA/ASA'],[/oncol/i,['Oncology'],'NCCN, ASCO, USPSTF'],[/pulmon/i,['Pulmonology','Critical Care'],'GOLD, GINA, ATS, CHEST, SCCM'],[/rheum/i,['Rheumatology'],'ACR, EULAR, AAOS'],[/./,['Interdisciplinary','Foundations','Common Symptoms'],'USPSTF, ACP, AAFP, AGS, APA, ACOG, AAAAI, AAO']];
+const TASKS=['Diagnosis and testing','Treatment and care decisions','Risk assessment, prognosis and epidemiology','Pathophysiology and basic science'],RL={H:'high',M:'medium',L:'low'};
+const rel=t=>t.bp.r.includes('H')?'H':t.bp.r.includes('M')?'M':'L';
+/* How much a board topic counts: its tasks' relevance (diagnosis and treatment count double), the category's share of the exam, less if marked low frequency. */
+const bw=t=>{const v=[...t.bp.r].map(c=>({H:1,M:.45,L:0}[c]));return ((2*v[0]+2*v[1]+v[2]+v[3])/6)*(t.bp.lf?.7:1)};
+function applyBlueprint(){const i=TRACKS.findIndex(t=>t.id==='abim');if(i>=0){TRACKS[i].sections.forEach(x=>{x.t.forEach(t=>delete TOP[t.id]);delete SEC[x.id]});TRACKS.splice(i,1)}
+  const b=docs.blueprint;if(!b||!Array.isArray(b.cats)||!b.cats.length)return;
+  const tr={id:'abim',name:'ABIM Boards',blurb:'The exam blueprint, weighted by relevance',sections:[]};
+  b.cats.forEach(c=>{const m=BPLIB.find(x=>x[0].test(c.name)),sec={id:'b-'+slug(c.name).slice(0,24),name:c.name,w:1,pct:c.pct,lib:m[1],src:m[2],track:tr,topics:[]};
+    sec.t=c.topics.map((x,n)=>{let id=sec.id+'.'+slug(x.n);if(TOP[id])id+='-'+n;const t={id,name:x.n,inp:false,sec,bp:x};TOP[id]=t;return t});SEC[sec.id]=sec;tr.sections.push(sec)});
+  TRACKS.unshift(tr)}
+const hasBP=()=>TRACKS[0].id==='abim';
+const planScope=()=>hasBP()&&st.prefs.scope==='abim'?'abim':'all';
+function bpSec(sec){let w=0,m=0,hi=0,hs=0;sec.t.forEach(t=>{const x=bw(t);w+=x;m+=x*(mastery(t.id)||0);if(rel(t)==='H'){hi++;const q=st.topics[t.id];if(q&&(q.n>=3||q.les))hs++}});return {ready:w?m/w:0,hi,hs}}
 const CAREER_AREAS=['Board certification and credentials','Job search and contracts','Income and compensation','Practice building and service lines','Procedural and OMM skills','Leadership and teaching','Business and ventures','Financial foundation'];
 const COMMIT={hy:{name:'High-yield',min:8,lessons:1,len:'short',sub:'One short lesson and two questions'},std:{name:'Standard',min:20,lessons:2,len:'std',sub:'Two lessons with questions'},deep:{name:'Deep',min:40,lessons:3,len:'deep',sub:'Three longer lessons'},long:{name:'Long listen',min:60,lessons:5,len:'deep',sub:'About an hour, hands-free'}};
 const LEN={short:{name:'High-yield',words:750,min:6},std:{name:'Standard',words:1300,min:10},deep:{name:'Deep dive',words:1900,min:14}};
@@ -232,11 +259,11 @@ async function pull(){if(!LINKED||pending||jkeys().length||Date.now()-lastPull<1
     if(sig(fresh)===sig(docs))return;docs=fresh;cacheDocs();loadState();render();toast('Updated with your record from another device.')}catch(e){}}
 
 /* ---------- The record ---------- */
-const blank=()=>({v:1,prefs:{about:'Internal medicine physician preparing for the ABIM certification examination and moving into outpatient primary care. Uses osteopathic manipulative treatment in practice.',setting:'out',commit:'std',rate:1,passive:true,audit:true,setSize:5,lib:true,libName:'MKSAP Database'},
+const blank=()=>({v:1,prefs:{about:'Internal medicine physician preparing for the ABIM certification examination and moving into outpatient primary care. Uses osteopathic manipulative treatment in practice.',setting:'out',commit:'std',rate:1,passive:true,audit:true,setSize:5,lib:true,libName:'MKSAP Database',bpName:'ABIM Blueprint',scope:'all',examDate:''},
   topics:{},days:{},gaps:[],sets:[],lessons:[],goals:[],areas:[],lib:null,best:0});
 let st=blank();
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
-function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),docs.state);st.prefs=Object.assign(blank().prefs,st.prefs||{})}}
+function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),docs.state);st.prefs=Object.assign(blank().prefs,st.prefs||{})}applyBlueprint()}
 const tS=id=>st.topics[id]||(st.topics[id]={n:0,c:0,les:0,last:0,rate:0});
 const day=(d=dayStr())=>st.days[d]||(st.days[d]={min:0,listen:0,q:0,c:0,les:0,done:0});
 const bank=sid=>docs['bank_'+sid]||(docs['bank_'+sid]={qs:[]});
@@ -253,16 +280,17 @@ const level=m=>m==null?['Not started','off']:m>=85?['Mastered','good']:m>=65?['P
 const overconfident=id=>{const t=st.topics[id];return !!t&&t.rate>=4&&t.n>=4&&t.c/t.n<.6};
 /* What to study next. Higher = sooner. Weak or untouched topics in the sections that matter for the chosen practice setting come first;
    a stated gap, a missed question that is due, or confidence that outruns accuracy each push a topic up; anything studied today drops. */
-function priority(t){const s=st.topics[t.id],m=mastery(t.id),set=st.prefs.setting;
-  let w=t.sec.w;if(set==='out'&&t.inp)w=.25;if(set==='in')w=t.inp?3:Math.min(w,1.5);
+function priority(t,dueMap){const s=st.topics[t.id],m=mastery(t.id),set=st.prefs.setting;
+  let w=t.sec.w;if(t.bp)w=bw(t)*(.5+t.sec.pct/5);else{if(set==='out'&&t.inp)w=.25;if(set==='in')w=t.inp?3:Math.min(w,1.5)}
   let p=(100-(m??0))*w,why=m==null?'Not started yet':m<40?'Weak on questions so far':'Keeps it fresh';
   if(s&&s.last){const d=(Date.now()-s.last)/864e5;if(d<.6)p-=250;else if(d>21&&m!=null){p+=Math.min(60,d);why='Not reviewed in '+Math.round(d)+' days'}}
   if(overconfident(t.id)){p+=90;why='Confidence is ahead of your accuracy'}
-  const due=dueQs().filter(q=>q.tid===t.id).length;if(due){p+=40+due*10;why=due+' missed question'+(due>1?'s':'')+' due for review'}
+  const due=dueMap[t.id]||0;if(due){p+=40+due*10;why=due+' missed question'+(due>1?'s':'')+' due for review'}
   if(st.gaps.some(g=>!g.done&&g.tid===t.id)){p+=160;why='You named this as a gap'}
+  if(t.bp&&m==null&&rel(t)==='H')why='High relevance on the blueprint, not started';
   return {t,p,why}}
-const ranked=()=>Object.values(TOP).map(priority).sort((a,b)=>b.p-a.p);
-function plan(n){const out=[],seen={};for(const r of ranked()){if(out.length>=n)break;if((seen[r.t.sec.id]||0)>=1&&n<=3)continue;seen[r.t.sec.id]=(seen[r.t.sec.id]||0)+1;out.push(r)}return out}
+const ranked=()=>{const due={};dueQs().forEach(q=>due[q.tid]=(due[q.tid]||0)+1);return Object.values(TOP).map(t=>priority(t,due)).sort((a,b)=>b.p-a.p)};
+function plan(n,sc){sc=sc||planScope();const out=[],seen={};for(const r of ranked()){if(sc==='abim'?!(r.t.bp&&bw(r.t)>0):!!r.t.bp)continue;if(out.length>=n)break;if((seen[r.t.sec.id]||0)>=1&&n<=3)continue;seen[r.t.sec.id]=(seen[r.t.sec.id]||0)+1;out.push(r)}return out}
 function secStats(s){let n=0,c=0,started=0,ms=0,mc=0,last=0;s.t.forEach(t=>{const x=st.topics[t.id];if(!x)return;n+=x.n;c+=x.c;if(x.n>=3||x.les)started++;const m=mastery(t.id);if(m!=null){ms+=m;mc++}last=Math.max(last,x.last||0)});
   return {n,c,started,total:s.t.length,m:mc?Math.round(ms/s.t.length):null,last}}
 
@@ -350,8 +378,8 @@ Section: ${t.sec.track.name} — ${t.sec.name}. Topic: ${t.name}.
 Rules:
 - Attending level. No basic-science padding. Favor the decisions that change management and the points examiners test.
 - Base every clinical statement on the current guidelines of the major societies (for this section: ${t.sec.src}) and on the reference text when one is supplied. Name the guideline body and year when you state a recommendation.
-- Beyond those, draw on society position statements and clinical practice guidelines generally (ACC/AHA, ADA, IDSA, ACP, CHEST, KDIGO, ACG, USPSTF, ASCO, NCCN and their peers), on the landmark trials behind a recommendation (name the trial and what it showed when it explains why practice is what it is), and on the published ABIM certification examination blueprint for what is in scope.
-- Never invent a citation, trial, statistic, dose or threshold. If you are unsure of a number, or of whether guidance has changed recently, leave it out of the teaching and list it under "uncertain" so the physician can check it.
+- Beyond those, draw on society position statements and clinical practice guidelines generally (ACC/AHA, ADA for diabetes, IDSA, ACP, AAFP and its journal American Family Physician, CHEST, ATS, SCCM, KDIGO, ACG, ACR for rheumatology, AAD for dermatology, the Endocrine Society, USPSTF, ASCO, NCCN and the equivalent society for each specialty), on the landmark trials behind a recommendation (name the trial and what it showed when it explains why practice is what it is), and on the published ABIM certification examination blueprint for what is in scope.
+${t.bp?`- This is board preparation for the ABIM internal medicine examination, and the examination's published blueprint decides what matters. Blueprint category: ${t.sec.name} (${t.sec.pct}% of the exam), under "${t.bp.sub}". Relevance by task: ${TASKS.map((k,i)=>k+' '+RL[t.bp.r[i]]).join('; ')}.${t.bp.lf?' The blueprint marks this topic low frequency.':''} Spend the teaching and the questions on the high-relevance tasks, touch medium ones briefly, and leave out any task marked low because it is not tested. Most examination questions are set in outpatient encounters; for conditions usually managed by other specialists, test recognition rather than management.\n`:''}- Never invent a citation, trial, statistic, dose or threshold. If you are unsure of a number, or of whether guidance has changed recently, leave it out of the teaching and list it under "uncertain" so the physician can check it.
 - Where societies disagree, say so and name both positions.
 - For osteopathic, regenerative, functional and lifestyle topics, state the strength of evidence plainly (strong, moderate, limited, insufficient) and separate guideline-supported practice from investigational or unproven use.
 - For billing, coding, quality programs and EHR features, rules change yearly and vary by payer and by each organization's build. State the general rule, name the governing source (CMS, AMA CPT, NCQA, the vendor), and flag what must be confirmed locally.`;
@@ -433,9 +461,9 @@ function vCard(){const D=S.deck;if(D.i>=D.ids.length)return `<div class="card"><
 
 /* ---------- Screen state ---------- */
 const S={deck:null,clist:false,cscope:'all',tab:'today',busy:'',err:'',track:null,sec:null,topic:null,lesson:null,quiz:null,session:null,chat:[],goal:null,brief:null,form:{}};
-const TABS=[['today','Today'],['learn','Curriculum'],['questions','Questions'],['cards','Cards'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
+const TABS=[['today','Today'],['boards','Boards'],['learn','Curriculum'],['questions','Questions'],['cards','Cards'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
 function render(){ $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
-  const v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])();
+  const v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])();
   $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1)}
 const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="tiny muted">${st.prefs.audit?'Each set is written, then checked by a second review pass before you see it.':''}</p></div>`:'';
 const segBtns=(name,opts,cur)=>`<div class="seg" role="group">${opts.map(([v,l])=>`<button data-set="${name}" data-v="${v}" aria-pressed="${String(cur)===String(v)}">${esc(l)}</button>`).join('')}</div>`;
@@ -450,6 +478,7 @@ function vToday(){const d=day(),c=COMMIT[st.prefs.commit],pl=plan(Math.max(3,c.l
   ${busy()}
   ${S.busy?'':`<div class="card"><h2>${d.done?'Keep going':'Today\'s session'}</h2>
    <div class="plain"><span class="eyebrow">How much today</span>${segBtns('commit',Object.entries(COMMIT).map(([k,v])=>[k,v.name+' · '+v.min+' min']),st.prefs.commit)}<span class="small muted">${c.sub}. Lessons play one after another; the text follows along on screen.</span></div>
+   ${hasBP()?`<div class="plain"><span class="eyebrow">Study plan</span>${segBtns('scope',[['abim','ABIM boards'],['all','Full curriculum']],planScope())}</div>`:''}
    <div class="plain"><span class="eyebrow">Practice setting</span>${segBtns('setting',Object.entries(SETTING),st.prefs.setting)}</div>
    <div class="plain"><span class="eyebrow">Up next, chosen from your record</span>${pl.slice(0,c.lessons).map(r=>`<div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><b>${esc(r.t.name)}</b><div class="tiny muted">${esc(r.t.sec.name)} · ${esc(r.why)}</div></div></div>`).join('')}</div>
    <div class="row"><button class="btn pri" data-act="session">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} Start ${c.min}-minute session</button>${due?`<button class="btn" data-act="review">Review ${due} missed question${due>1?'s':''}</button>`:''}${dueCards('all').length?`<button class="btn" data-act="cduetoday">Flip ${dueCards('all').length} due card${dueCards('all').length>1?'s':''}</button>`:''}</div>
@@ -457,11 +486,31 @@ function vToday(){const d=day(),c=COMMIT[st.prefs.commit],pl=plan(Math.max(3,c.l
   ${gaps.length?`<div class="card"><h3>Your stated gaps</h3>${gaps.slice(0,5).map(g=>`<div class="row between"><div style="min-width:0;flex:1"><b>${esc(g.text)}</b><div class="tiny muted">${esc(TOP[g.tid]?TOP[g.tid].name:'')}${g.n?` · ${g.c}/${g.n} correct`:''}</div></div><button class="btn sm" data-act="gaplearn" data-id="${g.id}">Teach</button><button class="btn sm" data-act="gapquiz" data-id="${g.id}">Test</button></div>`).join('')}</div>`:''}
   <div class="card"><div class="row between"><h3>Chief resident's brief</h3><button class="btn sm" data-act="brief" ${S.busy||!SAMPLE?'disabled':''}>${S.brief?'Refresh':'Get my brief'}</button></div>${S.brief?md(S.brief)+`<div class="row"><button class="btn sm" data-act="saytext" data-k="brief">Listen</button></div>`:'<p class="small muted">A short read on what your record shows: where you are strong, what is slipping, and what to do this week.</p>'}</div>`}
 
+/* ----- Boards: the blueprint as a study plan ----- */
+function vBoards(){
+  if(!hasBP())return `<div class="plain"><h1>Boards</h1><p class="small muted">Board study follows the ABIM's own published blueprint: every content category with its share of the exam, and every topic rated by how likely it is to be tested.</p></div>${busy()}
+   ${S.busy?'':`<div class="card"><h3>Load your blueprint</h3><p class="small muted">${MCP?'The page reads the blueprint document from your Google Drive once and keeps the outline in your record.':WEB?'Load the blueprint once inside Claude, where Google Drive is connected. It then appears here with the rest of your record.':'Google Drive is not connected to this page.'}</p>${MCP?`<label class="f">Document title contains<input type="text" id="bpname" value="${esc(st.prefs.bpName)}"></label><div class="row"><button class="btn pri" data-act="bpload">Load from Google Drive</button></div>`:''}</div>`}`;
+  const tr=TRACKS[0],b=docs.blueprint,rows=tr.sections.map(s=>({s,x:secStats(s),y:bpSec(s)})),ready=Math.round(rows.reduce((a,r)=>a+r.s.pct*r.y.ready,0)/rows.reduce((a,r)=>a+r.s.pct,0));
+  const hi=rows.reduce((a,r)=>a+r.y.hi,0),hs=rows.reduce((a,r)=>a+r.y.hs,0),n=rows.reduce((a,r)=>a+r.x.n,0),c=rows.reduce((a,r)=>a+r.x.c,0),cm=COMMIT[st.prefs.commit],pl=plan(Math.max(3,cm.lessons),'abim');
+  const days=st.prefs.examDate?Math.ceil((new Date(st.prefs.examDate+'T12:00:00')-Date.now())/864e5):null;
+  return `<div class="plain"><h1>Boards</h1><p class="small muted">${esc(b.title)} · ${tr.sections.length} categories · ${tr.sections.reduce((a,s)=>a+s.t.length,0)} topics</p></div>
+  <div class="card"><div class="figs"><div class="fig"><b>${ready}</b><span>readiness, 0 to 100</span></div><div class="fig"><b>${hs}/${hi}</b><span>high-relevance topics started (${pct(hs,hi)}%)</span></div><div class="fig"><b>${n}</b><span>board questions answered</span></div><div class="fig"><b>${n?pct(c,n)+'%':'—'}</b><span>correct</span></div></div>
+   <p class="tiny muted">Readiness is your mastery of each topic, weighted by its blueprint relevance and by its category's share of the exam. Untouched topics count as zero, so it starts low and climbs as you cover ground.</p>
+   <div class="row"><label class="f" style="max-width:220px">Exam date<input type="date" id="examdate" value="${esc(st.prefs.examDate)}" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px"></label>${days!=null&&days>0?`<span class="small">${days} days left · ${hi-hs} high-relevance topics to start · about <b class="num">${Math.max(1,Math.ceil((hi-hs)/Math.max(1,days/7)))}</b> a week</span>`:''}</div></div>
+  ${b.moc?`<div class="note">This document is the blueprint for the ABIM's maintenance of certification exam and Longitudinal Knowledge Assessment. The first-time Certification exam has its own blueprint on the ABIM website, and its category percentages may differ. The relevance ratings here come only with this version.</div>`:''}
+  ${busy()}${S.busy?'':`<div class="card"><h2>Board session</h2><div class="plain"><span class="eyebrow">How much today</span>${segBtns('commit',Object.entries(COMMIT).map(([k,v])=>[k,v.name+' · '+v.min+' min']),st.prefs.commit)}</div>
+   <div class="plain"><span class="eyebrow">Up next from the blueprint</span>${pl.slice(0,cm.lessons).map(r=>`<div><b>${esc(r.t.name)}</b><div class="tiny muted">${esc(r.t.sec.name)} · ${r.t.sec.pct}% of the exam · ${esc(r.why)}</div></div>`).join('')}</div>
+   <div class="row"><button class="btn pri" data-act="session" data-sc="abim">Start ${cm.min}-minute board session</button><button class="btn" data-act="mixed" data-sc="abim">Board question set</button><button class="btn" data-act="cboards">Board flashcards</button></div></div>`}
+  <div class="card"><h3>By content category</h3><div class="tablewrap"><table><thead><tr><th>Category</th><th class="n">Exam</th><th class="n">High started</th><th class="n">Questions</th><th class="n">Correct</th><th class="n">Ready</th></tr></thead><tbody>
+   ${rows.sort((p,q)=>q.s.pct-p.s.pct).map(r=>`<tr><td><button class="btn link" data-sec="${r.s.id}" style="padding:0;text-align:left;white-space:normal">${esc(r.s.name)}</button></td><td class="n">${r.s.pct}%</td><td class="n">${r.y.hs}/${r.y.hi}</td><td class="n">${r.x.n}</td><td class="n">${r.x.n?pct(r.x.c,r.x.n)+'%':'—'}</td><td class="n">${Math.round(r.y.ready)}</td></tr>`).join('')}</tbody></table></div>
+   <p class="tiny muted">High relevance: very likely to appear. Medium: moderately likely. Low: will not appear, so it is left out of the plan. Low frequency topics are capped by the ABIM at a small share of questions.</p>
+   ${MCP?'<div class="row"><button class="btn sm" data-act="bpload">Reload the blueprint from Drive</button></div>':''}</div>`}
+
 /* ----- Curriculum ----- */
 function vLearn(){
   if(S.topic)return vTopic(TOP[S.topic]);
-  if(S.sec){const s=SEC[S.sec],x=secStats(s);return `<div class="row"><button class="btn link" data-act="up">← ${esc(s.track.name)}</button></div><div class="plain"><h1>${esc(s.name)}</h1><p class="small muted">Sources: ${esc(s.src)} · ${x.started}/${x.total} topics started${x.n?` · ${pct(x.c,x.n)}% correct on ${x.n} questions`:''}</p></div>
-    <div class="card" style="gap:0">${s.t.map(t=>{const m=mastery(t.id),[l,c]=level(m);return `<button class="item" data-topic="${t.id}"><div><b>${esc(t.name)}</b>${t.inp?' <span class="tiny muted">hospital</span>':''}</div><span class="row" style="flex-wrap:nowrap">${overconfident(t.id)?'<span class="chip bad">Check calibration</span>':''}<span class="chip ${c}">${l}${m!=null?' · '+m:''}</span></span></button>`}).join('')}</div>`}
+  if(S.sec){const s=SEC[S.sec],x=secStats(s);return `<div class="row"><button class="btn link" data-act="up">← ${esc(s.track.name)}</button></div><div class="plain"><h1>${esc(s.name)}</h1><p class="small muted">Sources: ${esc(s.src)} · ${s.pct?s.pct+'% of the exam · ':''}${x.started}/${x.total} topics started${x.n?` · ${pct(x.c,x.n)}% correct on ${x.n} questions`:''}</p></div>
+    <div class="card" style="gap:0">${(()=>{let last='';return s.t.map(t=>{const m=mastery(t.id),[l,c]=level(m),head=t.bp&&t.bp.sub!==last?`<div class="eyebrow" style="padding-top:14px">${esc(last=t.bp.sub)}</div>`:'';return head+`<button class="item" data-topic="${t.id}"><div><b>${esc(t.name)}</b>${t.inp?' <span class="tiny muted">hospital</span>':''}${t.bp?` <span class="chip ${rel(t)==='H'?'':'off'}">${{H:'High',M:'Medium',L:'Not tested'}[rel(t)]}</span>${t.bp.lf?' <span class="tiny muted">low frequency</span>':''}`:''}</div><span class="row" style="flex-wrap:nowrap">${overconfident(t.id)?'<span class="chip bad">Check calibration</span>':''}<span class="chip ${c}">${l}${m!=null?' · '+m:''}</span></span></button>`}).join('')})()}</div>`}
   if(S.track){const tr=TRACKS.find(t=>t.id===S.track);return `<div class="row"><button class="btn link" data-act="up">← All tracks</button></div><div class="plain"><h1>${esc(tr.name)}</h1><p class="small muted">${esc(tr.blurb)}</p></div>
     <div class="card" style="gap:0">${tr.sections.map(s=>{const x=secStats(s);return `<button class="item" data-sec="${s.id}"><div><b>${esc(s.name)}</b><div class="tiny muted">${x.started}/${x.total} topics started${x.n?` · ${pct(x.c,x.n)}% correct`:''}</div></div><span class="row" style="flex-wrap:nowrap;min-width:110px"><span class="meter"><i style="width:${pct(x.started,x.total)}%"></i></span><span class="tiny num muted">${pct(x.started,x.total)}%</span></span></button>`}).join('')}</div>`}
   const recent=st.lessons.slice(-6).reverse();
@@ -473,6 +522,7 @@ function vTopic(t){const s=st.topics[t.id]||{n:0,c:0,les:0,rate:0},m=mastery(t.i
   <div class="card"><div class="row between"><h1>${esc(t.name)}</h1><span class="chip ${c}">${l}${m!=null?' · '+m:''}</span></div>
    <div class="figs"><div class="fig"><b>${s.n?pct(s.c,s.n)+'%':'—'}</b><span>correct on ${s.n} questions</span></div><div class="fig"><b>${s.les}</b><span>lessons</span></div><div class="fig"><b>${s.rate||'—'}</b><span>your rating, 1 to 5</span></div><div class="fig"><b>${s.last?new Date(s.last).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—'}</b><span>last studied</span></div></div>
    ${overconfident(t.id)?'<div class="note">You rate this topic higher than your answers support. Worth a set of questions.</div>':''}
+   ${t.bp?`<p class="small"><b>Blueprint relevance.</b> ${TASKS.map((k,i)=>esc(k)+': '+RL[t.bp.r[i]]).join(' · ')}${t.bp.lf?' · low frequency':''}</p>`:''}
    <p class="tiny muted">Sources for this section: ${esc(t.sec.src)}${t.sec.lib&&MCP&&st.prefs.lib?' · grounded in your '+esc(st.prefs.libName)+' text':''}</p></div>
   ${busy()}${S.busy?'':`<div class="card"><h3>Learn it</h3><label class="f">Focus (optional)<input type="text" id="focus" placeholder="A subtopic, a question, or leave blank for the core lesson" value="${esc(S.form.focus||'')}"></label>
    <div class="row">${Object.entries(LEN).map(([k,v])=>`<button class="btn ${k==='std'?'pri':''}" data-act="lesson" data-len="${k}">${v.name} · ${v.min} min</button>`).join('')}</div>
@@ -584,7 +634,7 @@ function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h
 /* ---------- Actions ---------- */
 async function run(label,fn){if(S.busy)return;S.busy=label;S.err='';render();try{await fn()}catch(e){S.err=errMsg(e);console.error(e)}S.busy='';render()}
 function openLesson(L){S.lesson=L;S.lq={};S.quiz=null;render();scrollTo(0,0)}
-async function startSession(){const c=COMMIT[st.prefs.commit],pl=plan(c.lessons);S.lesson=null;P.stop(true);S.session={plan:pl.map(r=>r.t),i:0,len:c.len,next:null,loading:false};
+async function startSession(sc){const c=COMMIT[st.prefs.commit],pl=plan(c.lessons,sc);S.lesson=null;P.stop(true);S.session={plan:pl.map(r=>r.t),i:0,len:c.len,next:null,loading:false};
   await run('Claude is writing your first lesson on '+pl[0].t.name+'…',async()=>{const L=await genLesson(pl[0].t,c.len);openLesson(L)});
   if(S.lesson&&S.session){playSession();prefetch()}else S.session=null}
 function playSession(){const ss=S.session;playLesson(S.lesson,()=>{if(S.session!==ss)return;if(ss.i+1<ss.plan.length){if(ss.next)advance();else ss.waiting=true}else finishSession(true)})}
@@ -600,7 +650,7 @@ async function buildBackup(){const data=JSON.stringify({app:'doctor-career-compa
 document.addEventListener('click',async e=>{
   const tab=e.target.closest('[data-tab]');if(tab){if(S.quiz)endQuiz();S.tab=tab.dataset.tab;S.lesson=null;S.deck=null;S.clist=false;S.err='';if(S.session&&!P.on)S.session=null;render();scrollTo(0,0);return}
   const nav=e.target.closest('[data-track],[data-sec],[data-topic],[data-goal],[data-les]');
-  if(nav){const d=nav.dataset;if(d.track)S.track=d.track;if(d.sec)S.sec=d.sec;if(d.topic){S.tab='learn';S.topic=d.topic;S.sec=TOP[d.topic].sec.id;S.track=TOP[d.topic].sec.track.id;S.form={}}if(d.goal)S.goal=d.goal;
+  if(nav){const d=nav.dataset;if(d.track)S.track=d.track;if(d.sec){S.sec=d.sec;S.track=SEC[d.sec].track.id;S.topic=null;S.tab='learn'}if(d.topic){S.tab='learn';S.topic=d.topic;S.sec=TOP[d.topic].sec.id;S.track=TOP[d.topic].sec.track.id;S.form={}}if(d.goal)S.goal=d.goal;
     if(d.les){const L=docs['les_'+d.les];if(L){S.session=null;openLesson(L)}else toast('That lesson is no longer saved.');return}S.err='';render();scrollTo(0,0);return}
   const set=e.target.closest('[data-set]');if(set){let v=set.dataset.v;if(v==='true')v=true;else if(v==='false')v=false;else if(!isNaN(v))v=Number(v);st.prefs[set.dataset.set]=v;saveState();render();return}
   const rate=e.target.closest('[data-rate]');if(rate){const s=tS(rate.dataset.tid);s.rate=Number(rate.dataset.rate);s.rated=Date.now();saveState();render();return}
@@ -624,7 +674,13 @@ document.addEventListener('click',async e=>{
   if(a==='pstop'){P.stop();if(S.session)S.session.waiting=false;return}
   if(a==='prate'){const r=[.85,1,1.15,1.3,1.5],i=r.indexOf(st.prefs.rate);st.prefs.rate=r[(i+1)%r.length];saveState();if(P.on&&!P.paused){P.tok++;P.run()}drawPlayer();return}
   if(a==='up'){if(S.tab==='career')S.goal=null;else if(S.topic)S.topic=null;else if(S.sec)S.sec=null;else S.track=null;S.err='';render();return}
-  if(a==='session')return startSession();
+  if(a==='session')return startSession(b.dataset.sc);
+  if(a==='cboards'){S.tab='cards';S.cscope='tr:abim';S.deck=null;S.clist=false;render();scrollTo(0,0);return}
+  if(a==='bpload'){st.prefs.bpName=v('bpname')||st.prefs.bpName;return run('Reading the blueprint from Google Drive…',async()=>{if(!MCP)throw{code:'unavailable'};
+    const r=await drive('search_files',{query:`title contains '${q1(st.prefs.bpName)}'`,excludeContentSnippets:true,pageSize:10}),isDoc=f=>/google-apps\.document/.test(f.mimeType||'')?1:0,f=(r.files||[]).sort((x,y)=>isDoc(y)-isDoc(x))[0];
+    if(!f)throw{code:'upstream_error',message:'No Drive file with "'+st.prefs.bpName+'" in its title was found.'};
+    const text=(await drive('read_file_content',{fileId:f.id})).fileContent||'',cats=parseBlueprint(text);if(cats.length<5)throw{code:'upstream_error',message:'That file did not read as an ABIM blueprint. A Google Doc version reads best.'};
+    put('blueprint',{title:f.title,cats,moc:/Maintenance of Certification|MOC/.test(text)?1:0,t:Date.now()});applyBlueprint();st.prefs.scope='abim';saveState();toast('Blueprint loaded: '+cats.reduce((n,c)=>n+c.topics.length,0)+' topics.')})}
   if(a==='listen'){if(S.session)playSession();else playLesson(S.lesson);render();return}
   if(a==='nextlesson')return advance();
   if(a==='closelesson'){const ss=S.session;P.stop();S.lesson=null;if(ss)finishSession(ss.i+1>=ss.plan.length);render();return}
@@ -633,7 +689,7 @@ document.addEventListener('click',async e=>{
   if(a==='requiz'){const qs=bank(TOP[S.topic].sec.id).qs.filter(q=>q.tid===S.topic&&!q.flag).sort(()=>Math.random()-.5).slice(0,10);return startQuiz(qs,TOP[S.topic].name+' (saved)',S.topic)}
   if(a==='review')return startQuiz(dueQs().slice(0,15),'Missed question review');
   if(a==='unseen')return startQuiz(allQs().filter(q=>!q.hist.length&&!q.flag).slice(0,10),'Unanswered questions');
-  if(a==='mixed'){const pl=plan(3);return run('Claude is writing a mixed set from your weakest topics…',async()=>{const qs=[];let dropped=0;for(const r of pl){const x=await genQuestions(r.t,2);qs.push(...x.qs);dropped+=x.dropped}startQuiz(qs,'Mixed: '+pl.map(r=>r.t.name).join(', '));S.quiz.note=dropped?dropped+' failed the accuracy review and were removed.':''})}
+  if(a==='mixed'){const pl=plan(3,b.dataset.sc);return run('Claude is writing a mixed set from your weakest topics…',async()=>{const qs=[];let dropped=0;for(const r of pl){const x=await genQuestions(r.t,2);qs.push(...x.qs);dropped+=x.dropped}startQuiz(qs,'Mixed: '+pl.map(r=>r.t.name).join(', '));S.quiz.note=dropped?dropped+' failed the accuracy review and were removed.':''})}
   if(a==='qnext'){S.quiz.i++;P.stop(true);render();scrollTo(0,0);return}
   if(a==='quizdone'){endQuiz();P.stop(true);render();return}
   if(a==='sayq'){const q=findQ(b.dataset.q),done=(S.quiz?S.quiz.picks:S.lq||{})[q.id]!=null;P.load([{say:done?`The answer is ${'ABCDE'[q.ans]}. ${q.opts[q.ans]}. ${q.exp}`:q.stem+' '+q.opts.map((o,i)=>'ABCDE'[i]+'. '+o+'.').join(' ')}],done?'Explanation':'Question','');return}
@@ -658,7 +714,7 @@ document.addEventListener('click',async e=>{
   if(a==='libcheck'){st.prefs.libName=v('libname')||st.prefs.libName;return run('Looking in Google Drive…',async()=>{try{await libInit(true);toast('Library connected.')}catch(x){throw{code:'upstream_error',message:(x&&x.message)||'Google Drive could not be reached. Allow the connector for this page and try again.'}}})}
   if(a==='backup')return buildBackup();
 });
-document.addEventListener('change',e=>{if(e.target.id==='cscope'){S.cscope=e.target.value;render();return}const s=e.target.closest('[data-step]');if(s&&S.goal){const d=docs['goal_'+S.goal];d.done=d.done||{};d.done[s.dataset.step]=s.checked?1:0;put('goal_'+S.goal,d)}});
+document.addEventListener('change',e=>{if(e.target.id==='examdate'){st.prefs.examDate=e.target.value;saveState();render();return}if(e.target.id==='cscope'){S.cscope=e.target.value;render();return}const s=e.target.closest('[data-step]');if(s&&S.goal){const d=docs['goal_'+S.goal];d.done=d.done||{};d.done[s.dataset.step]=s.checked?1:0;put('goal_'+S.goal,d)}});
 
 /* ---------- Boot ---------- */
 (async()=>{
