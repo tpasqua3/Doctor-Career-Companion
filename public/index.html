@@ -114,6 +114,15 @@ ul.pts{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:5px}
 .conf button b{font-family:var(--num);font-size:1.05rem;color:var(--ink);font-weight:500}
 .clist{display:flex;flex-direction:column;gap:14px;font-family:var(--read);max-width:66ch}
 .clist div{display:flex;flex-direction:column;gap:3px;border-bottom:1px solid var(--line);padding-bottom:12px}
+.fab{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:9;border:0;border-radius:99px;background:var(--ink);color:var(--paper);padding:12px 20px;font-weight:600;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.28)}
+.fab[data-up="1"]{bottom:calc(158px + env(safe-area-inset-bottom,0px))}
+.askp{position:fixed;right:0;bottom:0;z-index:12;width:min(440px,100%);height:min(80%,660px);background:var(--paper);border:1px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0;display:flex;flex-direction:column;box-shadow:0 -6px 24px rgba(0,0,0,.2);padding-bottom:env(safe-area-inset-bottom,0px)}
+.askp .hd{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.askp .log{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px;min-height:0}
+.askp .ft{padding:10px 16px 12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.askp textarea{min-height:52px;max-height:120px}
+.chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.chips button{flex:none;border:1px solid var(--line);background:var(--card);border-radius:99px;padding:5px 11px;font-size:.8rem;cursor:pointer;white-space:nowrap}
 /* audio transport */
 .player{position:fixed;left:0;right:0;bottom:0;z-index:8;background:var(--card);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px))}
 .player .in{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
@@ -131,6 +140,8 @@ ul.pts{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:5px}
   <main id="app" class="stack"><p class="muted">Loading your record…</p></main>
 </div>
 <div class="player" id="player" hidden></div>
+<button class="fab" id="fab" data-act="askopen" aria-label="Ask the study companion">Ask</button>
+<div class="askp" id="askp" role="dialog" aria-label="Study companion" hidden></div>
 <div class="toast" id="toast" hidden></div>
 <script>
 'use strict';
@@ -280,17 +291,24 @@ const level=m=>m==null?['Not started','off']:m>=85?['Mastered','good']:m>=65?['P
 const overconfident=id=>{const t=st.topics[id];return !!t&&t.rate>=4&&t.n>=4&&t.c/t.n<.6};
 /* What to study next. Higher = sooner. Weak or untouched topics in the sections that matter for the chosen practice setting come first;
    a stated gap, a missed question that is due, or confidence that outruns accuracy each push a topic up; anything studied today drops. */
-function priority(t,dueMap){const s=st.topics[t.id],m=mastery(t.id),set=st.prefs.setting;
+function priority(t,dueMap,planMap,lowMap){const s=st.topics[t.id],m=mastery(t.id),set=st.prefs.setting;
   let w=t.sec.w;if(t.bp)w=bw(t)*(.5+t.sec.pct/5);else{if(set==='out'&&t.inp)w=.25;if(set==='in')w=t.inp?3:Math.min(w,1.5)}
   let p=(100-(m??0))*w,why=m==null?'Not started yet':m<40?'Weak on questions so far':'Keeps it fresh';
   if(s&&s.last){const d=(Date.now()-s.last)/864e5;if(d<.6)p-=250;else if(d>21&&m!=null){p+=Math.min(60,d);why='Not reviewed in '+Math.round(d)+' days'}}
   if(overconfident(t.id)){p+=90;why='Confidence is ahead of your accuracy'}
   const due=dueMap[t.id]||0;if(due){p+=40+due*10;why=due+' missed question'+(due>1?'s':'')+' due for review'}
+  /* Uncertainty the physician has shown: questions put to the companion about this topic in the last month, and cards rated low. */
+  const low=(lowMap&&lowMap[t.id])||0;if(low){p+=Math.min(60,15*low);why=low+' card'+(low>1?'s':'')+' you rated low'}
+  if(s&&s.asks&&Date.now()-(s.asked||0)<30*864e5){p+=Math.min(90,30*s.asks);why='You asked about this '+(s.asks>1?s.asks+' times':'recently')}
   if(st.gaps.some(g=>!g.done&&g.tid===t.id)){p+=160;why='You named this as a gap'}
   if(t.bp&&m==null&&rel(t)==='H')why='High relevance on the blueprint, not started';
+  if(planMap&&planMap.has(t.id)&&!(s&&(s.les||s.n>=3))){p+=160-25*planMap.get(t.id);why='On your learning plan, week '+(planMap.get(t.id)+1)}
   return {t,p,why}}
-const ranked=()=>{const due={};dueQs().forEach(q=>due[q.tid]=(due[q.tid]||0)+1);return Object.values(TOP).map(t=>priority(t,due)).sort((a,b)=>b.p-a.p)};
-function plan(n,sc){sc=sc||planScope();const out=[],seen={};for(const r of ranked()){if(sc==='abim'?!(r.t.bp&&bw(r.t)>0):!!r.t.bp)continue;if(out.length>=n)break;if((seen[r.t.sec.id]||0)>=1&&n<=3)continue;seen[r.t.sec.id]=(seen[r.t.sec.id]||0)+1;out.push(r)}return out}
+const ranked=()=>{const due={};dueQs().forEach(q=>due[q.tid]=(due[q.tid]||0)+1);const lm=lowCards(),pm=new Map(),pd=planDoc();if(pd)pd.weeks.forEach((w,i)=>w.items.forEach(x=>{if(!pm.has(x.tid))pm.set(x.tid,i)}));return Object.values(TOP).map(t=>priority(t,due,pm,lm)).sort((a,b)=>b.p-a.p)};
+const rankedBase=()=>{const due={};dueQs().forEach(q=>due[q.tid]=(due[q.tid]||0)+1);const lm=lowCards();return Object.values(TOP).map(t=>priority(t,due,null,lm)).sort((a,b)=>b.p-a.p)};
+const lowCards=()=>{const m={};Object.keys(docs).forEach(k=>{if(k.startsWith('cards_'))(docs[k].cards||[]).forEach(c=>{if(c.conf&&c.conf<=2)m[c.tid]=(m[c.tid]||0)+1})});return m};
+const planDoc=()=>docs.plan&&Array.isArray(docs.plan.weeks)?docs.plan:null;
+function plan(n,sc){sc=sc||planScope();const out=[],seen={};for(const r of ranked()){if(sc==='abim'?!(r.t.bp&&bw(r.t)>0):!!r.t.bp)continue;if(out.length>=n)break;if((seen[r.t.sec.id]||0)>=1&&n<=3&&!/^On your learning plan/.test(r.why))continue;seen[r.t.sec.id]=(seen[r.t.sec.id]||0)+1;out.push(r)}return out}
 function secStats(s){let n=0,c=0,started=0,ms=0,mc=0,last=0;s.t.forEach(t=>{const x=st.topics[t.id];if(!x)return;n+=x.n;c+=x.c;if(x.n>=3||x.les)started++;const m=mastery(t.id);if(m!=null){ms+=m;mc++}last=Math.max(last,x.last||0)});
   return {n,c,started,total:s.t.length,m:mc?Math.round(ms/s.t.length):null,last}}
 
@@ -326,7 +344,7 @@ const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:nu
   stop(quiet){this.tok++;clearTimeout(this.timer);this.on=false;this.paused=false;this.done=null;try{if(TTS)speechSynthesis.cancel()}catch(e){}if(!quiet){mark(-1);drawPlayer()}}};
 function mark(seg){document.querySelectorAll('[data-seg]').forEach(el=>{const on=String(seg)===el.dataset.seg;if(on&&el.dataset.now!=='1'&&P.on)el.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});el.dataset.now=on?'1':''})}
 const IC={play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
-function drawPlayer(){const el=$('#player');if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
+function drawPlayer(){const el=$('#player');$('#fab').dataset.up=P.on?'1':'';if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
   el.innerHTML=`<div class="in"><div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><div class="t">${esc(P.title)}</div><div class="tiny muted">${esc(P.sub)}${P.q[P.i]&&P.q[P.i].wait?' · thinking time':''}</div></div><span class="tiny num muted">${p}%</span></div>
   <div class="meter"><i style="width:${p}%"></i></div>
   <div class="ctl"><button data-act="pprev" aria-label="Back one section">${IC.prev}</button><button class="big" data-act="ptoggle" aria-label="${P.paused?'Play':'Pause'}">${P.paused?IC.play:IC.pause}</button><button data-act="pnext" aria-label="Skip one section">${IC.next}</button>
@@ -459,12 +477,60 @@ function vCard(){const D=S.deck;if(D.i>=D.ids.length)return `<div class="card"><
   <div class="row">${TTS?'<button class="btn sm" data-act="csay">Listen</button>':''}<button class="btn sm" data-act="cskip">Skip</button><button class="btn sm danger" data-act="cdel">Remove this card</button></div>
   <div class="meter"><i style="width:${pct(D.i,D.ids.length)}%"></i></div>`}
 
+/* ---------- The tailored learning plan ----------
+   Priority follows what the physician has shown: wrong answers, low self-ratings, cards rated low, questions put to the companion, named
+   gaps. The exam blueprint sets the frame those signals work within. The formula ranks every topic; the AI then reads the top of that ranking next to the study record and arranges four weeks of work,
+   choosing where an hour buys the most and grouping related topics. Topics on the plan move to the front of every session. */
+const examDays=()=>{if(!st.prefs.examDate)return 0;const d=Math.ceil((new Date(st.prefs.examDate+'T12:00:00')-Date.now())/864e5);return d>0?d:0};
+const started=id=>{const x=st.topics[id];return !!x&&(x.les>0||x.n>=3)};
+async function makePlan(sc){const lm=lowCards(),cand=rankedBase().filter(r=>sc==='abim'?r.t.bp&&bw(r.t)>0:!r.t.bp).slice(0,45),cm=COMMIT[st.prefs.commit],perWeek=Math.min(7,Math.max(3,Math.round(span(28).act/4)||5)),days=examDays();
+  const r=await ask(`You are the chief resident planning one physician's study. ${st.prefs.about}\nGoal: ${sc==='abim'?'pass the ABIM internal medicine examination'+(days?', which is '+days+' days away':''):'stay a well-rounded internist, with outpatient medicine first'}.\nStudy record:\n${recordSummary()}\nTime available: about ${cm.min} minutes a session and ${perWeek} sessions a week; a session covers ${cm.lessons} topic${cm.lessons>1?'s':''}.\n\nCANDIDATE TOPICS, already ranked by a formula of exam share, blueprint relevance and current mastery. Relevance is four letters for diagnosis, treatment, risk and pathophysiology (H high, M medium, L low); LF means low frequency.\n${cand.map((x,i)=>`${i}. ${x.t.name} | ${x.t.sec.name}${x.t.bp?` | ${x.t.sec.pct}% of exam | ${x.t.bp.r}${x.t.bp.lf?' LF':''}`:''} | mastery ${mastery(x.t.id)??'none'} | ${st.topics[x.t.id]&&st.topics[x.t.id].n?st.topics[x.t.id].c+'/'+st.topics[x.t.id].n+' correct':'no questions yet'}${st.topics[x.t.id]&&st.topics[x.t.id].rate?' | self-rated '+st.topics[x.t.id].rate+'/5':''}${st.topics[x.t.id]&&st.topics[x.t.id].asks?' | asked the tutor about it '+st.topics[x.t.id].asks+' times':''}${lm[x.t.id]?' | '+lm[x.t.id]+' flashcards rated low':''}${st.gaps.some(g=>!g.done&&g.tid===x.t.id)?' | named as a gap':''} | ${x.why}`).join('\n')}\n\nBuild a 4-week plan using these candidates only. Two things decide the order. First, the big picture: stay inside what the exam weights most, a large share of the exam and high blueprint relevance. Second, within that, go where this physician has shown the most uncertainty: questions answered wrong, low self-ratings, flashcards rated low, topics they keep asking the tutor about, gaps they named, and topics where confidence runs ahead of accuracy. Demonstrated weakness outranks a topic that is merely untouched. As the record fills in, the plan should follow the evidence. Group related topics in the same week so each builds on the last, and mix categories so no week is a single subject. Put about ${perWeek*cm.lessons} topics in each week. Do not repeat a topic.\n\nReply with JSON only: {"summary":"3 or 4 sentences on the strategy and why these areas come first","weeks":[{"focus":"short theme","why":"one sentence","topics":[{"i":0,"reason":"a few words"}]}],"habits":["2 or 3 habits that fit this physician's pattern of use"]}`,'complex');
+  const seen=new Set(),weeks=(r.weeks||[]).map(w=>({focus:String(w.focus||''),why:String(w.why||''),items:(w.topics||[]).map(x=>{const c=cand[x&&x.i];if(!c||seen.has(c.t.id))return null;seen.add(c.t.id);return {tid:c.t.id,reason:String(x.reason||'')}}).filter(Boolean)})).filter(w=>w.items.length);
+  if(!weeks.length)throw{code:'invalid_json'};put('plan',{sc,summary:String(r.summary||''),weeks,habits:(r.habits||[]).map(String),t:Date.now()})}
+function vPlan(){const p=planDoc();
+  if(!p)return `<div class="card"><h3>Tailored learning plan</h3><p class="small muted">Four weeks of topics chosen for the most growth per hour: ${hasBP()?'high-relevance blueprint areas where your record is thinnest':'the areas where your record is thinnest'}, grouped so each week builds on the last. Topics on the plan go to the front of your sessions.</p><div class="row"><button class="btn" data-act="mkplan" ${S.busy||!SAMPLE?'disabled':''}>Build my plan</button></div></div>`;
+  const items=p.weeks.flatMap(w=>w.items).filter(x=>TOP[x.tid]),k=items.filter(x=>started(x.tid)).length;
+  return `<div class="card"><div class="row between"><h3>Your learning plan</h3><span class="chip num ${k===items.length?'good':''}">${k}/${items.length} started</span></div>${md(p.summary)}
+   ${p.weeks.map((w,i)=>`<div class="plain" style="gap:0"><span class="eyebrow">Week ${i+1} · ${esc(w.focus)}</span><span class="small muted">${esc(w.why)}</span>${w.items.filter(x=>TOP[x.tid]).map(x=>{const m=mastery(x.tid),[l,c]=level(m);return `<button class="item" data-topic="${x.tid}"><div><b>${esc(TOP[x.tid].name)}</b><div class="tiny muted">${esc(TOP[x.tid].sec.name)}${x.reason?' · '+esc(x.reason):''}</div></div><span class="chip ${started(x.tid)?c:'off'}">${started(x.tid)?l:'To do'}</span></button>`}).join('')}</div>`).join('')}
+   ${p.habits.length?`<div class="plain"><span class="eyebrow">Habits</span><ul class="pts small">${p.habits.map(h=>`<li>${esc(h)}</li>`).join('')}</ul></div>`:''}
+   <div class="row"><button class="btn sm" data-act="mkplan" ${S.busy||!SAMPLE?'disabled':''}>Rebuild from my latest record</button><span class="tiny muted">Built ${new Date(p.t).toLocaleDateString()}</span></div></div>`}
+
+/* ---------- The companion ----------
+   One conversation, opened from the corner of any screen. It is told what is on screen (the lesson, question, card or topic), pulls the
+   matching chapter from the reference library for the question asked, and knows the blueprint relevance and the study record. */
+function ctxInfo(){let tid=null,text='',label='';
+  if(S.quiz&&S.quiz.i<S.quiz.qs.length){const q=S.quiz.qs[S.quiz.i],pk=S.quiz.picks[q.id];tid=q.tid;label='this question';text=`The physician is looking at this practice question: "${q.stem}" Options: ${q.opts.map((o,i)=>'ABCDE'[i]+'. '+o).join(' ')}. `+(pk!=null?`They chose ${'ABCDE'[pk]}; the keyed answer is ${'ABCDE'[q.ans]}. Explanation shown: ${q.exp}`:'They have NOT answered yet. Do not reveal or hint at which option is correct; help them reason toward it.')}
+  else if(S.lesson){tid=S.lesson.tid;label='this lesson';text=`The physician is in the lesson "${S.lesson.title}". Its key points: ${S.lesson.pts.join(' ')}`}
+  else if(S.deck&&S.deck.i<S.deck.ids.length){const c=findC(S.deck.ids[S.deck.i]);if(c){tid=c.tid;label='this card';text=`The physician is on the flashcard "${c.f}"`+(S.deck.flip?` with the answer "${c.b}"`:'. The answer is still hidden: do not give it away unless asked.')}}
+  else if(S.tab==='learn'&&S.topic&&TOP[S.topic]){tid=S.topic;label=TOP[tid].name;text='The physician is viewing the topic "'+TOP[tid].name+'".'}
+  return {t:tid&&TOP[tid],text,label}}
+function matchTopic(text){const k=[...new Set(words(text))];if(!k.length)return null;const board=planScope()==='abim';let best=null;
+  Object.values(TOP).forEach(t=>{const tw=words(t.name),n=k.filter(x=>tw.some(w=>w.startsWith(x.slice(0,5))||x.startsWith(w.slice(0,5)))).length;if(!n)return;const sc=n/Math.sqrt(tw.length||1)+(!!t.bp===board?.3:0);if(!best||sc>best.sc)best={sc,t}});return best&&best.t}
+async function sendChat(text){text=String(text||'').trim();if(S.asking||!text)return;if(!SAMPLE)return toast(ERR.unavailable);
+  const cx=ctxInfo();S.chat.push({role:'user',content:text});S.asking=true;redrawChat();
+  try{const t=cx.t||matchTopic(text);if(t){const x=tS(t.id);x.asks=(x.asks||0)+1;x.asked=Date.now();saveState()}const ref=t?await libRef(t,text):null;
+    const sys=`You are the study companion inside a physician's board preparation and continuing education app: part tutor, part chief resident. ${st.prefs.about}\nStudy record:\n${recordSummary()}\n${hasBP()?'The physician is preparing for the ABIM internal medicine examination. When the question bears on the exam, say how the point is tested and what to prioritize, in a sentence or two.\n':''}Answer at attending level, concisely, as a colleague would. Reason it through. Name the guideline and year, or the landmark trial, behind a recommendation. Never invent a citation, statistic, dose or threshold; say when you are unsure or when guidance may have changed. For EHR, billing and quality topics, flag what depends on the local build or payer. You have no live web access here.`;
+    const extra=`${cx.text?'\n\nON SCREEN: '+cx.text:''}${t&&t.bp?`\nBlueprint: ${t.name}, in ${t.sec.name} (${t.sec.pct}% of the exam). Relevance: ${TASKS.map((k,i)=>k+' '+RL[t.bp.r[i]]).join('; ')}.`:''}${refBlock(ref&&{title:ref.title,text:ref.text.slice(0,9000)})}`;
+    const hist=S.chat.slice(-11);while(hist.length&&hist[0].role!=='user')hist.shift();
+    const r=await askText(hist.map((m,i)=>({role:m.role,content:(i===0?sys+'\n\n':'')+m.content+(i===hist.length-1?extra:'')})),'default');
+    S.chat.push({role:'assistant',content:r,ref:ref?ref.title:''})}
+  catch(e){S.chat.pop();toast(errMsg(e)||'Stopped.',5000)}
+  S.asking=false;redrawChat()}
+function redrawChat(){drawAsk();if(S.tab==='ask'&&!S.quiz&&!S.lesson&&!S.busy)render()}
+const chatLog=()=>S.chat.map((m,i)=>`<div class="msg ${m.role==='user'?'u':'a'}">${m.role==='user'?esc(m.content):md(m.content)+`<div class="row" style="margin-top:6px">${TTS?`<button class="btn sm" data-act="saytext" data-k="chat" data-i="${i}">Listen</button>`:''}${m.ref?`<span class="chip off">${esc(m.ref)}</span>`:''}</div>`}</div>`).join('')+(S.asking?thinking('Claude is thinking…'):'');
+function drawAsk(){const el=$('#askp'),fab=$('#fab');fab.hidden=!!S.askOpen||S.tab==='ask';if(!S.askOpen){el.hidden=true;return}const cx=ctxInfo(),draft=($('#askin')||{}).value||'';el.hidden=false;
+  el.innerHTML=`<div class="hd"><div style="min-width:0"><b>Ask</b><div class="tiny muted">${cx.label?'About '+esc(cx.label):hasBP()?'Board-focused, grounded in your library':'Grounded in your library and record'}</div></div><div class="row">${S.chat.length?'<button class="btn sm" data-act="chatclear">New</button>':''}<button class="btn sm" data-act="askclose" aria-label="Close">Close</button></div></div>
+  <div class="log" id="asklog">${S.chat.length?chatLog():`<p class="small muted">Ask anything: explain a concept, compare two options, work a case, or ask what to study. Answers draw on what is on screen, your record${MCP&&st.prefs.lib?', your '+esc(st.prefs.libName)+' text':''}${hasBP()?' and the exam blueprint':''}.</p>`}</div>
+  <div class="ft"><div class="chips">${cx.label?`<button data-act="askchip" data-p="Explain this more deeply, and tell me what the boards test about it.">Explain ${esc(cx.label.length>22?'this':cx.label)}</button><button data-act="askchip" data-p="Ask me two rapid questions on this, one at a time, and wait for my answer to each.">Quiz me on this</button>`:''}<button data-act="askchip" data-p="Looking at my record, what should I study next and why?">What next?</button><button data-act="mkplan">Build my learning plan</button></div>
+   <textarea id="askin" placeholder="Your question" aria-label="Your question"></textarea><div class="row"><button class="btn pri" data-act="asksend" ${S.asking||!SAMPLE?'disabled':''}>Ask</button>${SAMPLE?'':'<span class="tiny muted">The AI is not available in this view.</span>'}</div></div>`;
+  $('#askin').value=draft;const lg=$('#asklog');lg.scrollTop=lg.scrollHeight}
+
 /* ---------- Screen state ---------- */
-const S={deck:null,clist:false,cscope:'all',tab:'today',busy:'',err:'',track:null,sec:null,topic:null,lesson:null,quiz:null,session:null,chat:[],goal:null,brief:null,form:{}};
+const S={askOpen:false,asking:false,deck:null,clist:false,cscope:'all',tab:'today',busy:'',err:'',track:null,sec:null,topic:null,lesson:null,quiz:null,session:null,chat:[],goal:null,brief:null,form:{}};
 const TABS=[['today','Today'],['boards','Boards'],['learn','Curriculum'],['questions','Questions'],['cards','Cards'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
 function render(){ $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
   const v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])();
-  $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1)}
+  $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();drawAsk();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1)}
 const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="tiny muted">${st.prefs.audit?'Each set is written, then checked by a second review pass before you see it.':''}</p></div>`:'';
 const segBtns=(name,opts,cur)=>`<div class="seg" role="group">${opts.map(([v,l])=>`<button data-set="${name}" data-v="${v}" aria-pressed="${String(cur)===String(v)}">${esc(l)}</button>`).join('')}</div>`;
 
@@ -483,6 +549,7 @@ function vToday(){const d=day(),c=COMMIT[st.prefs.commit],pl=plan(Math.max(3,c.l
    <div class="plain"><span class="eyebrow">Up next, chosen from your record</span>${pl.slice(0,c.lessons).map(r=>`<div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><b>${esc(r.t.name)}</b><div class="tiny muted">${esc(r.t.sec.name)} · ${esc(r.why)}</div></div></div>`).join('')}</div>
    <div class="row"><button class="btn pri" data-act="session">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} Start ${c.min}-minute session</button>${due?`<button class="btn" data-act="review">Review ${due} missed question${due>1?'s':''}</button>`:''}${dueCards('all').length?`<button class="btn" data-act="cduetoday">Flip ${dueCards('all').length} due card${dueCards('all').length>1?'s':''}</button>`:''}</div>
    ${SAMPLE?'':'<div class="note">The AI is not available in this view, so new lessons and questions cannot be written here. Saved lessons still play.</div>'}${TTS?'':'<div class="note">This browser has no speech voice. Lessons show as text only.</div>'}</div>`}
+  ${hasBP()&&planScope()==='abim'?'':vPlan()}
   ${gaps.length?`<div class="card"><h3>Your stated gaps</h3>${gaps.slice(0,5).map(g=>`<div class="row between"><div style="min-width:0;flex:1"><b>${esc(g.text)}</b><div class="tiny muted">${esc(TOP[g.tid]?TOP[g.tid].name:'')}${g.n?` · ${g.c}/${g.n} correct`:''}</div></div><button class="btn sm" data-act="gaplearn" data-id="${g.id}">Teach</button><button class="btn sm" data-act="gapquiz" data-id="${g.id}">Test</button></div>`).join('')}</div>`:''}
   <div class="card"><div class="row between"><h3>Chief resident's brief</h3><button class="btn sm" data-act="brief" ${S.busy||!SAMPLE?'disabled':''}>${S.brief?'Refresh':'Get my brief'}</button></div>${S.brief?md(S.brief)+`<div class="row"><button class="btn sm" data-act="saytext" data-k="brief">Listen</button></div>`:'<p class="small muted">A short read on what your record shows: where you are strong, what is slipping, and what to do this week.</p>'}</div>`}
 
@@ -497,6 +564,7 @@ function vBoards(){
   <div class="card"><div class="figs"><div class="fig"><b>${ready}</b><span>readiness, 0 to 100</span></div><div class="fig"><b>${hs}/${hi}</b><span>high-relevance topics started (${pct(hs,hi)}%)</span></div><div class="fig"><b>${n}</b><span>board questions answered</span></div><div class="fig"><b>${n?pct(c,n)+'%':'—'}</b><span>correct</span></div></div>
    <p class="tiny muted">Readiness is your mastery of each topic, weighted by its blueprint relevance and by its category's share of the exam. Untouched topics count as zero, so it starts low and climbs as you cover ground.</p>
    <div class="row"><label class="f" style="max-width:220px">Exam date<input type="date" id="examdate" value="${esc(st.prefs.examDate)}" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px"></label>${days!=null&&days>0?`<span class="small">${days} days left · ${hi-hs} high-relevance topics to start · about <b class="num">${Math.max(1,Math.ceil((hi-hs)/Math.max(1,days/7)))}</b> a week</span>`:''}</div></div>
+  ${vPlan()}
   ${b.moc?`<div class="note">This document is the blueprint for the ABIM's maintenance of certification exam and Longitudinal Knowledge Assessment. The first-time Certification exam has its own blueprint on the ABIM website, and its category percentages may differ. The relevance ratings here come only with this version.</div>`:''}
   ${busy()}${S.busy?'':`<div class="card"><h2>Board session</h2><div class="plain"><span class="eyebrow">How much today</span>${segBtns('commit',Object.entries(COMMIT).map(([k,v])=>[k,v.name+' · '+v.min+' min']),st.prefs.commit)}</div>
    <div class="plain"><span class="eyebrow">Up next from the blueprint</span>${pl.slice(0,cm.lessons).map(r=>`<div><b>${esc(r.t.name)}</b><div class="tiny muted">${esc(r.t.sec.name)} · ${r.t.sec.pct}% of the exam · ${esc(r.why)}</div></div>`).join('')}</div>
@@ -601,9 +669,9 @@ function recordSummary(){const rows=[];TRACKS.forEach(tr=>tr.sections.forEach(s=
   return `Streak ${streak()} days; ${w.act}/7 days active in the last week; ${Math.round(w.min)} minutes in the last 7 days; ${dueQs().length} missed questions due for review.\nSections with activity:\n${rows.join('\n')||'none yet'}\nWeakest topics: ${weak.join('; ')||'none yet'}\nConfidence ahead of accuracy: ${Object.values(TOP).filter(t=>overconfident(t.id)).map(t=>t.name).join('; ')||'none'}\nStated gaps still open: ${st.gaps.filter(g=>!g.done).map(g=>g.text).join('; ')||'none'}\nSections never touched: ${Object.values(SEC).filter(s=>!secStats(s).started).map(s=>s.name).join('; ')||'none'}`}
 
 /* ----- Ask: the tutor ----- */
-function vAsk(){return `<div class="plain"><h1>Ask</h1><p class="small muted">A tutor that knows your record. Ask it to explain, compare, quiz you aloud, or build a smart phrase.</p></div>
-  <div class="stack">${S.chat.map((m,i)=>`<div class="msg ${m.role==='user'?'u':'a'}">${m.role==='user'?esc(m.content):md(m.content)+`<div class="row" style="margin-top:6px"><button class="btn sm" data-act="saytext" data-k="chat" data-i="${i}">Listen</button></div>`}</div>`).join('')}${S.busy?thinking(S.busy):''}</div>
-  <div class="card"><label class="f">Your question<textarea id="chatin" placeholder="e.g. Walk me through working up an incidental adrenal mass, then ask me two questions."></textarea></label><div class="row"><button class="btn pri" data-act="chatsend" ${S.busy||!SAMPLE?'disabled':''}>Ask</button>${S.chat.length?'<button class="btn" data-act="chatclear">New conversation</button>':''}</div></div>`}
+function vAsk(){return `<div class="plain"><h1>Ask</h1><p class="small muted">The same companion as the Ask button in the corner. It knows your record${hasBP()?', the exam blueprint':''} and reads from your reference library.</p></div>
+  <div class="stack">${chatLog()}</div>
+  <div class="card"><label class="f">Your question<textarea id="chatin" placeholder="e.g. Walk me through working up an incidental adrenal mass, then ask me two questions."></textarea></label><div class="row"><button class="btn pri" data-act="chatsend" ${S.asking||!SAMPLE?'disabled':''}>Ask</button>${S.chat.length?'<button class="btn" data-act="chatclear">New conversation</button>':''}</div></div>`}
 
 /* ----- Career ----- */
 const areas=()=>CAREER_AREAS.concat(st.areas||[]);
@@ -694,15 +762,19 @@ document.addEventListener('click',async e=>{
   if(a==='quizdone'){endQuiz();P.stop(true);render();return}
   if(a==='sayq'){const q=findQ(b.dataset.q),done=(S.quiz?S.quiz.picks:S.lq||{})[q.id]!=null;P.load([{say:done?`The answer is ${'ABCDE'[q.ans]}. ${q.opts[q.ans]}. ${q.exp}`:q.stem+' '+q.opts.map((o,i)=>'ABCDE'[i]+'. '+o+'.').join(' ')}],done?'Explanation':'Question','');return}
   if(a==='flag'){const q=findQ(b.dataset.q);if(!q.flag){q.flag=1;const last=q.hist[q.hist.length-1],s=tS(q.tid);if(last){s.n=Math.max(0,s.n-1);if(last.ok)s.c=Math.max(0,s.c-1)}q.due=0;toast('Flagged. It no longer counts in your statistics.')}else q.flag=0;saveBank(TOP[q.tid].sec.id);saveState();render();return}
-  if(a==='askq'){const q=findQ(b.dataset.q);if(S.quiz)endQuiz();S.lesson=null;S.tab='ask';S.chat=[];render();$('#chatin').value=`About this question: "${q.stem}" The keyed answer was ${'ABCDE'[q.ans]} (${q.opts[q.ans]}). `;$('#chatin').focus();return}
+  if(a==='askq'){S.askOpen=true;drawAsk();$('#askin').focus();return}
   if(a==='addgap'){const text=v('gaptext'),tid=v('gapsec');if(!text)return toast('Describe the gap first.');st.gaps.unshift({id:uid(),text,tid,t:Date.now(),n:0,c:0,done:0});saveState();render();return}
   if(a==='gapdone'){const g=st.gaps.find(x=>x.id===b.dataset.id);g.done=g.done?0:1;saveState();render();return}
   if(a==='gapquiz'){const [g,t]=gapTopic(b.dataset.id);if(!g)return;return run('Claude is writing questions on "'+g.text+'"…',async()=>{const r=await genQuestions(t,st.prefs.setSize,g.text,g.id);startQuiz(r.qs,'Gap: '+g.text,t.id)})}
   if(a==='gaplearn'){const [g,t]=gapTopic(b.dataset.id);if(!g)return;S.session=null;return run('Claude is writing a lesson on "'+g.text+'"…',async()=>{openLesson(await genLesson(t,'std',g.text))})}
   if(a==='brief')return run('Claude is reading your record…',async()=>{S.brief=await askText(`You are the chief resident mentoring one physician. ${st.prefs.about}\nHere is the study record:\n${recordSummary()}\n\nWrite a brief of at most 170 words, spoken plainly to the physician as "you": what the record shows is strong, what is weak or slipping, any topic where confidence is ahead of accuracy, anything neglected, and exactly what to do in the next three sessions. If there is little data yet, say so and recommend a starting sequence weighted to outpatient medicine. No headings, no preamble.`,'default')});
   if(a==='saytext'){const t=b.dataset.k==='brief'?S.brief:S.chat[Number(b.dataset.i)].content;P.load([{say:String(t).replace(/[*#_`]/g,'')}],b.dataset.k==='brief'?'Chief resident\'s brief':'Tutor','');return}
-  if(a==='chatsend'){const t=v('chatin');if(!t)return;S.chat.push({role:'user',content:t});const first={role:'user',content:`You are a physician tutor and mentor inside a continuing education app. ${st.prefs.about}\nThe physician's record:\n${recordSummary()}\nAnswer at attending level, concisely, as a colleague. Name the guideline and year behind a recommendation. Never invent a citation, statistic, dose or threshold; say when you are unsure or when guidance may have changed. For EHR, billing and quality topics, flag what depends on the local build or payer. You have no live web access here.\n\nFirst message: ${S.chat[0].content}`};
-    return run('Claude is thinking…',async()=>{try{const r=await askText([first,...S.chat.slice(1)].slice(-21),'default');S.chat.push({role:'assistant',content:r})}catch(x){S.chat.pop();throw x}})}
+  if(a==='chatsend')return sendChat(v('chatin'));
+  if(a==='asksend'){const t=v('askin');$('#askin').value='';return sendChat(t)}
+  if(a==='askchip')return sendChat(b.dataset.p);
+  if(a==='askopen'){S.askOpen=true;drawAsk();const i=$('#askin');if(i)i.focus();return}
+  if(a==='askclose'){S.askOpen=false;drawAsk();return}
+  if(a==='mkplan'){const sc=planScope();S.askOpen=false;if(S.quiz)endQuiz();S.lesson=null;S.deck=null;S.tab=hasBP()&&sc==='abim'?'boards':'today';return run('Claude is building your learning plan…',()=>makePlan(sc))}
   if(a==='chatclear'){S.chat=[];render();return}
   if(a==='addgoal'){const text=v('gtext');if(!text)return toast('Say what you want to accomplish.');const g={id:uid(),area:v('garea'),text,horizon:v('ghor'),t:Date.now()};st.goals.push(g);saveState();S.goal=g.id;render();return}
   if(a==='addarea'){const n=v('newarea');if(n&&!areas().includes(n)){st.areas.push(n);saveState();render()}return}
@@ -714,6 +786,7 @@ document.addEventListener('click',async e=>{
   if(a==='libcheck'){st.prefs.libName=v('libname')||st.prefs.libName;return run('Looking in Google Drive…',async()=>{try{await libInit(true);toast('Library connected.')}catch(x){throw{code:'upstream_error',message:(x&&x.message)||'Google Drive could not be reached. Allow the connector for this page and try again.'}}})}
   if(a==='backup')return buildBackup();
 });
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&e.target.id==='askin'){e.preventDefault();const t=e.target.value;e.target.value='';sendChat(t)}if(e.key==='Escape'&&S.askOpen){S.askOpen=false;drawAsk()}});
 document.addEventListener('change',e=>{if(e.target.id==='examdate'){st.prefs.examDate=e.target.value;saveState();render();return}if(e.target.id==='cscope'){S.cscope=e.target.value;render();return}const s=e.target.closest('[data-step]');if(s&&S.goal){const d=docs['goal_'+S.goal];d.done=d.done||{};d.done[s.dataset.step]=s.checked?1:0;put('goal_'+S.goal,d)}});
 
 /* ---------- Boot ---------- */
