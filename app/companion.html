@@ -532,13 +532,13 @@ async function audit(qs,t,ref){if(!st.prefs.audit||!qs.length)return {qs,dropped
   try{const r=await ask(`${rules(t)}${refBlock(ref)}\n\nYou are now the item reviewer for a board examination committee. Check each question below against current guidelines${ref?' and the reference text':''}. Reject a question if the keyed answer is not clearly the single best answer, if any stated fact, dose or threshold is wrong or outdated, or if two options are equally defensible. Be strict: when in doubt, reject.\n\nQUESTIONS:\n${JSON.stringify(qs.map((q,i)=>({i,stem:q.stem,options:q.opts,keyed:'ABCDE'[q.ans],explanation:q.exp})))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject","note":"reason if rejected"}]}`);
     const bad=new Set(A(r.reviews).filter(x=>x.verdict==='reject').map(x=>x.i));return {qs:qs.filter((q,i)=>!bad.has(i)).map(q=>(q.rev=1,q)),dropped:bad.size,reviewed:true}}
   catch(e){return {qs,dropped:0,reviewed:false}}}
-async function genQuestions(t,n,focus,gapId){const ref=await libRef(t,focus);const seen=bank(t.sec.id).qs.filter(q=>q.tid===t.id).slice(-15).map(q=>q.obj).filter(Boolean);
-  const r=await ask(`${rules(t)}${refBlock(ref)}\n\nTASK: Write ${n} board-style questions on this topic${focus?`, concentrating on this stated knowledge gap: "${focus}"`:''}. ${QSPEC}\nDifficulty for this set: level ${qD()} of 5, ${DIFF[qD()][0].toLowerCase()}. ${DIFF[qD()][1]} Hold every question in the set to this level. Difficulty comes from clinical reasoning, never from ambiguity, trick wording or rare facts.${seen.length?'\nAlready asked, so test different points: '+seen.join(' | '):''}\n\nReply with JSON only: {"questions":[${QJSON}]}`);
-  const qs=A(r.questions).map(q=>cleanQ(q,t,{ref:ref?ref.title:'',gap:gapId||'',d:qD()})).filter(Boolean);if(!qs.length)throw{code:'invalid_json'};
+async function genQuestions(t,n,focus,gapId,X){X=X||{};const LV=X.level||qD();const ref=await libRef(t,focus);const seen=bank(t.sec.id).qs.filter(q=>q.tid===t.id).slice(-15).map(q=>q.obj).filter(Boolean);
+  const r=await ask(`${rules(t)}${refBlock(ref)}\n\nTASK: Write ${n} board-style questions on this topic${focus?`, concentrating on this stated knowledge gap: "${focus}"`:''}. ${QSPEC}${X.basis?'\n'+X.basis:''}\nDifficulty for this set: level ${LV} of 5, ${DIFF[LV][0].toLowerCase()}. ${DIFF[LV][1]} Hold every question in the set to this level. Difficulty comes from clinical reasoning, never from ambiguity, trick wording or rare facts.${seen.length?'\nAlready asked, so test different points: '+seen.join(' | '):''}\n\nReply with JSON only: {"questions":[${QJSON}]}`);
+  const qs=A(r.questions).map(q=>cleanQ(q,t,{ref:ref?ref.title:'',gap:gapId||'',d:LV,from:X.from||''})).filter(Boolean);if(!qs.length)throw{code:'invalid_json'};
   const a=await audit(qs,t,ref);if(!a.qs.length)throw{code:'upstream_error',message:'Every question in that set failed the accuracy review. Try again.'};
   bank(t.sec.id).qs.push(...a.qs);saveBank(t.sec.id);return a}
-async function genLesson(t,len,focus){const L=LEN[len],ref=await libRef(t,focus);
-  const r=await ask(`${rules(t)}${refBlock(ref)}\n\nTASK: Write a ${L.name.toLowerCase()} audio lesson of about ${L.words} words on this topic${focus?`, concentrating on: "${focus}"`:''}.
+async function genLesson(t,len,focus,X){X=X||{};const L=LEN[len],ref=await libRef(t,focus);
+  const r=await ask(`${rules(t)}${refBlock(ref)}\n\nTASK: Write a ${L.name.toLowerCase()} audio lesson of about ${L.words} words on this topic${focus?`, concentrating on: "${focus}"`:''}.${X.basis?'\n'+X.basis:''}
 It will be read aloud by a speech voice while the physician drives or rests after clinic, and shown as text for reading. Write it to be heard: the voice of a senior colleague teaching at the bedside, full sentences, no bullet lists, no tables, no symbols that read badly aloud (write "greater than or equal to", "milligrams per deciliter"), and spell out an abbreviation the first time.
 Shape: open with a two or three sentence patient case that makes the topic matter; teach the concept and the reasoning; come back to the case and work through the decision; finish with what to do differently in clinic. Do not repeat a point in different words. ${len==='short'?'Keep only the highest-yield points: what is tested and what changes management.':'Go deeper into the reasoning, the exceptions, and the evidence behind the recommendation.'}
 Then write 2 check questions on what the lesson taught. ${QSPEC}
@@ -549,8 +549,8 @@ Tables: whenever a segment teaches something graded or laid out in levels (a sta
   if(r)r.segments=A(r.segments).filter(x=>x&&typeof x==='object'&&x.text);if(!r||!r.segments.length)throw{code:'invalid_json'};
   const id=uid(),qs=A(r.questions).map(q=>cleanQ(q,t,{ref:ref?ref.title:'',les:id})).filter(Boolean);
   const a=await audit(qs,t,ref);bank(t.sec.id).qs.push(...a.qs);saveBank(t.sec.id);
-  const les={id,tid:t.id,len,min:L.min,focus:focus||'',title:String(r.title||t.name),segs:r.segments.map(s=>({h:String(s.heading||''),x:String(s.text||''),f:String(s.flag||'').trim(),tb:cleanTable(s.table)})),pts:A(r.keyPoints).map(String),pit:A(r.pitfalls).map(String),src:A(r.sources).map(String),unc:A(r.uncertain).map(String).filter(x=>x&&!/^(none|n\/a|nothing|empty)\b/i.test(x.trim())),qids:a.qs.map(q=>q.id),ref:ref?ref.title:'',t:Date.now()};
-  put('les_'+id,les);st.lessons.push({id,tid:t.id,title:les.title,len,min:L.min,t:les.t});while(st.lessons.length>80){del('les_'+st.lessons.shift().id)}
+  const les={id,tid:t.id,len,min:L.min,parent:X.from||'',deeper:X.from?1:0,focus:focus||'',title:String(r.title||t.name),segs:r.segments.map(s=>({h:String(s.heading||''),x:String(s.text||''),f:String(s.flag||'').trim(),tb:cleanTable(s.table)})),pts:A(r.keyPoints).map(String),pit:A(r.pitfalls).map(String),src:A(r.sources).map(String),unc:A(r.uncertain).map(String).filter(x=>x&&!/^(none|n\/a|nothing|empty)\b/i.test(x.trim())),qids:a.qs.map(q=>q.id),ref:ref?ref.title:'',t:Date.now()};
+  put('les_'+id,les);st.lessons.push({id,tid:t.id,title:les.title,len,min:L.min,t:les.t,deeper:X.from?1:0});while(st.lessons.length>80){del('les_'+st.lessons.shift().id)}
   addCards(t,r.cards,ref?ref.title:'');const s=tS(t.id);s.les++;s.last=Date.now();day().les++;saveState();return les}
 const findQ=id=>allQs().find(q=>q.id===id);
 
@@ -663,9 +663,9 @@ function drawAsk(){const el=$('#askp'),fab=$('#fab');fab.hidden=!!S.askOpen||S.t
 
 /* ---------- Screen state ---------- */
 const S={askOpen:false,asking:false,deck:null,clist:false,cscope:'all',tab:'today',busy:'',err:'',track:null,sec:null,topic:null,lesson:null,quiz:null,session:null,chat:[],goal:null,brief:null,form:{}};
-const TABS=[['today','Today'],['boards','Boards'],['learn','Curriculum'],['questions','Questions'],['cards','Cards'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
+const TABS=[['today','Today'],['boards','Boards'],['history','History'],['learn','Curriculum'],['questions','Questions'],['cards','Cards'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
 function render(){ $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
-  const v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])();
+  const v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,history:vHistory,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])();
   $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();drawAsk();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1)}
 const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="small muted">${/lesson/.test(S.busy)?'Writing a lesson takes about a minute. '+(st.prefs.auto?'It starts playing as soon as it is ready; keep this screen open.':'It opens as text as soon as it is ready.'):''}</p><p class="tiny muted">${st.prefs.audit?'Each set is written, then checked by a second review pass before you see it.':''}</p></div>`:'';
 const modeRow=()=>`<div class="plain"><span class="eyebrow">When the lesson is ready</span>${segBtns('auto',[[true,'Listen: play it aloud'],[false,'Read: show the text']],st.prefs.auto)}<span class="small muted">${st.prefs.auto?'Audio starts by itself and the text follows along on screen. Controls sit at the bottom.':'The lesson opens as text. A Listen button on it plays the audio whenever you want.'}</span></div>`;
@@ -725,6 +725,15 @@ function vBoards(){
    <p class="tiny muted">High relevance: very likely to appear. Medium: moderately likely. Low: will not appear, so it is left out of the plan. Low frequency topics are capped by the ABIM at a small share of questions.</p>
    ${MCP?'<div class="row"><button class="btn sm" data-act="bpload">Reload the blueprint from Drive</button></div>':''}</div>`}
 
+/* ----- History: everything studied, to reopen, re-test or take further ----- */
+function vHistory(){const f=S.hf||'all',all=st.lessons.slice().reverse(),keys=[...new Set(all.map(l=>TOP[l.tid]&&secDisc(TOP[l.tid].sec)).filter(Boolean))],list=all.filter(l=>TOP[l.tid]&&(f==='all'||secDisc(TOP[l.tid].sec)===f||(f==='done'&&l.done)||(f==='open'&&!l.done)));
+  const cs=cardStat(),ct={};allCards().forEach(c=>{const x=ct[c.tid]||(ct[c.tid]={n:0,due:0});x.n++;if(c.n&&c.due<=Date.now())x.due++});const decks=Object.keys(ct).filter(id=>TOP[id]).sort((a,b)=>ct[b].due-ct[a].due||ct[b].n-ct[a].n);
+  return `<div class="plain"><h1>History</h1><p class="small muted">Every lesson you have generated, newest first. Open one to read or listen again, test yourself on it, or dig deeper from where it stops.</p></div>
+  ${all.length?`<label class="f" style="max-width:320px">Show<select id="hfilter"><option value="all">All lessons (${all.length})</option><option value="done" ${f==='done'?'selected':''}>Completed</option><option value="open" ${f==='open'?'selected':''}>Not yet completed</option>${keys.map(k=>`<option value="${k}" ${f===k?'selected':''}>${esc(discName(k))}</option>`).join('')}</select></label>`:''}
+  <div class="card" style="gap:0"><h3>Lessons</h3>${list.length?list.map(l=>{const qs=allQs().filter(q=>q.les===l.id||q.from===l.id),n=qs.reduce((a,q)=>a+q.hist.length,0),c=qs.reduce((a,q)=>a+q.hist.filter(h=>h.ok).length,0);return `<button class="item" data-les="${l.id}"><div><b>${esc(l.title)}</b><div class="tiny muted">${esc(TOP[l.tid].sec.name)} · ${l.min||LEN[l.len].min} min · ${new Date(l.t).toLocaleDateString(undefined,{month:'short',day:'numeric'})}${n?` · ${c}/${n} on its questions`:''}</div></div><span class="row" style="flex-wrap:nowrap">${l.deeper?'<span class="chip warn">Deeper</span>':''}<span class="chip ${l.done?'good':'off'}">${l.done?'Completed':'Open'}</span></span></button>`}).join(''):`<p class="small muted" style="padding-top:8px">${all.length?'Nothing matches that filter.':'No lessons yet. Start a session on the Today tab and it will appear here.'}</p>`}</div>
+  <div class="card" style="gap:0"><h3>Flashcard decks</h3>${decks.length?decks.map(id=>{const x=cs[id];return `<button class="item" data-deck="${id}"><div><b>${esc(TOP[id].name)}</b><div class="tiny muted">${esc(TOP[id].sec.name)} · ${ct[id].n} cards${x&&x.k?' · average confidence '+(x.sum/x.k).toFixed(1)+' of 5':''}</div></div><span class="chip ${ct[id].due?'warn':'off'}">${ct[id].due?ct[id].due+' due':'Review'}</span></button>`}).join(''):'<p class="small muted" style="padding-top:8px">Cards appear here by topic once a lesson or a card request has written some.</p>'}</div>
+  ${st.sets.length?`<div class="card"><h3>Question sets</h3><div class="tablewrap"><table><thead><tr><th>Set</th><th class="n">Correct</th><th class="n">%</th><th>Date</th></tr></thead><tbody>${st.sets.slice(-15).reverse().map(x=>`<tr><td style="white-space:normal">${esc(x.title)}</td><td class="n">${x.c}/${x.n}</td><td class="n">${pct(x.c,x.n)}</td><td>${new Date(x.t).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</td></tr>`).join('')}</tbody></table></div></div>`:''}`}
+
 /* ----- Curriculum ----- */
 function vLearn(){
   if(S.topic)return vTopic(TOP[S.topic]);
@@ -749,6 +758,10 @@ function vTopic(t){const s=st.topics[t.id]||{n:0,c:0,les:0,rate:0},m=mastery(t.i
   ${past.length?`<div class="card" style="gap:0"><h3>Lessons on this topic</h3>${past.map(x=>`<button class="item" data-les="${x.id}"><div><b>${esc(x.title)}</b><div class="tiny muted">${LEN[x.len].name} · ${new Date(x.t).toLocaleDateString()}</div></div><span class="chip">Open</span></button>`).join('')}</div>`:''}`}
 
 /* ----- A lesson: text on screen, audio in the transport ----- */
+const lessonGist=L=>`"${L.title}". Its sections: ${L.segs.map(x=>x.h).filter(Boolean).join('; ')}. Its key points: ${L.pts.join(' ')}`;
+const basisQ=L=>`These questions follow a lesson the physician has studied: ${lessonGist(L)}\nTest whether what that lesson taught can be applied to new patients. Every question must rest on something the lesson covered, in a case the lesson did not use.`;
+const basisDeep=L=>`This is a "dig deeper" follow-up to a lesson the physician has already completed: ${lessonGist(L)}\nDo not re-teach those points; assume them. Go further: the mechanism behind the recommendation, the exceptions and special populations, the harder and atypical cases, the trials the guidance rests on and where the evidence is thin, and what a subspecialist would add. Title it so it is clearly the next level on the same subject.`;
+const basisDeepQ=L=>`These are "dig deeper" questions following a lesson the physician has completed: ${lessonGist(L)}\nGo beyond what that lesson stated outright: exceptions, special populations, complications of treatment, and what to do when first-line management fails.`;
 function lessonQueue(L,withQs){const q=[{say:L.title+'.',seg:0}];L.segs.forEach((s,i)=>{if(s.h)q.push({say:s.h+'.',seg:i});q.push({say:s.x,seg:i});if(s.f)q.push({say:'A note of caution. '+s.f,seg:i});q.push({wait:500,seg:i})});
   if(L.pts.length)q.push({say:'Key points. '+L.pts.join(' '),seg:'pts'});
   if(L.unc&&L.unc.length)q.push({say:'Before you rely on this lesson, verify the following. '+L.unc.join(' '),seg:'unc'});
@@ -765,6 +778,9 @@ function vLesson(){const L=S.lesson,t=TOP[L.tid],ss=S.session,qs=L.qids.map(find
   <div class="card"><h3>How well do you know this now?</h3>${rateRow(L.tid,s.rate)}
    <div class="row">${L.done?`<span class="chip good">Completed ${new Date(L.done).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</span>`:'<button class="btn pri" data-act="lesdone">Mark as complete</button>'}<span class="small muted">${L.done?'Logged in your study record.':'Logs this lesson in your study record. Listening to the end marks it for you.'}</span></div></div>
   ${L.src.length?`<div class="plain"><span class="eyebrow">Sources named in this lesson</span><ul class="pts small muted">${L.src.map(p=>`<li>${esc(p)}</li>`).join('')}</ul><p class="tiny muted">Written by AI${L.ref?' from your reference text':''}. Confirm against the source before changing practice.</p></div>`:''}
+  ${S.busy?busy():`<div class="card"><h3>Go further with this lesson</h3>${L.parent&&docs['les_'+L.parent]?`<p class="small muted">Follows <button class="btn link" data-les="${L.parent}" style="padding:0">${esc(docs['les_'+L.parent].title)}</button></p>`:''}
+   <div class="plain"><span class="eyebrow">Test what it taught</span><div class="row" style="align-items:flex-end">${qnField()}<button class="btn" data-act="lesq">Questions on this lesson</button><button class="btn" data-act="lescards">Flashcards on it</button></div></div>
+   <div class="plain"><span class="eyebrow">Dig deeper</span><span class="small muted">Picks up where this lesson stops: mechanisms, exceptions, harder cases and the evidence behind the guidance.</span><div class="row"><button class="btn pri" data-act="lesdeep" data-kind="lesson">Dig deeper: lesson · ${LEN.deep.min} min</button><button class="btn" data-act="lesdeep" data-kind="quiz">Dig deeper: harder questions</button></div></div></div>`}
   ${ss&&ss.i+1<ss.plan.length?`<div class="row"><button class="btn pri" data-act="nextlesson" ${ss.next?'':'disabled'}>Next lesson</button></div>`:ss?`<div class="row"><button class="btn pri" data-act="closelesson">Finish session</button></div>`:''}`}
 const rateRow=(tid,cur)=>`<div class="rate">${[[1,'New to me'],[2,'Shaky'],[3,'Getting there'],[4,'Solid'],[5,'Could teach it']].map(([v,l])=>`<button data-rate="${v}" data-tid="${tid}" aria-pressed="${cur===v}"><b>${v}</b>${l}</button>`).join('')}</div>`;
 function qBody(q,picked){const done=picked!=null;
@@ -903,6 +919,7 @@ function readBackup(text){let j;try{j=JSON.parse(text)}catch(e){return {err:'Tha
 
 document.addEventListener('click',async e=>{unlock();
   const tab=e.target.closest('[data-tab]');if(tab){if(S.quiz)endQuiz();if(!P.on)endAct(S.deck?{n:S.deck.seen}:null);S.tab=tab.dataset.tab;S.lesson=null;S.deck=null;S.clist=false;S.err='';if(S.session&&!P.on)S.session=null;render();scrollTo(0,0);return}
+  const dk=e.target.closest('[data-deck]');if(dk){S.tab='cards';S.cscope='top:'+dk.dataset.deck;S.deck=null;S.clist=false;render();scrollTo(0,0);return}
   const nav=e.target.closest('[data-track],[data-sec],[data-topic],[data-goal],[data-les]');
   if(nav){const d=nav.dataset;if(d.track)S.track=d.track;if(d.sec){S.sec=d.sec;S.track=SEC[d.sec].track.id;S.topic=null;S.tab='learn'}if(d.topic){S.tab='learn';S.topic=d.topic;S.sec=TOP[d.topic].sec.id;S.track=TOP[d.topic].sec.track.id;S.form={}}if(d.goal)S.goal=d.goal;
     if(d.les){const L=docs['les_'+d.les];if(L){S.session=null;openLesson(L)}else toast('That lesson is no longer saved.');return}S.err='';render();scrollTo(0,0);return}
@@ -944,6 +961,11 @@ document.addEventListener('click',async e=>{unlock();
     put('blueprint',{title:f.title,cats,moc:/Maintenance of Certification|MOC/.test(text)?1:0,t:Date.now()});applyBlueprint();st.prefs.scope='abim';saveState();toast('Blueprint loaded: '+cats.reduce((n,c)=>n+c.topics.length,0)+' topics.')})}
   if(a==='listen'){if(S.session)playSession();else playLesson(S.lesson);render();return}
   if(a==='nextlesson')return advance();
+  if(a==='lesq'||a==='lescards'||a==='lesdeep'){const L=S.lesson,t=TOP[L.tid],n=qN(),kind=b.dataset.kind;if(!t)return;P.stop();S.session=null;
+    if(a==='lesq')return run('Claude is writing '+n+' questions on "'+L.title+'"…',async()=>{const r=await genQuestions(t,n,'',null,{basis:basisQ(L),from:L.id});startQuiz(r.qs,'On: '+L.title,t.id)});
+    if(a==='lescards')return run('Claude is writing cards on "'+L.title+'"…',async()=>{const made=await genCards(t,10,L.title);if(!made.length)throw{code:'upstream_error',message:'No new cards passed the accuracy check. Try again.'};S.lesson=null;S.tab='cards';S.cscope='top:'+t.id;startDeck(made,L.title)});
+    if(kind==='quiz')return run('Claude is writing harder questions beyond "'+L.title+'"…',async()=>{const r=await genQuestions(t,n,'',null,{basis:basisDeepQ(L),from:L.id,level:Math.min(5,Math.max(4,qD()+1))});startQuiz(r.qs,'Dig deeper: '+L.title,t.id)});
+    return run('Claude is writing a dig deeper lesson beyond "'+L.title+'"…',async()=>{const D=await genLesson(t,'deep',L.focus||'',{basis:basisDeep(L),from:L.id});openLesson(D);if(st.prefs.auto)playLesson(D)})}
   if(a==='lesdone'){completeLesson(S.lesson);render();return}
   if(a==='closelesson'){const ss=S.session;P.stop();endAct();S.lesson=null;if(ss)finishSession(ss.i+1>=ss.plan.length);render();return}
   if(a==='lesson'){const t=TOP[S.topic],len=b.dataset.len,f=v('focus');S.form.focus=f;S.session=null;return run('Claude is writing a '+LEN[len].name.toLowerCase()+' lesson on '+t.name+'…',async()=>{const L=await genLesson(t,len,f);openLesson(L);if(st.prefs.auto)playLesson(L);S.form={}})}
@@ -991,7 +1013,8 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='restoreok'){const R=S.restore;if(!R||R.err)return;P.stop(true);endAct();clearTimeout(timers.state);timers.state=null;Object.entries(R.docs).forEach(([n,body])=>put(n,clone(body)));CS=null;S.restore=null;S.lesson=null;S.quiz=null;S.deck=null;S.session=null;loadState();render();toast('Restored '+R.n+' items.',5000);return}
 });
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&e.target.id==='askin'){e.preventDefault();const t=e.target.value;e.target.value='';sendChat(t)}if(e.key==='Escape'&&S.askOpen){S.askOpen=false;drawAsk()}});
-document.addEventListener('change',e=>{if(e.target.id==='qn'){qN();return}
+document.addEventListener('change',e=>{if(e.target.id==='hfilter'){S.hf=e.target.value;render();return}
+  if(e.target.id==='qn'){qN();return}
   if(e.target.id==='restorefile'){const f=e.target.files&&e.target.files[0];if(!f)return;if(f.size>30e6){S.restore={err:'That file is too large to be a backup.'};render();return}f.text().then(t=>{S.restore=readBackup(t);render()},()=>{S.restore={err:'The file could not be read.'};render()});return}
   const ds=e.target.dataset||{};if(ds.len||ds.sess){const o=ds.len?(st.prefs.lens=st.prefs.lens||{}):(st.prefs.sess=st.prefs.sess||{});o[ds.len||ds.sess]=Number(e.target.value);applyLens();saveState();render();return}
   const id=e.target.id;if(id==='plpri'){st.prefs.priority=e.target.value.trim().slice(0,300);saveState();return}if(id==='plpw'){st.prefs.perWeek=Number(e.target.value)||0;saveState();return}
