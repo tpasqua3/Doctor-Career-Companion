@@ -309,7 +309,8 @@ const blank=()=>({v:1,prefs:{about:'Internal medicine physician preparing for th
   topics:{},days:{},custom:[],ahd:[],gaps:[],sets:[],lessons:[],goals:[],areas:[],lib:null,best:0});
 let st=blank();
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
-function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(st.prefs.examDate==null){const d=new Date();d.setMonth(d.getMonth()+8);st.prefs.examDate=dayStr(d)}applyBlueprint();applyCustom();applyLens()}
+function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(st.prefs.examDate==null){const d=new Date();d.setMonth(d.getMonth()+8);st.prefs.examDate=dayStr(d)}  applyBlueprint();applyCustom();applyLens();
+  Object.keys(docs).forEach(k=>{if(!k.startsWith('les_'))return;const L=docs[k];if(L&&L.id&&TOP[L.tid]&&Array.isArray(L.segs)&&!st.lessons.some(x=>x.id===L.id))st.lessons.push({id:L.id,tid:L.tid,title:L.title,len:L.len||'std',min:L.min,t:L.t||0,done:L.done||0})});st.lessons.sort((x,y)=>x.t-y.t);}
 const tS=id=>st.topics[id]||(st.topics[id]={n:0,c:0,les:0,last:0,rate:0});
 const day=(d=dayStr())=>st.days[d]||(st.days[d]={min:0,listen:0,q:0,c:0,les:0,done:0});
 const bank=sid=>docs['bank_'+sid]||(docs['bank_'+sid]={qs:[]});
@@ -480,13 +481,22 @@ function excerpt(text,keys,max=12000){text=text.replace(/^Mark this topic comple
   const pick=new Set();let len=0;[...sc].sort((a,b)=>b.s-a.s).forEach(x=>{if(len+x.p.length<=max||!pick.size){pick.add(x.i);len+=Math.min(x.p.length,max)}});
   return sc.filter(x=>pick.has(x.i)).map(x=>x.p).join('\n').slice(0,max)}
 async function libRef(t,focus){if(!MCP||!st.prefs.lib||!t.sec.lib)return null;
-  try{const lib=await libInit();if(!lib)return null;const ids=Object.keys(lib.folders).filter(n=>t.sec.lib.some(l=>n.toLowerCase().startsWith(l.toLowerCase()))).map(n=>lib.folders[n]);if(!ids.length)return null;
-    const keys=[...new Set(words(t.name+' '+(focus||'')))];let best=null;
-    for(const term of [focus,t.name.split(/[:,]| and /)[0]].filter(Boolean).map(x=>x.trim().slice(0,60))){
-      const scan=ids.length>4?[null]:ids;for(const id of scan){const r=await drive('search_files',{query:(id?`parentId = '${id}' and `:'')+`fullText contains '${q1(term)}'`,excludeContentSnippets:true,pageSize:id?6:25});
-        A(r.files).filter(f=>id||ids.includes(f.parentId)).forEach((f,rank)=>{if(!/document|pdf|word/.test(f.mimeType||''))return;const tw=words(f.title);const s=keys.filter(k=>tw.some(w=>w.startsWith(k.slice(0,5)))).length*3-rank*.4;if(!best||s>best.s)best={s,f}})}
-      if(best)break}
-    if(!best)return null;let text=chapterCache.get(best.f.id);if(!text){text=(await drive('read_file_content',{fileId:best.f.id})).fileContent||'';chapterCache.set(best.f.id,text)}
+  try{const lib=await libInit();if(!lib)return null;const all=Object.values(lib.folders),home=Object.keys(lib.folders).filter(n=>t.sec.lib.some(l=>n.toLowerCase().startsWith(l.toLowerCase()))).map(n=>lib.folders[n]);if(!all.length)return null;
+    /* A topic is not always filed where its discipline suggests (hypertension sits with the kidney chapters), so every subject folder is
+       searched. A chapter whose title names the topic wins; failing that, the few best candidates are opened and the one that actually
+       says the most about the topic is used. */
+    const keys=[...new Set(words(t.name+' '+(focus||'')))],tkeys=[...new Set(words(t.name))],cand=new Map();
+    for(const term of [focus,t.name.split(/[:,(]| and /)[0]].filter(Boolean).map(x=>x.trim().slice(0,60))){
+      const r=await drive('search_files',{query:`fullText contains '${q1(term)}'`,excludeContentSnippets:true,pageSize:40});
+      A(r.files).filter(f=>all.includes(f.parentId)&&/document|pdf|word/.test(f.mimeType||'')).forEach((f,rank)=>{const tw=words(f.title),hit=k=>tw.some(w=>w.startsWith(k.slice(0,5))||k.startsWith(w.slice(0,5)));
+        const sc=tkeys.filter(hit).length*4+keys.filter(hit).length+(home.includes(f.parentId)?1.5:0)-rank*.05,old=cand.get(f.id);if(!old||sc>old.sc)cand.set(f.id,{sc,f,titled:tkeys.some(hit)})});
+      if([...cand.values()].some(c=>c.titled))break}
+    const list=[...cand.values()].sort((x,y)=>y.sc-x.sc);if(!list.length)return null;
+    const read=async f=>{let text=chapterCache.get(f.id);if(text==null){text=(await drive('read_file_content',{fileId:f.id})).fileContent||'';chapterCache.set(f.id,text)}return text};
+    let best=list[0],text=await read(best.f);
+    if(!best.titled){const dens=x=>{const low=x.toLowerCase();return tkeys.reduce((n,k)=>n+low.split(k).length-1,0)/Math.sqrt(1+x.length/20000)};let top=dens(text);
+      for(const c of list.slice(1,3)){const x=await read(c.f),d=dens(x);if(d>top*1.2){top=d;best=c;text=x}}
+      if(top<3)return null}
     if(text.length<400)return null;return {title:best.f.title,text:excerpt(text,keys)}}
   catch(e){if(e&&e.code==='no_library')toast(e.message,6000);return null}}
 
