@@ -280,18 +280,18 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState!==
 addEventListener('pagehide',saveNow);
 async function fetchServer(){if(WEB){const r=await fetch('/api/progress?area='+AREA,{cache:'no-store'});if(r.status===401){location.replace('/account.html?next=1');return null}if(!r.ok)return null;OFFLINE=false;return (await r.json()).docs}
   const r=await MCP.callTool(CONN,'load_progress',{area:AREA,since:0},{cache:false});const p=r&&r.payload;return p&&p.docs}
-const strip=d=>{const o={};Object.entries(d||{}).forEach(([k,v])=>{if(k.startsWith(AREA+'/'))o[k.slice(AREA.length+1)]=v});return o};
+const strip=d=>{const o={};Object.entries(d||{}).forEach(([k,v])=>{if(k.startsWith(AREA+'/'))o[k.slice(AREA.length+1)]=clone(v)});return o};
 async function pull(){if(!LINKED||pending||jkeys().length||Date.now()-lastPull<15000||P.on)return;lastPull=Date.now();
   try{const d=await fetchServer();if(!d||pending||jkeys().length)return;const fresh=strip(d);
     const sig=o=>Object.keys(o).sort().map(k=>k+':'+((o[k]&&o[k]._t)||0)).join('|');
     if(sig(fresh)===sig(docs))return;docs=fresh;cacheDocs();loadState();render();toast('Updated with your record from another device.')}catch(e){}}
 
 /* ---------- The record ---------- */
-const blank=()=>({v:1,prefs:{about:'Internal medicine physician preparing for the ABIM certification examination and moving into outpatient primary care. Uses osteopathic manipulative treatment in practice.',setting:'out',commit:'std',rate:1,passive:true,audit:true,setSize:5,lib:true,libName:'MKSAP Database',bpName:'ABIM Blueprint',scope:'all',examDate:null,priority:'',perWeek:0,mix:'bal',lens:{short:6,std:10,deep:14},sess:{hy:8,std:20,deep:40,long:60}},
+const blank=()=>({v:1,prefs:{about:'Internal medicine physician preparing for the ABIM certification examination and moving into outpatient primary care. Uses osteopathic manipulative treatment in practice.',setting:'out',commit:'std',rate:1,auto:true,passive:true,audit:true,setSize:5,lib:true,libName:'MKSAP Database',bpName:'ABIM Blueprint',scope:'all',examDate:null,priority:'',perWeek:0,mix:'bal',lens:{short:6,std:10,deep:14},sess:{hy:8,std:20,deep:40,long:60}},
   topics:{},days:{},custom:[],ahd:[],gaps:[],sets:[],lessons:[],goals:[],areas:[],lib:null,best:0});
 let st=blank();
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
-function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),docs.state);st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(st.prefs.examDate==null){const d=new Date();d.setMonth(d.getMonth()+8);st.prefs.examDate=dayStr(d)}applyBlueprint();applyCustom();applyLens()}
+function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(st.prefs.examDate==null){const d=new Date();d.setMonth(d.getMonth()+8);st.prefs.examDate=dayStr(d)}applyBlueprint();applyCustom();applyLens()}
 const tS=id=>st.topics[id]||(st.topics[id]={n:0,c:0,les:0,last:0,rate:0});
 const day=(d=dayStr())=>st.days[d]||(st.days[d]={min:0,listen:0,q:0,c:0,les:0,done:0});
 const bank=sid=>docs['bank_'+sid]||(docs['bank_'+sid]={qs:[]});
@@ -346,6 +346,7 @@ const monthSoFar=()=>new Date().getDate();
 const TTS='speechSynthesis' in window&&typeof SpeechSynthesisUtterance!=='undefined';
 let VOICE=null;function pickVoice(){if(!TTS)return;const vs=speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang||''));VOICE=vs.find(v=>/natural|neural|enhanced|premium|siri/i.test(v.name)&&/en[-_]US/i.test(v.lang))||vs.find(v=>/en[-_]US/i.test(v.lang))||vs[0]||null}
 if(TTS){pickVoice();try{speechSynthesis.onvoiceschanged=pickVoice}catch(e){}}
+let unlocked=false;function unlock(){if(unlocked||!TTS)return;unlocked=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}
 const chunks=t=>{const out=[];let cur='';(String(t).replace(/\s+/g,' ').match(/[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$/g)||[]).forEach(s=>{if((cur+s).length>240&&cur){out.push(cur.trim());cur=''}cur+=s});if(cur.trim())out.push(cur.trim());return out};
 const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:null,
   load(items,title,sub,done){this.stop(true);this.q=[];items.forEach(it=>{if(it.say)chunks(it.say).forEach(c=>this.q.push({say:c,seg:it.seg}));else this.q.push(it)});this.i=0;this.title=title;this.sub=sub||'';this.done=done||null;this.on=true;this.paused=false;this.run()},
@@ -354,7 +355,7 @@ const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:nu
     const it=this.q[this.i],next=()=>{if(tok!==this.tok)return;this.i++;this.run()};mark(it.seg??-1);drawPlayer();
     if(it.wait){this.timer=setTimeout(next,it.wait);return}
     if(!TTS){this.timer=setTimeout(next,Math.max(1500,it.say.length*55/st.prefs.rate));return}
-    try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(it.say);if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}else u.lang='en-US';u.rate=st.prefs.rate;u.onend=next;u.onerror=e=>{if(e.error!=='interrupted'&&e.error!=='canceled')next()};speechSynthesis.speak(u)}catch(e){next()}},
+    try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(it.say);if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}else u.lang='en-US';u.rate=st.prefs.rate;u.onend=next;let begun=false;u.onstart=()=>{begun=true};if(this.i===0)this.timer=setTimeout(()=>{if(tok===this.tok&&!begun&&!speechSynthesis.speaking){this.paused=true;this.tok++;drawPlayer();toast('Tap the play button below to start the audio.',6000)}},3000);u.onerror=e=>{if(e.error!=='interrupted'&&e.error!=='canceled')next()};speechSynthesis.speak(u)}catch(e){next()}},
   toggle(){if(!this.on)return;this.paused=!this.paused;if(this.paused){this.tok++;clearTimeout(this.timer);try{speechSynthesis.cancel()}catch(e){}drawPlayer()}else this.run()},
   jump(n){if(!this.on)return;const seg=this.q[this.i]&&this.q[this.i].seg;let i=this.i;
     if(n>0){while(i<this.q.length&&this.q[i].seg===seg)i++}else{while(i>0&&this.q[i-1].seg===seg)i--;if(i===this.i&&i>0){const s2=this.q[i-1].seg;i--;while(i>0&&this.q[i-1].seg===s2)i--}}
@@ -374,7 +375,7 @@ function drawPlayer(){const el=$('#player');$('#fab').dataset.up=P.on?'1':'';if(
    The text is used in the moment and never stored in this app. */
 const chapterCache=new Map();
 async function drive(tool,input){const r=await MCP.callTool(GD,tool,input,{cache:{staleTime:6e5}});let p=r.payload??r.structuredContent;
-  if(typeof p==='string'){try{p=JSON.parse(p)}catch(e){p={fileContent:p}}}
+  if(typeof p==='string'){try{p=JSON.parse(p)}catch(e){p={fileContent:p}}}else if(p&&typeof p==='object'){try{p=clone(p)}catch(e){}}
   if(!p&&r.content){const t=r.content.find(c=>c.type==='text');if(t){try{p=JSON.parse(t.text)}catch(e){p={fileContent:t.text}}}}return p||{}}
 const q1=s=>String(s).replace(/\\/g,'').replace(/'/g,"\\'");
 async function libInit(force){if(!MCP||!st.prefs.lib)return null;if(st.lib&&st.lib.name===st.prefs.libName&&!force)return st.lib;
@@ -402,7 +403,8 @@ async function libRef(t,focus){if(!MCP||!st.prefs.lib||!t.sec.lib)return null;
 /* ---------- The AI ---------- */
 const ERR={not_granted:'Claude is turned off for this page. Reload it and choose Allow.',rate_limited:'The AI is busy right now. Try again in a minute.',invalid_json:'The answer came back in a broken format. Try again.',prompt_too_large:'That was too much text for one request.',refused:'The AI declined that request.',session_expired:'Your session expired. Reload the page.',unavailable:'The AI is not available in this view.'};
 const errMsg=e=>e&&e.code==='cancelled'?'':!e||!e.code?'Something went wrong inside the app: '+String((e&&e.message)||e).slice(0,160)+'. Try again; if it repeats, send this message to Claude.':(e&&(e.code==='rate_limited'||e.code==='upstream_error')&&e.message)||ERR[e&&e.code]||'The AI could not answer just now ('+((e&&e.code)||'error')+'). Try again.';
-async function ask(input,tier){if(!SAMPLE)throw{code:'unavailable'};return SAMPLE.json(input,{modelTier:tier||'default',cache:false})}
+/* Whatever Claude's storage, a connector or the AI hands back may be read-only. Everything is copied before the app touches it. */
+async function ask(input,tier){if(!SAMPLE)throw{code:'unavailable'};const r=await SAMPLE.json(input,{modelTier:tier||'default',cache:false});return r&&typeof r==='object'?clone(r):r}
 async function askText(input,tier){if(!SAMPLE)throw{code:'unavailable'};return (await SAMPLE(input,{modelTier:tier||'default',cache:false})).text}
 function webSample(){const call=async(input,opt)=>{const r=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input,tier:opt&&opt.modelTier==='quick'?'quick':'default'})});
     if(r.status===401){location.replace('/account.html?next=1');throw{code:'session_expired'}}let j={};try{j=await r.json()}catch(e){}if(!r.ok)throw{code:r.status===429?'rate_limited':'upstream_error',message:j.error};return {text:j.text||'',truncated:false}};
@@ -561,7 +563,8 @@ const TABS=[['today','Today'],['boards','Boards'],['learn','Curriculum'],['quest
 function render(){ $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
   const v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])();
   $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();drawAsk();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1)}
-const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="tiny muted">${st.prefs.audit?'Each set is written, then checked by a second review pass before you see it.':''}</p></div>`:'';
+const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="small muted">${/lesson/.test(S.busy)?'Writing a lesson takes about a minute. '+(st.prefs.auto?'It starts playing as soon as it is ready; keep this screen open.':'It opens as text as soon as it is ready.'):''}</p><p class="tiny muted">${st.prefs.audit?'Each set is written, then checked by a second review pass before you see it.':''}</p></div>`:'';
+const modeRow=()=>`<div class="plain"><span class="eyebrow">When the lesson is ready</span>${segBtns('auto',[[true,'Listen: play it aloud'],[false,'Read: show the text']],st.prefs.auto)}<span class="small muted">${st.prefs.auto?'Audio starts by itself and the text follows along on screen. Controls sit at the bottom.':'The lesson opens as text. A Listen button on it plays the audio whenever you want.'}</span></div>`;
 const segBtns=(name,opts,cur)=>`<div class="seg" role="group">${opts.map(([v,l])=>`<button data-set="${name}" data-v="${v}" aria-pressed="${String(cur)===String(v)}">${esc(l)}</button>`).join('')}</div>`;
 
 /* ----- Today: the daily check-in ----- */
@@ -572,15 +575,16 @@ function drawFigs(){const el=$('#figs');if(el)el.innerHTML=figs()}
 function vToday(){const d=day(),c=COMMIT[st.prefs.commit],pl=plan(Math.max(3,c.lessons)),due=dueQs().length,gaps=st.gaps.filter(g=>!g.done);
   return `<div class="card"><div class="row between"><div><div class="eyebrow">${new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</div><h1>${d.done?'Checked in for today':'Daily check-in'}</h1></div>${d.done?'<span class="chip good">Done</span>':''}</div><div id="figs" class="stack" style="gap:12px">${figs()}</div></div>
   ${busy()}
-  ${S.busy?'':`<div class="card"><h2>${d.done?'Keep going':'Today\'s session'}</h2>
+  ${S.busy?'':`<div class="card"><h2>${d.done?'Keep going':'Today\'s session'}</h2><p class="small muted">Pick a length, choose listen or read, and tap the button. Claude writes the lesson${c.lessons>1?'s':''} on the topic${c.lessons>1?'s':''} shown below, then ${st.prefs.auto?'plays':'opens'} ${c.lessons>1?'them one after another':'it'}.</p>
    <div class="plain"><span class="eyebrow">How much today</span>${segBtns('commit',Object.entries(COMMIT).map(([k,v])=>[k,v.name+' · '+v.min+' min']),st.prefs.commit)}<span class="small muted">${c.sub}. Lessons play one after another; the text follows along on screen. Change any of these lengths in Settings.</span></div>
    ${hasBP()?`<div class="plain"><span class="eyebrow">Study plan</span>${segBtns('scope',[['abim','ABIM boards'],['all','Full curriculum']],planScope())}</div>`:''}
    <div class="plain"><span class="eyebrow">Practice setting</span>${segBtns('setting',Object.entries(SETTING),st.prefs.setting)}</div>
+   ${modeRow()}
    <div class="plain"><span class="eyebrow">Up next, chosen from your record</span>${pl.slice(0,c.lessons).map(r=>`<div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><b>${esc(r.t.name)}</b><div class="tiny muted">${esc(r.t.sec.name)} · ${esc(r.why)}</div></div></div>`).join('')}</div>
-   <div class="row"><button class="btn pri" data-act="session">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} Start ${c.min}-minute session</button>${due?`<button class="btn" data-act="review">Review ${due} missed question${due>1?'s':''}</button>`:''}${dueCards('all').length?`<button class="btn" data-act="cduetoday">Flip ${dueCards('all').length} due card${dueCards('all').length>1?'s':''}</button>`:''}</div>
+   <div class="row"><button class="btn pri" data-act="session">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} ${st.prefs.auto?'Listen to':'Read'} a ${c.min}-minute session</button>${due?`<button class="btn" data-act="review">Review ${due} missed question${due>1?'s':''}</button>`:''}${dueCards('all').length?`<button class="btn" data-act="cduetoday">Flip ${dueCards('all').length} due card${dueCards('all').length>1?'s':''}</button>`:''}</div>
    ${SAMPLE?'':'<div class="note">The AI is not available in this view, so new lessons and questions cannot be written here. Saved lessons still play.</div>'}${TTS?'':'<div class="note">This browser has no speech voice. Lessons show as text only.</div>'}</div>`}
   ${S.busy?'':`<div class="card"><h3>Request a topic</h3><p class="small muted">Name anything and it is taught, tested or turned into cards now. It is filed under the matching curriculum topic, or kept under My topics if there is none.</p>
-   <label class="f">Topic<input type="text" id="reqtext" placeholder="e.g. hyponatremia workup, or anticoagulation around procedures"></label>
+   ${modeRow()}<label class="f">Topic<input type="text" id="reqtext" placeholder="e.g. hyponatremia workup, or anticoagulation around procedures"></label>
    <div class="row">${Object.entries(LEN).map(([k,v])=>`<button class="btn ${k==='std'?'pri':''}" data-act="req" data-kind="${k}">${v.name} · ${v.min} min</button>`).join('')}<button class="btn" data-act="req" data-kind="quiz">Questions</button><button class="btn" data-act="req" data-kind="cards">Cards</button></div></div>
   <div class="card"><h3>Academic half day</h3><p class="small muted">Add what your program is teaching and when. In the week before, that topic moves to the front of your sessions so you arrive prepared.</p>
    ${A(st.ahd).filter(a=>a.date>=dayStr()).sort((x,y)=>x.date<y.date?-1:1).map(a=>`<div class="plain" style="border-top:1px solid var(--line);padding-top:8px"><div class="row between"><div style="min-width:0;flex:1"><b>${esc(a.text)}</b><div class="tiny muted">${new Date(a.date+'T12:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}${TOP[a.tid]?' · filed under '+esc(TOP[a.tid].sec.name):''}${started(a.tid)?' · prepared':''}</div></div><button class="btn sm" data-act="ahddel" data-id="${a.id}" aria-label="Remove">Remove</button></div>
@@ -604,8 +608,8 @@ function vBoards(){
   ${vPlan()}
   ${b.moc?`<div class="note">This document is the blueprint for the ABIM's maintenance of certification exam and Longitudinal Knowledge Assessment. The first-time Certification exam has its own blueprint on the ABIM website, and its category percentages may differ. The relevance ratings here come only with this version.</div>`:''}
   ${busy()}${S.busy?'':`<div class="card"><h2>Board session</h2><div class="plain"><span class="eyebrow">How much today</span>${segBtns('commit',Object.entries(COMMIT).map(([k,v])=>[k,v.name+' · '+v.min+' min']),st.prefs.commit)}</div>
-   <div class="plain"><span class="eyebrow">Up next from the blueprint</span>${pl.slice(0,cm.lessons).map(r=>`<div><b>${esc(r.t.name)}</b><div class="tiny muted">${esc(r.t.sec.name)} · ${r.t.sec.pct}% of the exam · ${esc(r.why)}</div></div>`).join('')}</div>
-   <div class="row"><button class="btn pri" data-act="session" data-sc="abim">Start ${cm.min}-minute board session</button><button class="btn" data-act="mixed" data-sc="abim">Board question set</button><button class="btn" data-act="cboards">Board flashcards</button></div></div>`}
+   ${modeRow()}<div class="plain"><span class="eyebrow">Up next from the blueprint</span>${pl.slice(0,cm.lessons).map(r=>`<div><b>${esc(r.t.name)}</b><div class="tiny muted">${esc(r.t.sec.name)} · ${r.t.sec.pct}% of the exam · ${esc(r.why)}</div></div>`).join('')}</div>
+   <div class="row"><button class="btn pri" data-act="session" data-sc="abim">${st.prefs.auto?'Listen to':'Read'} a ${cm.min}-minute board session</button><button class="btn" data-act="mixed" data-sc="abim">Board question set</button><button class="btn" data-act="cboards">Board flashcards</button></div></div>`}
   <div class="card"><h3>By content category</h3><div class="tablewrap"><table><thead><tr><th>Category</th><th class="n">Exam</th><th class="n">High started</th><th class="n">Questions</th><th class="n">Correct</th><th class="n">Ready</th></tr></thead><tbody>
    ${rows.sort((p,q)=>q.s.pct-p.s.pct).map(r=>`<tr><td><button class="btn link" data-sec="${r.s.id}" style="padding:0;text-align:left;white-space:normal">${esc(r.s.name)}</button></td><td class="n">${r.s.pct}%</td><td class="n">${r.y.hs}/${r.y.hi}</td><td class="n">${r.x.n}</td><td class="n">${r.x.n?pct(r.x.c,r.x.n)+'%':'—'}</td><td class="n">${Math.round(r.y.ready)}</td></tr>`).join('')}</tbody></table></div>
    <p class="tiny muted">High relevance: very likely to appear. Medium: moderately likely. Low: will not appear, so it is left out of the plan. Low frequency topics are capped by the ABIM at a small share of questions.</p>
@@ -629,7 +633,7 @@ function vTopic(t){const s=st.topics[t.id]||{n:0,c:0,les:0,rate:0},m=mastery(t.i
    ${overconfident(t.id)?'<div class="note">You rate this topic higher than your answers support. Worth a set of questions.</div>':''}
    ${t.bp?`<p class="small"><b>Blueprint relevance.</b> ${TASKS.map((k,i)=>esc(k)+': '+RL[t.bp.r[i]]).join(' · ')}${t.bp.lf?' · low frequency':''}</p>`:''}
    <p class="tiny muted">Sources for this section: ${esc(t.sec.src)}${t.sec.lib&&MCP&&st.prefs.lib?' · grounded in your '+esc(st.prefs.libName)+' text':''}</p></div>
-  ${busy()}${S.busy?'':`<div class="card"><h3>Learn it</h3><label class="f">Focus (optional)<input type="text" id="focus" placeholder="A subtopic, a question, or leave blank for the core lesson" value="${esc(S.form.focus||'')}"></label>
+  ${busy()}${S.busy?'':`<div class="card"><h3>Learn it</h3>${modeRow()}<label class="f">Focus (optional)<input type="text" id="focus" placeholder="A subtopic, a question, or leave blank for the core lesson" value="${esc(S.form.focus||'')}"></label>
    <div class="row">${Object.entries(LEN).map(([k,v])=>`<button class="btn ${k==='std'?'pri':''}" data-act="lesson" data-len="${k}">${v.name} · ${v.min} min</button>`).join('')}</div>
    <h3>Test it</h3><div class="row"><button class="btn" data-act="quiz" data-n="${st.prefs.setSize}">${st.prefs.setSize} new questions</button><button class="btn" data-act="quiz" data-n="10">10 new questions</button>${nq?`<button class="btn" data-act="requiz">Redo from your ${nq} saved</button>`:''}<button class="btn" data-act="ctopic">Flashcards (${cardsIn('top:'+t.id).length})</button></div></div>`}
   ${past.length?`<div class="card" style="gap:0"><h3>Lessons on this topic</h3>${past.map(x=>`<button class="item" data-les="${x.id}"><div><b>${esc(x.title)}</b><div class="tiny muted">${LEN[x.len].name} · ${new Date(x.t).toLocaleDateString()}</div></div><span class="chip">Open</span></button>`).join('')}</div>`:''}`}
@@ -745,18 +749,18 @@ async function run(label,fn){if(S.busy)return;S.busy=label;S.err='';render();try
 function openLesson(L){S.lesson=L;S.lq={};S.quiz=null;render();scrollTo(0,0)}
 async function startSession(sc){const c=COMMIT[st.prefs.commit],pl=plan(c.lessons,sc);S.lesson=null;P.stop(true);S.session={plan:pl.map(r=>r.t),i:0,len:c.len,next:null,loading:false};
   await run('Claude is writing your first lesson on '+pl[0].t.name+'…',async()=>{const L=await genLesson(pl[0].t,c.len);openLesson(L)});
-  if(S.lesson&&S.session){playSession();prefetch()}else S.session=null}
+  if(S.lesson&&S.session){if(st.prefs.auto)playSession();prefetch()}else S.session=null}
 function playSession(){const ss=S.session;playLesson(S.lesson,()=>{if(S.session!==ss)return;if(ss.i+1<ss.plan.length){if(ss.next)advance();else ss.waiting=true}else finishSession(true)})}
 async function prefetch(){const ss=S.session;if(!ss||ss.loading||ss.next||ss.i+1>=ss.plan.length)return;ss.loading=true;
   try{const L=await genLesson(ss.plan[ss.i+1],ss.len);if(S.session!==ss)return;ss.next=L;ss.loading=false;if(ss.waiting){ss.waiting=false;advance()}else if(S.lesson&&!S.busy)render()}
   catch(e){ss.loading=false;if(S.session===ss){toast('The next lesson could not be written. '+errMsg(e),6000);if(ss.waiting)finishSession(true)}}}
-function advance(){const ss=S.session;if(!ss||!ss.next)return;ss.i++;const L=ss.next;ss.next=null;openLesson(L);playSession();prefetch()}
+function advance(){const ss=S.session;if(!ss||!ss.next)return;ss.i++;const L=ss.next;ss.next=null;openLesson(L);if(st.prefs.auto)playSession();prefetch()}
 function finishSession(completed){const ss=S.session;S.session=null;if(completed){day().done=1;saveState();toast('Checked in. Session complete.')}if(!P.on)render()}
 function gapTopic(id){const g=st.gaps.find(x=>x.id===id);return g&&TOP[g.tid]?[g,TOP[g.tid]]:[null,null]}
 async function buildBackup(){const data=JSON.stringify({app:'doctor-career-companion',saved:new Date().toISOString(),docs},null,1),name='doctor-career-companion-'+dayStr()+'.json';
   if(WEB){location.href='/api/backup';return}if(DL){try{await DL.save({filename:name,data})}catch(e){if(e&&e.code!=='cancelled'&&e.code!=='declined')toast('The backup could not be saved.')}return}toast('Backups download from the website or from Claude.')}
 
-document.addEventListener('click',async e=>{
+document.addEventListener('click',async e=>{unlock();
   const tab=e.target.closest('[data-tab]');if(tab){if(S.quiz)endQuiz();S.tab=tab.dataset.tab;S.lesson=null;S.deck=null;S.clist=false;S.err='';if(S.session&&!P.on)S.session=null;render();scrollTo(0,0);return}
   const nav=e.target.closest('[data-track],[data-sec],[data-topic],[data-goal],[data-les]');
   if(nav){const d=nav.dataset;if(d.track)S.track=d.track;if(d.sec){S.sec=d.sec;S.track=SEC[d.sec].track.id;S.topic=null;S.tab='learn'}if(d.topic){S.tab='learn';S.topic=d.topic;S.sec=TOP[d.topic].sec.id;S.track=TOP[d.topic].sec.track.id;S.form={}}if(d.goal)S.goal=d.goal;
@@ -788,7 +792,7 @@ document.addEventListener('click',async e=>{
     const kind=b.dataset.kind,f=slug(text)===slug(t.name)?'':text;S.session=null;
     if(kind==='quiz')return run('Claude is writing questions on '+text+'…',async()=>{const r=await genQuestions(t,st.prefs.setSize,f);startQuiz(r.qs,text,t.id)});
     if(kind==='cards')return run('Claude is writing cards on '+text+'…',async()=>{const made=await genCards(t,10,f);if(!made.length)throw{code:'upstream_error',message:'No cards passed the accuracy check. Try again.'};S.tab='cards';S.cscope='top:'+t.id;startDeck(made,text)});
-    return run('Claude is writing a '+LEN[kind].name.toLowerCase()+' lesson on '+text+'…',async()=>{const L=await genLesson(t,kind,f);openLesson(L);playLesson(L)})}
+    return run('Claude is writing a '+LEN[kind].name.toLowerCase()+' lesson on '+text+'…',async()=>{const L=await genLesson(t,kind,f);openLesson(L);if(st.prefs.auto)playLesson(L)})}
   if(a==='ahdadd'){const date=v('ahddate'),text=v('ahdtext');if(!date||!text)return toast('Give a date and a topic.');const t=resolveTopic(text);st.ahd=st.ahd||[];st.ahd.push({id:uid(),date,text:text.slice(0,120),tid:t.id});saveState();render();return}
   if(a==='ahddel'){st.ahd=A(st.ahd).filter(x=>x.id!==b.dataset.id);saveState();render();return}
   if(a==='cboards'){S.tab='cards';S.cscope='tr:abim';S.deck=null;S.clist=false;render();scrollTo(0,0);return}
@@ -800,7 +804,7 @@ document.addEventListener('click',async e=>{
   if(a==='listen'){if(S.session)playSession();else playLesson(S.lesson);render();return}
   if(a==='nextlesson')return advance();
   if(a==='closelesson'){const ss=S.session;P.stop();S.lesson=null;if(ss)finishSession(ss.i+1>=ss.plan.length);render();return}
-  if(a==='lesson'){const t=TOP[S.topic],len=b.dataset.len,f=v('focus');S.form.focus=f;S.session=null;return run('Claude is writing a '+LEN[len].name.toLowerCase()+' lesson on '+t.name+'…',async()=>{openLesson(await genLesson(t,len,f));S.form={}})}
+  if(a==='lesson'){const t=TOP[S.topic],len=b.dataset.len,f=v('focus');S.form.focus=f;S.session=null;return run('Claude is writing a '+LEN[len].name.toLowerCase()+' lesson on '+t.name+'…',async()=>{const L=await genLesson(t,len,f);openLesson(L);if(st.prefs.auto)playLesson(L);S.form={}})}
   if(a==='quiz'){const t=TOP[S.topic],n=Number(b.dataset.n),f=v('focus');return run('Claude is writing '+n+' questions on '+t.name+'…',async()=>{const r=await genQuestions(t,n,f);startQuiz(r.qs,t.name,t.id);S.quiz.note=r.dropped?`${r.dropped} question${r.dropped>1?'s':''} failed the accuracy review and ${r.dropped>1?'were':'was'} removed.`:''})}
   if(a==='requiz'){const qs=bank(TOP[S.topic].sec.id).qs.filter(q=>q.tid===S.topic&&!q.flag).sort(()=>Math.random()-.5).slice(0,10);return startQuiz(qs,TOP[S.topic].name+' (saved)',S.topic)}
   if(a==='review')return startQuiz(dueQs().slice(0,15),'Missed question review');
@@ -814,7 +818,7 @@ document.addEventListener('click',async e=>{
   if(a==='addgap'){const text=v('gaptext'),tid=v('gapsec');if(!text)return toast('Describe the gap first.');st.gaps.unshift({id:uid(),text,tid,t:Date.now(),n:0,c:0,done:0});saveState();render();return}
   if(a==='gapdone'){const g=st.gaps.find(x=>x.id===b.dataset.id);g.done=g.done?0:1;saveState();render();return}
   if(a==='gapquiz'){const [g,t]=gapTopic(b.dataset.id);if(!g)return;return run('Claude is writing questions on "'+g.text+'"…',async()=>{const r=await genQuestions(t,st.prefs.setSize,g.text,g.id);startQuiz(r.qs,'Gap: '+g.text,t.id)})}
-  if(a==='gaplearn'){const [g,t]=gapTopic(b.dataset.id);if(!g)return;S.session=null;return run('Claude is writing a lesson on "'+g.text+'"…',async()=>{openLesson(await genLesson(t,'std',g.text))})}
+  if(a==='gaplearn'){const [g,t]=gapTopic(b.dataset.id);if(!g)return;S.session=null;return run('Claude is writing a lesson on "'+g.text+'"…',async()=>{const L=await genLesson(t,'std',g.text);openLesson(L);if(st.prefs.auto)playLesson(L)})}
   if(a==='brief')return run('Claude is reading your record…',async()=>{S.brief=await askText(`You are the chief resident mentoring one physician. ${st.prefs.about}\nHere is the study record:\n${recordSummary()}\n\nWrite a brief of at most 170 words, spoken plainly to the physician as "you": what the record shows is strong, what is weak or slipping, any topic where confidence is ahead of accuracy, anything neglected, and exactly what to do in the next three sessions. If there is little data yet, say so and recommend a starting sequence weighted to outpatient medicine. No headings, no preamble.`,'default')});
   if(a==='saytext'){const t=b.dataset.k==='brief'?S.brief:S.chat[Number(b.dataset.i)].content;P.load([{say:String(t).replace(/[*#_`]/g,'')}],b.dataset.k==='brief'?'Chief resident\'s brief':'Tutor','');return}
   if(a==='chatsend')return sendChat(v('chatin'));
@@ -847,7 +851,7 @@ document.addEventListener('change',e=>{const ds=e.target.dataset||{};if(ds.len||
   if(C){[db,user,SAMPLE,MCP,DL]=await Promise.all(['db','user','sample','mcp','downloads'].map(n=>C.use(n).catch(()=>null)))}
   if(db){let owner=false;try{owner=user?await user.isOwner():false}catch(e){}
     if(!owner){let id=null;try{id=user?await user.id():null}catch(e){}if(id)COLL='data/users/'+id;else db=null}}
-  let cdocs={};if(db){try{const q=await db.collection(COLL).limit(1000).get();q.docs.forEach(d=>{cdocs[d.id]=d.data()});DB=db}catch(e){DB=null}}
+  let cdocs={};if(db){try{const q=await db.collection(COLL).limit(1000).get();q.docs.forEach(d=>{cdocs[d.id]=clone(d.data())});DB=db}catch(e){DB=null}}
   let sdocs=null;
   if(!C){let r=null;try{r=await fetch('/api/me',{cache:'no-store'})}catch(e){}
     if(r&&r.status===401){location.replace('/account.html?next=1');return}
