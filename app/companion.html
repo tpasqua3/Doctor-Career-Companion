@@ -218,6 +218,13 @@ function applyBlueprint(){const i=TRACKS.findIndex(t=>t.id==='abim');if(i>=0){TR
     sec.t=c.topics.map((x,n)=>{let id=sec.id+'.'+slug(x.n);if(TOP[id])id+='-'+n;const t={id,name:x.n,inp:false,sec,bp:x};TOP[id]=t;return t});SEC[sec.id]=sec;tr.sections.push(sec)});
   TRACKS.unshift(tr)}
 const hasBP=()=>TRACKS[0].id==='abim';
+/* Topics the physician asked for that the curriculum does not already hold get their own section, so they are tracked like any other. */
+const ALLLIB=['Cardiology','Endocrinology','Gastroenterology','Hepatology','Hematology','Oncology','Infectious','Nephrology','Neurology','Pulmonology','Critical Care','Rheumatology','Dermatology','Interdisciplinary','Foundations','Common Symptoms'];
+function applyCustom(){const i=TRACKS.findIndex(t=>t.id==='own');if(i>=0){TRACKS[i].sections.forEach(x=>{x.t.forEach(t=>delete TOP[t.id]);delete SEC[x.id]});TRACKS.splice(i,1)}
+  if(!st.custom||!st.custom.length)return;const tr={id:'own',name:'My topics',blurb:'Topics you requested',sections:[]},sec={id:'own',name:'Requested topics',w:2,lib:ALLLIB,src:'the guidelines of the major society for the relevant specialty',track:tr,topics:[]};
+  sec.t=st.custom.map(c=>{const t={id:c.id,name:c.name,inp:false,sec};TOP[t.id]=t;return t});SEC.own=sec;tr.sections.push(sec);TRACKS.push(tr)}
+function resolveTopic(text){const m=matchTopic(text,true);if(m)return m;const id='own.'+slug(text);if(!TOP[id]){st.custom=st.custom||[];st.custom.push({id,name:text.slice(0,90)});applyCustom();saveState()}return TOP[id]}
+const ahdSoon=()=>{const m={},now=dayStr(),lim=dayStr(back(-7));(st.ahd||[]).forEach(a=>{if(a.date>=now&&a.date<=lim&&TOP[a.tid])m[a.tid]=a.date});return m};
 const planScope=()=>hasBP()&&st.prefs.scope==='abim'?'abim':'all';
 function bpSec(sec){let w=0,m=0,hi=0,hs=0;sec.t.forEach(t=>{const x=bw(t);w+=x;m+=x*(mastery(t.id)||0);if(rel(t)==='H'){hi++;const q=st.topics[t.id];if(q&&(q.n>=3||q.les))hs++}});return {ready:w?m/w:0,hi,hs}}
 const CAREER_AREAS=['Board certification and credentials','Job search and contracts','Income and compensation','Practice building and service lines','Procedural and OMM skills','Leadership and teaching','Business and ventures','Financial foundation'];
@@ -271,10 +278,10 @@ async function pull(){if(!LINKED||pending||jkeys().length||Date.now()-lastPull<1
 
 /* ---------- The record ---------- */
 const blank=()=>({v:1,prefs:{about:'Internal medicine physician preparing for the ABIM certification examination and moving into outpatient primary care. Uses osteopathic manipulative treatment in practice.',setting:'out',commit:'std',rate:1,passive:true,audit:true,setSize:5,lib:true,libName:'MKSAP Database',bpName:'ABIM Blueprint',scope:'all',examDate:null,priority:'',perWeek:0,mix:'bal'},
-  topics:{},days:{},gaps:[],sets:[],lessons:[],goals:[],areas:[],lib:null,best:0});
+  topics:{},days:{},custom:[],ahd:[],gaps:[],sets:[],lessons:[],goals:[],areas:[],lib:null,best:0});
 let st=blank();
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
-function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),docs.state);st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(st.prefs.examDate==null){const d=new Date();d.setMonth(d.getMonth()+8);st.prefs.examDate=dayStr(d)}applyBlueprint()}
+function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),docs.state);st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(st.prefs.examDate==null){const d=new Date();d.setMonth(d.getMonth()+8);st.prefs.examDate=dayStr(d)}applyBlueprint();applyCustom()}
 const tS=id=>st.topics[id]||(st.topics[id]={n:0,c:0,les:0,last:0,rate:0});
 const day=(d=dayStr())=>st.days[d]||(st.days[d]={min:0,listen:0,q:0,c:0,les:0,done:0});
 const bank=sid=>docs['bank_'+sid]||(docs['bank_'+sid]={qs:[]});
@@ -291,7 +298,7 @@ const level=m=>m==null?['Not started','off']:m>=85?['Mastered','good']:m>=65?['P
 const overconfident=id=>{const t=st.topics[id];return !!t&&t.rate>=4&&t.n>=4&&t.c/t.n<.6};
 /* What to study next. Higher = sooner. Weak or untouched topics in the sections that matter for the chosen practice setting come first;
    a stated gap, a missed question that is due, or confidence that outruns accuracy each push a topic up; anything studied today drops. */
-function priority(t,dueMap,planMap,lowMap){const s=st.topics[t.id],m=mastery(t.id),set=st.prefs.setting;
+function priority(t,dueMap,planMap,lowMap,ahdMap){const s=st.topics[t.id],m=mastery(t.id),set=st.prefs.setting;
   let w=t.sec.w;if(t.bp)w=bw(t)*(.5+t.sec.pct/5);else{if(set==='out'&&t.inp)w=.25;if(set==='in')w=t.inp?3:Math.min(w,1.5)}
   let p=(100-(m??0))*w,why=m==null?'Not started yet':m<40?'Weak on questions so far':'Keeps it fresh';
   if(s&&s.last){const d=(Date.now()-s.last)/864e5;if(d<.6)p-=250;else if(d>21&&m!=null){p+=Math.min(60,d);why='Not reviewed in '+Math.round(d)+' days'}}
@@ -303,12 +310,13 @@ function priority(t,dueMap,planMap,lowMap){const s=st.topics[t.id],m=mastery(t.i
   if(st.gaps.some(g=>!g.done&&g.tid===t.id)){p+=160;why='You named this as a gap'}
   if(t.bp&&m==null&&rel(t)==='H')why='High relevance on the blueprint, not started';
   if(planMap&&planMap.has(t.id)&&!(s&&(s.les||s.n>=3))){p+=160-25*planMap.get(t.id);why='On your learning plan'+(planMap.get(t.id)?'':', up now')}
+  if(ahdMap&&ahdMap[t.id]&&!(s&&s.last&&Date.now()-s.last<864e5*.6)){p+=400;why='Academic half day on '+new Date(ahdMap[t.id]+'T12:00:00').toLocaleDateString(undefined,{weekday:'long',month:'short',day:'numeric'})}
   return {t,p,why}}
-const ranked=()=>{const due={};dueQs().forEach(q=>due[q.tid]=(due[q.tid]||0)+1);const lm=lowCards(),pm=new Map(),pd=planDoc();if(pd)pd.weeks.forEach((w,i)=>w.items.forEach(x=>{if(!pm.has(x.tid))pm.set(x.tid,i)}));return Object.values(TOP).map(t=>priority(t,due,pm,lm)).sort((a,b)=>b.p-a.p)};
+const ranked=()=>{const due={};dueQs().forEach(q=>due[q.tid]=(due[q.tid]||0)+1);const lm=lowCards(),pm=new Map(),pd=planDoc();if(pd)pd.weeks.forEach((w,i)=>w.items.forEach(x=>{if(!pm.has(x.tid))pm.set(x.tid,i)}));const am=ahdSoon();return Object.values(TOP).map(t=>priority(t,due,pm,lm,am)).sort((a,b)=>b.p-a.p)};
 const rankedBase=()=>{const due={};dueQs().forEach(q=>due[q.tid]=(due[q.tid]||0)+1);const lm=lowCards();return Object.values(TOP).map(t=>priority(t,due,null,lm)).sort((a,b)=>b.p-a.p)};
 const lowCards=()=>{const m={};Object.keys(docs).forEach(k=>{if(k.startsWith('cards_'))(docs[k].cards||[]).forEach(c=>{if(c.conf&&c.conf<=2)m[c.tid]=(m[c.tid]||0)+1})});return m};
 const planDoc=()=>docs.plan&&Array.isArray(docs.plan.weeks)?docs.plan:null;
-function plan(n,sc){sc=sc||planScope();const out=[],seen={};for(const r of ranked()){if(sc==='abim'?!(r.t.bp&&bw(r.t)>0):!!r.t.bp)continue;if(out.length>=n)break;if((seen[r.t.sec.id]||0)>=1&&n<=3&&!/^On your learning plan/.test(r.why))continue;seen[r.t.sec.id]=(seen[r.t.sec.id]||0)+1;out.push(r)}return out}
+function plan(n,sc){sc=sc||planScope();const out=[],seen={};for(const r of ranked()){const must=/^Academic half day/.test(r.why);if(!must&&(sc==='abim'?!(r.t.bp&&bw(r.t)>0):!!r.t.bp))continue;if(out.length>=n)break;if((seen[r.t.sec.id]||0)>=1&&n<=3&&!must&&!/^On your learning plan/.test(r.why))continue;seen[r.t.sec.id]=(seen[r.t.sec.id]||0)+1;out.push(r)}return out}
 function secStats(s){let n=0,c=0,started=0,ms=0,mc=0,last=0;s.t.forEach(t=>{const x=st.topics[t.id];if(!x)return;n+=x.n;c+=x.c;if(x.n>=3||x.les)started++;const m=mastery(t.id);if(m!=null){ms+=m;mc++}last=Math.max(last,x.last||0)});
   return {n,c,started,total:s.t.length,m:mc?Math.round(ms/s.t.length):null,last}}
 
@@ -374,8 +382,8 @@ async function libRef(t,focus){if(!MCP||!st.prefs.lib||!t.sec.lib)return null;
   try{const lib=await libInit();if(!lib)return null;const ids=Object.keys(lib.folders).filter(n=>t.sec.lib.some(l=>n.toLowerCase().startsWith(l.toLowerCase()))).map(n=>lib.folders[n]);if(!ids.length)return null;
     const keys=[...new Set(words(t.name+' '+(focus||'')))];let best=null;
     for(const term of [focus,t.name.split(/[:,]| and /)[0]].filter(Boolean).map(x=>x.trim().slice(0,60))){
-      for(const id of ids){const r=await drive('search_files',{query:`parentId = '${id}' and fullText contains '${q1(term)}'`,excludeContentSnippets:true,pageSize:6});
-        (r.files||[]).forEach((f,rank)=>{if(!/document|pdf|word/.test(f.mimeType||''))return;const tw=words(f.title);const s=keys.filter(k=>tw.some(w=>w.startsWith(k.slice(0,5)))).length*3-rank*.4;if(!best||s>best.s)best={s,f}})}
+      const scan=ids.length>4?[null]:ids;for(const id of scan){const r=await drive('search_files',{query:(id?`parentId = '${id}' and `:'')+`fullText contains '${q1(term)}'`,excludeContentSnippets:true,pageSize:id?6:25});
+        (r.files||[]).filter(f=>id||ids.includes(f.parentId)).forEach((f,rank)=>{if(!/document|pdf|word/.test(f.mimeType||''))return;const tw=words(f.title);const s=keys.filter(k=>tw.some(w=>w.startsWith(k.slice(0,5)))).length*3-rank*.4;if(!best||s>best.s)best={s,f}})}
       if(best)break}
     if(!best)return null;let text=chapterCache.get(best.f.id);if(!text){text=(await drive('read_file_content',{fileId:best.f.id})).fileContent||'';chapterCache.set(best.f.id,text)}
     if(text.length<400)return null;return {title:best.f.title,text:excerpt(text,keys)}}
@@ -513,8 +521,8 @@ function ctxInfo(){let tid=null,text='',label='';
   else if(S.deck&&S.deck.i<S.deck.ids.length){const c=findC(S.deck.ids[S.deck.i]);if(c){tid=c.tid;label='this card';text=`The physician is on the flashcard "${c.f}"`+(S.deck.flip?` with the answer "${c.b}"`:'. The answer is still hidden: do not give it away unless asked.')}}
   else if(S.tab==='learn'&&S.topic&&TOP[S.topic]){tid=S.topic;label=TOP[tid].name;text='The physician is viewing the topic "'+TOP[tid].name+'".'}
   return {t:tid&&TOP[tid],text,label}}
-function matchTopic(text){const k=[...new Set(words(text))];if(!k.length)return null;const board=planScope()==='abim';let best=null;
-  Object.values(TOP).forEach(t=>{const tw=words(t.name),n=k.filter(x=>tw.some(w=>w.startsWith(x.slice(0,5))||x.startsWith(w.slice(0,5)))).length;if(!n)return;const sc=n/Math.sqrt(tw.length||1)+(!!t.bp===board?.3:0);if(!best||sc>best.sc)best={sc,t}});return best&&best.t}
+function matchTopic(text,strict){const k=[...new Set(words(text))].filter(w=>!/^(workup|work|treat|treatment|treating|diagnosis|diagnosing|guideline|guidelines|review|update|updates|basics|overview|outpatient|inpatient|clinic|acute|chronic|adult|adults|patient|patients)$/.test(w));if(!k.length)return null;const board=planScope()==='abim';let best=null;
+  Object.values(TOP).forEach(t=>{const tw=words(t.name),n=k.filter(x=>tw.some(w=>w.startsWith(x.slice(0,5))||x.startsWith(w.slice(0,5)))).length;if(!n||(strict&&(n<Math.min(2,k.length)||n<tw.length/2)))return;const sc=n/Math.sqrt(tw.length||1)+(!!t.bp===board?.3:0);if(!best||sc>best.sc)best={sc,t}});return best&&best.t}
 async function sendChat(text){text=String(text||'').trim();if(S.asking||!text)return;if(!SAMPLE)return toast(ERR.unavailable);
   const cx=ctxInfo();S.chat.push({role:'user',content:text});S.asking=true;redrawChat();
   try{const t=cx.t||matchTopic(text);if(t){const x=tS(t.id);x.asks=(x.asks||0)+1;x.asked=Date.now();saveState()}const ref=t?await libRef(t,text):null;
@@ -558,6 +566,13 @@ function vToday(){const d=day(),c=COMMIT[st.prefs.commit],pl=plan(Math.max(3,c.l
    <div class="plain"><span class="eyebrow">Up next, chosen from your record</span>${pl.slice(0,c.lessons).map(r=>`<div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><b>${esc(r.t.name)}</b><div class="tiny muted">${esc(r.t.sec.name)} · ${esc(r.why)}</div></div></div>`).join('')}</div>
    <div class="row"><button class="btn pri" data-act="session">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} Start ${c.min}-minute session</button>${due?`<button class="btn" data-act="review">Review ${due} missed question${due>1?'s':''}</button>`:''}${dueCards('all').length?`<button class="btn" data-act="cduetoday">Flip ${dueCards('all').length} due card${dueCards('all').length>1?'s':''}</button>`:''}</div>
    ${SAMPLE?'':'<div class="note">The AI is not available in this view, so new lessons and questions cannot be written here. Saved lessons still play.</div>'}${TTS?'':'<div class="note">This browser has no speech voice. Lessons show as text only.</div>'}</div>`}
+  ${S.busy?'':`<div class="card"><h3>Request a topic</h3><p class="small muted">Name anything and it is taught, tested or turned into cards now. It is filed under the matching curriculum topic, or kept under My topics if there is none.</p>
+   <label class="f">Topic<input type="text" id="reqtext" placeholder="e.g. hyponatremia workup, or anticoagulation around procedures"></label>
+   <div class="row">${Object.entries(LEN).map(([k,v])=>`<button class="btn ${k==='std'?'pri':''}" data-act="req" data-kind="${k}">${v.name} · ${v.min} min</button>`).join('')}<button class="btn" data-act="req" data-kind="quiz">Questions</button><button class="btn" data-act="req" data-kind="cards">Cards</button></div></div>
+  <div class="card"><h3>Academic half day</h3><p class="small muted">Add what your program is teaching and when. In the week before, that topic moves to the front of your sessions so you arrive prepared.</p>
+   ${(st.ahd||[]).filter(a=>a.date>=dayStr()).sort((x,y)=>x.date<y.date?-1:1).map(a=>`<div class="plain" style="border-top:1px solid var(--line);padding-top:8px"><div class="row between"><div style="min-width:0;flex:1"><b>${esc(a.text)}</b><div class="tiny muted">${new Date(a.date+'T12:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}${TOP[a.tid]?' · filed under '+esc(TOP[a.tid].sec.name):''}${started(a.tid)?' · prepared':''}</div></div><button class="btn sm" data-act="ahddel" data-id="${a.id}" aria-label="Remove">Remove</button></div>
+     <div class="row"><button class="btn sm" data-act="ahdprep" data-id="${a.id}" data-kind="short">Quick prep · 6 min</button><button class="btn sm" data-act="ahdprep" data-id="${a.id}" data-kind="deep">Deep dive · 14 min</button><button class="btn sm" data-act="ahdprep" data-id="${a.id}" data-kind="quiz">Questions</button><button class="btn sm" data-act="ahdprep" data-id="${a.id}" data-kind="cards">Cards</button></div></div>`).join('')}
+   <div class="row"><label class="f">Date<input type="date" id="ahddate" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px"></label><label class="f" style="flex:2">Topic<input type="text" id="ahdtext" placeholder="e.g. Heart failure with reduced ejection fraction"></label></div><div class="row"><button class="btn" data-act="ahdadd">Add to the schedule</button></div></div>`}
   ${hasBP()&&planScope()==='abim'?'':vPlan()}
   ${gaps.length?`<div class="card"><h3>Your stated gaps</h3>${gaps.slice(0,5).map(g=>`<div class="row between"><div style="min-width:0;flex:1"><b>${esc(g.text)}</b><div class="tiny muted">${esc(TOP[g.tid]?TOP[g.tid].name:'')}${g.n?` · ${g.c}/${g.n} correct`:''}</div></div><button class="btn sm" data-act="gaplearn" data-id="${g.id}">Teach</button><button class="btn sm" data-act="gapquiz" data-id="${g.id}">Test</button></div>`).join('')}</div>`:''}
   <div class="card"><div class="row between"><h3>Chief resident's brief</h3><button class="btn sm" data-act="brief" ${S.busy||!SAMPLE?'disabled':''}>${S.brief?'Refresh':'Get my brief'}</button></div>${S.brief?md(S.brief)+`<div class="row"><button class="btn sm" data-act="saytext" data-k="brief">Listen</button></div>`:'<p class="small muted">A short read on what your record shows: where you are strong, what is slipping, and what to do this week.</p>'}</div>`}
@@ -752,6 +767,13 @@ document.addEventListener('click',async e=>{
   if(a==='prate'){const r=[.85,1,1.15,1.3,1.5],i=r.indexOf(st.prefs.rate);st.prefs.rate=r[(i+1)%r.length];saveState();if(P.on&&!P.paused){P.tok++;P.run()}drawPlayer();return}
   if(a==='up'){if(S.tab==='career')S.goal=null;else if(S.topic)S.topic=null;else if(S.sec)S.sec=null;else S.track=null;S.err='';render();return}
   if(a==='session')return startSession(b.dataset.sc);
+  if(a==='req'||a==='ahdprep'){let text,t;if(a==='req'){text=v('reqtext');if(!text)return toast('Name a topic first.');t=resolveTopic(text)}else{const x=(st.ahd||[]).find(y=>y.id===b.dataset.id);if(!x||!TOP[x.tid])return;text=x.text;t=TOP[x.tid]}
+    const kind=b.dataset.kind,f=slug(text)===slug(t.name)?'':text;S.session=null;
+    if(kind==='quiz')return run('Claude is writing questions on '+text+'…',async()=>{const r=await genQuestions(t,st.prefs.setSize,f);startQuiz(r.qs,text,t.id)});
+    if(kind==='cards')return run('Claude is writing cards on '+text+'…',async()=>{const made=await genCards(t,10,f);if(!made.length)throw{code:'upstream_error',message:'No cards passed the accuracy check. Try again.'};S.tab='cards';S.cscope='top:'+t.id;startDeck(made,text)});
+    return run('Claude is writing a '+LEN[kind].name.toLowerCase()+' lesson on '+text+'…',async()=>{const L=await genLesson(t,kind,f);openLesson(L);playLesson(L)})}
+  if(a==='ahdadd'){const date=v('ahddate'),text=v('ahdtext');if(!date||!text)return toast('Give a date and a topic.');const t=resolveTopic(text);st.ahd=st.ahd||[];st.ahd.push({id:uid(),date,text:text.slice(0,120),tid:t.id});saveState();render();return}
+  if(a==='ahddel'){st.ahd=(st.ahd||[]).filter(x=>x.id!==b.dataset.id);saveState();render();return}
   if(a==='cboards'){S.tab='cards';S.cscope='tr:abim';S.deck=null;S.clist=false;render();scrollTo(0,0);return}
   if(a==='bpload'){st.prefs.bpName=v('bpname')||st.prefs.bpName;return run('Reading the blueprint from Google Drive…',async()=>{if(!MCP)throw{code:'unavailable'};
     const r=await drive('search_files',{query:`title contains '${q1(st.prefs.bpName)}'`,excludeContentSnippets:true,pageSize:10}),isDoc=f=>/google-apps\.document/.test(f.mimeType||'')?1:0,f=(r.files||[]).sort((x,y)=>isDoc(y)-isDoc(x))[0];
