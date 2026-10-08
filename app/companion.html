@@ -106,6 +106,14 @@ ul.pts{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:5px}
 .md p+p,.md ul+p,.md p+ul{margin-top:8px} .md ul{margin:0;padding-left:20px}
 .msg{border-radius:12px;padding:10px 13px;max-width:92%}
 .msg.u{align-self:flex-end;background:var(--teal-soft)} .msg.a{align-self:flex-start;background:var(--card);border:1px solid var(--line)}
+.flash{display:flex;flex-direction:column;gap:12px;text-align:left;width:100%;min-height:230px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;cursor:pointer;font-family:var(--read);font-size:1.14rem;line-height:1.55}
+.flash .a{border-top:1px solid var(--line);padding-top:12px}
+.flash .eyebrow{font-family:var(--ui)}
+.conf{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.conf button{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:9px 3px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.7rem;line-height:1.2;color:var(--muted);min-width:0;text-align:center}
+.conf button b{font-family:var(--num);font-size:1.05rem;color:var(--ink);font-weight:500}
+.clist{display:flex;flex-direction:column;gap:14px;font-family:var(--read);max-width:66ch}
+.clist div{display:flex;flex-direction:column;gap:3px;border-bottom:1px solid var(--line);padding-bottom:12px}
 /* audio transport */
 .player{position:fixed;left:0;right:0;bottom:0;z-index:8;background:var(--card);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px))}
 .player .in{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
@@ -261,10 +269,10 @@ function secStats(s){let n=0,c=0,started=0,ms=0,mc=0,last=0;s.t.forEach(t=>{cons
 /* ---------- Time, streaks and consistency ---------- */
 let lastAct=Date.now();['pointerdown','keydown','input'].forEach(e=>addEventListener(e,()=>lastAct=Date.now(),{passive:true}));
 setInterval(()=>{const speaking=P.on&&!P.paused;if((document.visibilityState==='visible'&&Date.now()-lastAct<120000&&S.tab!=='settings')||speaking){const d=day();d.min=Math.round((d.min+.25)*100)/100;if(speaking)d.listen=Math.round((d.listen+.25)*100)/100;if(!d.done&&d.min>=COMMIT[st.prefs.commit].min)d.done=1;saveState(30000);if(S.tab==='today'&&!S.busy&&!S.lesson&&!S.quiz)drawFigs()}},15000);
-const active=d=>{const x=st.days[d];return !!x&&(x.min>=1||x.done||x.q>0)};
+const active=d=>{const x=st.days[d];return !!x&&(x.min>=1||x.done||x.q>0||x.cards>0)};
 const back=n=>{const d=new Date();d.setDate(d.getDate()-n);return d};
 function streak(){let n=0,i=active(dayStr())?0:1;while(active(dayStr(back(i)))){n++;i++}if(n>(st.best||0))st.best=n;return n}
-function span(days){let min=0,listen=0,act=0,q=0,c=0;for(let i=0;i<days;i++){const k=dayStr(back(i)),x=st.days[k];if(x){min+=x.min;listen+=x.listen||0;q+=x.q;c+=x.c}if(active(k))act++}return {min,listen,act,q,c}}
+function span(days){let min=0,listen=0,act=0,q=0,c=0,cards=0;for(let i=0;i<days;i++){const k=dayStr(back(i)),x=st.days[k];if(x){min+=x.min;listen+=x.listen||0;q+=x.q;c+=x.c;cards+=x.cards||0}if(active(k))act++}return {min,listen,act,q,c,cards}}
 const weekDays=()=>{const d=new Date(),wd=(d.getDay()+6)%7;return Array.from({length:7},(_,i)=>{const x=new Date(d);x.setDate(d.getDate()-wd+i);return x})};
 const monthSoFar=()=>new Date().getDate();
 
@@ -367,21 +375,66 @@ It will be read aloud by a speech voice while the physician drives or rests afte
 Shape: open with a two or three sentence patient case that makes the topic matter; teach the concept and the reasoning; come back to the case and work through the decision; finish with what to do differently in clinic. Do not repeat a point in different words. ${len==='short'?'Keep only the highest-yield points: what is tested and what changes management.':'Go deeper into the reasoning, the exceptions, and the evidence behind the recommendation.'}
 Then write 2 check questions on what the lesson taught. ${QSPEC}
 
-Reply with JSON only: {"title":"","segments":[{"heading":"short heading","text":"spoken paragraph(s)"}],"keyPoints":["4 to 6 one-sentence take-aways"],"pitfalls":["1 to 3 common errors"],"sources":["Organization. Guideline or statement title. Year."],"uncertain":["anything the physician should verify, or empty"],"questions":[${QJSON}]}
-Use 4 to 7 segments.`);
+Reply with JSON only: {"title":"","segments":[{"heading":"short heading","text":"spoken paragraph(s)"}],"keyPoints":["4 to 6 one-sentence take-aways"],"pitfalls":["1 to 3 common errors"],"sources":["Organization. Guideline or statement title. Year."],"uncertain":["anything the physician should verify, or empty"],"cards":[{"front":"","back":""}],"questions":[${QJSON}]}
+Use 4 to 7 segments. Give 4 flashcards on the highest-yield facts of the lesson. ${CSPEC}`);
   if(!r||!Array.isArray(r.segments)||!r.segments.length)throw{code:'invalid_json'};
   const id=uid(),qs=(r.questions||[]).map(q=>cleanQ(q,t,{ref:ref?ref.title:'',les:id})).filter(Boolean);
   const a=await audit(qs,t,ref);bank(t.sec.id).qs.push(...a.qs);saveBank(t.sec.id);
   const les={id,tid:t.id,len,focus:focus||'',title:String(r.title||t.name),segs:r.segments.map(s=>({h:String(s.heading||''),x:String(s.text||'')})),pts:(r.keyPoints||[]).map(String),pit:(r.pitfalls||[]).map(String),src:(r.sources||[]).map(String),unc:(r.uncertain||[]).map(String).filter(x=>x&&!/^none/i.test(x)),qids:a.qs.map(q=>q.id),ref:ref?ref.title:'',t:Date.now()};
   put('les_'+id,les);st.lessons.push({id,tid:t.id,title:les.title,len,t:les.t});while(st.lessons.length>80){del('les_'+st.lessons.shift().id)}
-  const s=tS(t.id);s.les++;s.last=Date.now();day().les++;saveState();return les}
+  addCards(t,r.cards,ref?ref.title:'');const s=tS(t.id);s.les++;s.last=Date.now();day().les++;saveState();return les}
 const findQ=id=>allQs().find(q=>q.id===id);
 
+/* ---------- Flashcards ----------
+   Short high-yield facts, one per card, filed under the same topics as everything else. A card is rated on a five-point confidence
+   scale after each flip and comes back on a spaced schedule: sooner when it was not known, at widening intervals when it was. */
+const CONF=[[1,"Didn't know"],[2,'Somewhat confident'],[3,'Neutral'],[4,'Confident'],[5,'Very confident']];
+const CSPEC=`Each card tests one high-yield fact: a threshold, a first-line choice, a next step, a classic association, a screening interval, a contraindication, a coding rule or a technique step. "front" is a short prompt or question on one line. "back" is the answer in one to three short sentences with the reason or the guideline behind it. Write both to be read aloud: plain words, no symbols, abbreviations spelled out.`;
+const deck=sid=>docs['cards_'+sid]||(docs['cards_'+sid]={cards:[]});
+const saveDeck=sid=>{const d=deck(sid);if(d.cards.length>400)d.cards=d.cards.slice(-400);later('cards_'+sid,()=>put('cards_'+sid,d))};
+const allCards=()=>Object.keys(docs).filter(k=>k.startsWith('cards_')).flatMap(k=>docs[k].cards||[]);
+const inScope=(t,sc)=>!!t&&(sc==='all'||sc==='tr:'+t.sec.track.id||sc==='sec:'+t.sec.id||sc==='top:'+t.id);
+const cardsIn=sc=>allCards().filter(c=>inScope(TOP[c.tid],sc));
+const dueCards=sc=>cardsIn(sc||'all').filter(c=>c.n&&c.due<=Date.now());
+const scopeName=sc=>sc==='all'?'Everything':sc.startsWith('tr:')?TRACKS.find(t=>t.id===sc.slice(3)).name:sc.startsWith('sec:')?SEC[sc.slice(4)].name:TOP[sc.slice(4)].name;
+function addCards(t,list,ref){const d=deck(t.sec.id),have=new Set(d.cards.map(c=>slug(c.f))),out=[];
+  (Array.isArray(list)?list:[]).forEach(x=>{const f=String((x&&x.front)||'').trim(),b=String((x&&x.back)||'').trim();if(!f||!b||have.has(slug(f)))return;have.add(slug(f));const c={id:uid(),tid:t.id,f,b,src:String((x&&x.source)||''),ref:ref||'',t:Date.now(),v:0,n:0,conf:0,due:0,ivl:0};d.cards.push(c);out.push(c)});
+  if(out.length)saveDeck(t.sec.id);return out}
+function rateCard(c,r){const iv=c.ivl||0;c.conf=r;c.n=(c.n||0)+1;c.last=Date.now();
+  c.ivl=r===1?0:r===2?1:r===3?Math.max(2,Math.round(iv*1.3)):r===4?Math.max(4,Math.round(iv*2.2)):Math.max(7,Math.round(iv*3.2));
+  c.due=Date.now()+(r===1?6e5:c.ivl*864e5);saveDeck(TOP[c.tid].sec.id)}
+async function genCards(t,n,focus){const ref=await libRef(t,focus),seen=deck(t.sec.id).cards.filter(c=>c.tid===t.id).slice(-30).map(c=>c.f);
+  const r=await ask(`${rules(t)}${refBlock(ref)}\n\nTASK: Write ${n} flashcards on this topic${focus?`, concentrating on: "${focus}"`:''}. ${CSPEC} Cover different facts across the topic, favoring what is tested on the ABIM examination and what changes management in clinic.${seen.length?'\nAlready in the deck, so write different cards: '+seen.join(' | '):''}\n\nReply with JSON only: {"cards":[{"front":"","back":"","source":"Organization and year, if a guideline backs it"}]}`);
+  let list=(r.cards||[]).filter(x=>x&&x.front&&x.back);if(!list.length)throw{code:'invalid_json'};
+  if(st.prefs.audit){try{const a=await ask(`${rules(t)}${refBlock(ref)}\n\nYou are checking flashcards for accuracy against current guidelines${ref?' and the reference text':''}. Reject any card whose answer is wrong, outdated, or only sometimes true. Be strict.\n\nCARDS:\n${JSON.stringify(list.map((c,i)=>({i,front:c.front,back:c.back})))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject"}]}`);const bad=new Set((a.reviews||[]).filter(x=>x.verdict==='reject').map(x=>x.i));list=list.filter((c,i)=>!bad.has(i))}catch(e){}}
+  return addCards(t,list,ref?ref.title:'')}
+function startDeck(cards,title){if(!cards.length)return toast('No cards here yet. Write some new ones.');P.stop();S.deck={ids:cards.map(c=>c.id),i:0,flip:false,title,seen:0};S.clist=false;render();scrollTo(0,0)}
+const findC=id=>allCards().find(c=>c.id===id);
+const shuffle=a=>a.map(x=>[Math.random(),x]).sort((p,q)=>p[0]-q[0]).map(x=>x[1]);
+function vCards(){const sc=S.cscope,inS=cardsIn(sc),due=dueCards(sc),all=allCards();
+  if(S.deck)return vCard();
+  if(S.clist)return `<div class="row between"><button class="btn link" data-act="cexit">← Cards</button><button class="btn sm" data-act="cplay">Listen to these</button></div><div class="plain"><h1>${esc(scopeName(sc))}</h1><p class="small muted">${inS.length} cards to read through.</p></div><div class="clist">${inS.map(c=>`<div><span class="eyebrow" style="font-family:var(--ui)">${esc(TOP[c.tid].name)}</span><b>${esc(c.f)}</b><span>${esc(c.b)}</span></div>`).join('')}</div>`;
+  const dist=CONF.map(([v])=>inS.filter(c=>c.conf===v).length),unseen=inS.filter(c=>!c.n).length;
+  return `<div class="plain"><h1>Cards</h1><p class="small muted">Short high-yield facts built from the same curriculum. Flip, rate your confidence, and each card comes back when it is due.</p></div>
+  <div class="card"><div class="figs"><div class="fig"><b>${day().cards||0}</b><span>viewed today</span></div><div class="fig"><b>${all.reduce((a,c)=>a+(c.v||0),0)}</b><span>viewed all time</span></div><div class="fig"><b>${all.filter(c=>c.v).length}/${all.length}</b><span>cards seen</span></div><div class="fig"><b>${dueCards('all').length}</b><span>due now</span></div></div></div>
+  ${busy()}${S.busy?'':`<div class="card"><label class="f">Deck<select id="cscope"><option value="all">Everything</option>${TRACKS.map(tr=>`<optgroup label="${esc(tr.name)}"><option value="tr:${tr.id}" ${sc==='tr:'+tr.id?'selected':''}>All of ${esc(tr.name)}</option>${tr.sections.map(s=>`<option value="sec:${s.id}" ${sc==='sec:'+s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</optgroup>`).join('')}${sc.startsWith('top:')?`<option value="${sc}" selected>${esc(scopeName(sc))}</option>`:''}</select></label>
+   <p class="small muted"><span class="num">${inS.length}</span> cards · <span class="num">${due.length}</span> due · <span class="num">${unseen}</span> not yet rated</p>
+   ${inS.length?`<div class="plain"><span class="eyebrow">Your confidence across this deck</span><div class="conf">${CONF.map(([v,l],i)=>`<button disabled><b>${dist[i]}</b>${l}</button>`).join('')}</div></div>`:''}
+   <div class="row">${due.length?`<button class="btn pri" data-act="cdue">Review ${due.length} due</button>`:''}<button class="btn ${due.length?'':'pri'}" data-act="cbrowse" ${inS.length?'':'disabled'}>Flip through</button><button class="btn" data-act="cread" ${inS.length?'':'disabled'}>Read as a list</button><button class="btn" data-act="cplay" ${inS.length&&TTS?'':'disabled'}>Listen</button></div>
+   <div class="row"><button class="btn" data-act="cnew" ${SAMPLE?'':'disabled'}>Write 10 new cards</button><span class="small muted">${sc.startsWith('top:')?'On this topic.':'Drawn from the topics in this deck that most need work.'} Every lesson also adds a few.</span></div></div>`}`}
+function vCard(){const D=S.deck;if(D.i>=D.ids.length)return `<div class="card"><span class="eyebrow">${esc(D.title)}</span><h1>Deck complete</h1><div class="figs"><div class="fig"><b>${D.seen}</b><span>cards viewed</span></div><div class="fig"><b>${day().cards||0}</b><span>viewed today</span></div><div class="fig"><b>${dueCards('all').length}</b><span>still due</span></div></div><div class="row"><button class="btn pri" data-act="cexit">Done</button></div></div>`;
+  const c=findC(D.ids[D.i]),t=TOP[c.tid];
+  return `<div class="row between"><button class="btn link" data-act="cexit">← End</button><span class="chip num">${D.i+1} / ${D.ids.length}</span></div>
+  <button class="flash" data-act="cflip" aria-label="${D.flip?'Card, answer showing':'Card, tap to show the answer'}"><span class="eyebrow">${esc(t.sec.name)} · ${esc(t.name)}</span><span>${esc(c.f)}</span>${D.flip?`<span class="a">${esc(c.b)}</span>${c.src||c.ref?`<span class="tiny muted" style="font-family:var(--ui)">${esc([c.src,c.ref].filter(Boolean).join(' · '))}</span>`:''}`:'<span class="small muted" style="font-family:var(--ui);margin-top:auto">Tap to show the answer</span>'}</button>
+  ${D.flip?`<div class="plain"><span class="eyebrow">How confident were you?</span><div class="conf">${CONF.map(([v,l])=>`<button data-conf="${v}"><b>${v}</b>${l}</button>`).join('')}</div></div>`:''}
+  <div class="row">${TTS?'<button class="btn sm" data-act="csay">Listen</button>':''}<button class="btn sm" data-act="cskip">Skip</button><button class="btn sm danger" data-act="cdel">Remove this card</button></div>
+  <div class="meter"><i style="width:${pct(D.i,D.ids.length)}%"></i></div>`}
+
 /* ---------- Screen state ---------- */
-const S={tab:'today',busy:'',err:'',track:null,sec:null,topic:null,lesson:null,quiz:null,session:null,chat:[],goal:null,brief:null,form:{}};
-const TABS=[['today','Today'],['learn','Curriculum'],['questions','Questions'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
+const S={deck:null,clist:false,cscope:'all',tab:'today',busy:'',err:'',track:null,sec:null,topic:null,lesson:null,quiz:null,session:null,chat:[],goal:null,brief:null,form:{}};
+const TABS=[['today','Today'],['learn','Curriculum'],['questions','Questions'],['cards','Cards'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
 function render(){ $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
-  const v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,learn:vLearn,questions:vQuestions,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])();
+  const v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])();
   $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1)}
 const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="tiny muted">${st.prefs.audit?'Each set is written, then checked by a second review pass before you see it.':''}</p></div>`:'';
 const segBtns=(name,opts,cur)=>`<div class="seg" role="group">${opts.map(([v,l])=>`<button data-set="${name}" data-v="${v}" aria-pressed="${String(cur)===String(v)}">${esc(l)}</button>`).join('')}</div>`;
@@ -398,7 +451,7 @@ function vToday(){const d=day(),c=COMMIT[st.prefs.commit],pl=plan(Math.max(3,c.l
    <div class="plain"><span class="eyebrow">How much today</span>${segBtns('commit',Object.entries(COMMIT).map(([k,v])=>[k,v.name+' · '+v.min+' min']),st.prefs.commit)}<span class="small muted">${c.sub}. Lessons play one after another; the text follows along on screen.</span></div>
    <div class="plain"><span class="eyebrow">Practice setting</span>${segBtns('setting',Object.entries(SETTING),st.prefs.setting)}</div>
    <div class="plain"><span class="eyebrow">Up next, chosen from your record</span>${pl.slice(0,c.lessons).map(r=>`<div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><b>${esc(r.t.name)}</b><div class="tiny muted">${esc(r.t.sec.name)} · ${esc(r.why)}</div></div></div>`).join('')}</div>
-   <div class="row"><button class="btn pri" data-act="session">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} Start ${c.min}-minute session</button>${due?`<button class="btn" data-act="review">Review ${due} missed question${due>1?'s':''}</button>`:''}</div>
+   <div class="row"><button class="btn pri" data-act="session">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} Start ${c.min}-minute session</button>${due?`<button class="btn" data-act="review">Review ${due} missed question${due>1?'s':''}</button>`:''}${dueCards('all').length?`<button class="btn" data-act="cduetoday">Flip ${dueCards('all').length} due card${dueCards('all').length>1?'s':''}</button>`:''}</div>
    ${SAMPLE?'':'<div class="note">The AI is not available in this view, so new lessons and questions cannot be written here. Saved lessons still play.</div>'}${TTS?'':'<div class="note">This browser has no speech voice. Lessons show as text only.</div>'}</div>`}
   ${gaps.length?`<div class="card"><h3>Your stated gaps</h3>${gaps.slice(0,5).map(g=>`<div class="row between"><div style="min-width:0;flex:1"><b>${esc(g.text)}</b><div class="tiny muted">${esc(TOP[g.tid]?TOP[g.tid].name:'')}${g.n?` · ${g.c}/${g.n} correct`:''}</div></div><button class="btn sm" data-act="gaplearn" data-id="${g.id}">Teach</button><button class="btn sm" data-act="gapquiz" data-id="${g.id}">Test</button></div>`).join('')}</div>`:''}
   <div class="card"><div class="row between"><h3>Chief resident's brief</h3><button class="btn sm" data-act="brief" ${S.busy||!SAMPLE?'disabled':''}>${S.brief?'Refresh':'Get my brief'}</button></div>${S.brief?md(S.brief)+`<div class="row"><button class="btn sm" data-act="saytext" data-k="brief">Listen</button></div>`:'<p class="small muted">A short read on what your record shows: where you are strong, what is slipping, and what to do this week.</p>'}</div>`}
@@ -422,7 +475,7 @@ function vTopic(t){const s=st.topics[t.id]||{n:0,c:0,les:0,rate:0},m=mastery(t.i
    <p class="tiny muted">Sources for this section: ${esc(t.sec.src)}${t.sec.lib&&MCP&&st.prefs.lib?' · grounded in your '+esc(st.prefs.libName)+' text':''}</p></div>
   ${busy()}${S.busy?'':`<div class="card"><h3>Learn it</h3><label class="f">Focus (optional)<input type="text" id="focus" placeholder="A subtopic, a question, or leave blank for the core lesson" value="${esc(S.form.focus||'')}"></label>
    <div class="row">${Object.entries(LEN).map(([k,v])=>`<button class="btn ${k==='std'?'pri':''}" data-act="lesson" data-len="${k}">${v.name} · ${v.min} min</button>`).join('')}</div>
-   <h3>Test it</h3><div class="row"><button class="btn" data-act="quiz" data-n="${st.prefs.setSize}">${st.prefs.setSize} new questions</button><button class="btn" data-act="quiz" data-n="10">10 new questions</button>${nq?`<button class="btn" data-act="requiz">Redo from your ${nq} saved</button>`:''}</div></div>`}
+   <h3>Test it</h3><div class="row"><button class="btn" data-act="quiz" data-n="${st.prefs.setSize}">${st.prefs.setSize} new questions</button><button class="btn" data-act="quiz" data-n="10">10 new questions</button>${nq?`<button class="btn" data-act="requiz">Redo from your ${nq} saved</button>`:''}<button class="btn" data-act="ctopic">Flashcards (${cardsIn('top:'+t.id).length})</button></div></div>`}
   ${past.length?`<div class="card" style="gap:0"><h3>Lessons on this topic</h3>${past.map(x=>`<button class="item" data-les="${x.id}"><div><b>${esc(x.title)}</b><div class="tiny muted">${LEN[x.len].name} · ${new Date(x.t).toLocaleDateString()}</div></div><span class="chip">Open</span></button>`).join('')}</div>`:''}`}
 
 /* ----- A lesson: text on screen, audio in the transport ----- */
@@ -485,6 +538,7 @@ function vProgress(){const w=span(7),mo=span(monthSoFar()),all=Object.values(st.
    <div class="figs"><div class="fig"><b>${hm(day().min)}</b><span>today</span></div><div class="fig"><b>${hm(w.min)}</b><span>last 7 days</span></div><div class="fig"><b>${hm(mo.min)}</b><span>this month</span></div><div class="fig"><b>${hm(tot)}</b><span>all time</span></div></div>
    <div class="figs"><div class="fig"><b>${hm(w.min/7)}</b><span>average per day, last 7</span></div><div class="fig"><b>${actDays?hm(tot/actDays):'—'}</b><span>average per active day</span></div><div class="fig"><b>${hm(lis)}</b><span>listening, all time</span></div><div class="fig"><b>${tot?pct(lis,tot)+'%':'—'}</b><span>of time spent listening</span></div></div>
    <div class="plain"><span class="eyebrow">Minutes per day, last 4 weeks</span><div class="bars" role="img" aria-label="Minutes per day over the last 28 days">${last.map(v=>`<div style="height:${Math.max(3,Math.round(100*v/mx))}%" data-z="${v?'':1}" title="${Math.round(v)} min"></div>`).join('')}</div><div class="row between tiny muted"><span>4 weeks ago</span><span class="num">tallest bar ${Math.round(Math.max(...last))} min</span><span>today</span></div></div></div>
+  <div class="card"><h3>Flashcards</h3><div class="figs"><div class="fig"><b>${span(1).cards}</b><span>viewed today</span></div><div class="fig"><b>${w.cards}</b><span>viewed, last 7 days</span></div><div class="fig"><b>${allCards().filter(c=>c.v).length}/${allCards().length}</b><span>cards seen</span></div><div class="fig"><b>${allCards().filter(c=>c.conf>=4).length}</b><span>rated confident or better</span></div></div></div>
   <div class="card"><h3>Mastery by section</h3><div class="tablewrap"><table><thead><tr><th>Section</th><th class="n">Started</th><th class="n">Questions</th><th class="n">Correct</th><th class="n">Mastery</th><th>Last studied</th></tr></thead><tbody>
    ${TRACKS.map(tr=>`<tr><td colspan="6"><span class="eyebrow">${esc(tr.name)}</span></td></tr>`+tr.sections.map(s=>{const x=secStats(s);return `<tr><td>${esc(s.name)}</td><td class="n">${pct(x.started,x.total)}%</td><td class="n">${x.n}</td><td class="n">${x.n?pct(x.c,x.n)+'%':'—'}</td><td class="n">${x.m??'—'}</td><td>${x.last?new Date(x.last).toLocaleDateString():'—'}</td></tr>`}).join('')).join('')}</tbody></table></div>
    <p class="tiny muted">Started = share of topics with a lesson or at least three answered questions. Mastery is 0 to 100: accuracy weighted by how many questions back it up, blended with your own rating, and faded after a month without review.</p></div>
@@ -543,14 +597,28 @@ async function buildBackup(){const data=JSON.stringify({app:'doctor-career-compa
   if(WEB){location.href='/api/backup';return}if(DL){try{await DL.save({filename:name,data})}catch(e){if(e&&e.code!=='cancelled'&&e.code!=='declined')toast('The backup could not be saved.')}return}toast('Backups download from the website or from Claude.')}
 
 document.addEventListener('click',async e=>{
-  const tab=e.target.closest('[data-tab]');if(tab){if(S.quiz)endQuiz();S.tab=tab.dataset.tab;S.lesson=null;S.err='';if(S.session&&!P.on)S.session=null;render();scrollTo(0,0);return}
+  const tab=e.target.closest('[data-tab]');if(tab){if(S.quiz)endQuiz();S.tab=tab.dataset.tab;S.lesson=null;S.deck=null;S.clist=false;S.err='';if(S.session&&!P.on)S.session=null;render();scrollTo(0,0);return}
   const nav=e.target.closest('[data-track],[data-sec],[data-topic],[data-goal],[data-les]');
   if(nav){const d=nav.dataset;if(d.track)S.track=d.track;if(d.sec)S.sec=d.sec;if(d.topic){S.tab='learn';S.topic=d.topic;S.sec=TOP[d.topic].sec.id;S.track=TOP[d.topic].sec.track.id;S.form={}}if(d.goal)S.goal=d.goal;
     if(d.les){const L=docs['les_'+d.les];if(L){S.session=null;openLesson(L)}else toast('That lesson is no longer saved.');return}S.err='';render();scrollTo(0,0);return}
   const set=e.target.closest('[data-set]');if(set){let v=set.dataset.v;if(v==='true')v=true;else if(v==='false')v=false;else if(!isNaN(v))v=Number(v);st.prefs[set.dataset.set]=v;saveState();render();return}
   const rate=e.target.closest('[data-rate]');if(rate){const s=tS(rate.dataset.tid);s.rate=Number(rate.dataset.rate);s.rated=Date.now();saveState();render();return}
   const pick=e.target.closest('[data-pick]');if(pick){const q=findQ(pick.dataset.q);if(!q)return;const i=Number(pick.dataset.pick);if(S.quiz){if(S.quiz.picks[q.id]!=null)return;S.quiz.picks[q.id]=i}else{S.lq=S.lq||{};if(S.lq[q.id]!=null)return;S.lq[q.id]=i}score(q,i);render();return}
+  const cf=e.target.closest('[data-conf]');if(cf&&S.deck){const D=S.deck,c=findC(D.ids[D.i]),r=Number(cf.dataset.conf);rateCard(c,r);if(r===1&&D.ids.length<200)D.ids.push(c.id);D.i++;D.flip=false;P.stop(true);saveState();render();return}
   const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act,v=id=>(($('#'+id)||{}).value||'').trim();
+  if(a==='cflip'){const D=S.deck;if(!D.flip){D.flip=true;D.seen++;const c=findC(D.ids[D.i]);c.v=(c.v||0)+1;day().cards=(day().cards||0)+1;saveDeck(TOP[c.tid].sec.id);saveState()}else D.flip=false;render();return}
+  if(a==='cskip'){S.deck.i++;S.deck.flip=false;P.stop(true);render();return}
+  if(a==='cdel'){const c=findC(S.deck.ids[S.deck.i]),d=deck(TOP[c.tid].sec.id);d.cards=d.cards.filter(x=>x.id!==c.id);saveDeck(TOP[c.tid].sec.id);S.deck.ids=S.deck.ids.filter(x=>x!==c.id);S.deck.flip=false;toast('Card removed.');render();return}
+  if(a==='csay'){const c=findC(S.deck.ids[S.deck.i]);P.load(S.deck.flip?[{say:c.b}]:[{say:c.f}],'Card','');return}
+  if(a==='cexit'){S.deck=null;S.clist=false;P.stop(true);render();return}
+  if(a==='cdue')return startDeck(dueCards(S.cscope).sort((x,y)=>x.due-y.due).slice(0,60),'Due: '+scopeName(S.cscope));
+  if(a==='cduetoday'){S.tab='cards';S.cscope='all';return startDeck(dueCards('all').sort((x,y)=>x.due-y.due).slice(0,60),'Due cards')}
+  if(a==='cbrowse'){const cs=cardsIn(S.cscope);return startDeck(shuffle(cs.filter(c=>!c.n)).concat(shuffle(cs.filter(c=>c.n)).sort((x,y)=>x.due-y.due)).slice(0,40),scopeName(S.cscope))}
+  if(a==='cread'){S.clist=true;render();scrollTo(0,0);return}
+  if(a==='cplay'){const cs=cardsIn(S.cscope).slice(0,80),q=[];cs.forEach(c=>{q.push({say:c.f});q.push({wait:2500});q.push({say:c.b});q.push({wait:700})});day().cards=(day().cards||0)+0;P.load(q,'Cards: '+scopeName(S.cscope),cs.length+' cards, question then answer');return}
+  if(a==='ctopic'){S.tab='cards';S.cscope='top:'+S.topic;S.deck=null;S.clist=false;render();scrollTo(0,0);return}
+  if(a==='cnew'){const sc=S.cscope,ts=sc.startsWith('top:')?[TOP[sc.slice(4)]]:ranked().filter(r=>inScope(r.t,sc)).slice(0,2).map(r=>r.t);
+    return run('Claude is writing cards on '+ts.map(t=>t.name).join(' and ')+'…',async()=>{let made=[];for(const t of ts)made=made.concat(await genCards(t,ts.length>1?5:10));if(!made.length)throw{code:'upstream_error',message:'No new cards passed the accuracy check. Try again.'};startDeck(made,'New: '+ts.map(t=>t.name).join(', '))})}
   if(a==='ptoggle')return P.toggle();if(a==='pnext')return P.jump(1);if(a==='pprev')return P.jump(-1);
   if(a==='pstop'){P.stop();if(S.session)S.session.waiting=false;return}
   if(a==='prate'){const r=[.85,1,1.15,1.3,1.5],i=r.indexOf(st.prefs.rate);st.prefs.rate=r[(i+1)%r.length];saveState();if(P.on&&!P.paused){P.tok++;P.run()}drawPlayer();return}
@@ -589,7 +657,7 @@ document.addEventListener('click',async e=>{
   if(a==='libcheck'){st.prefs.libName=v('libname')||st.prefs.libName;return run('Looking in Google Drive…',async()=>{try{await libInit(true);toast('Library connected.')}catch(x){throw{code:'upstream_error',message:(x&&x.message)||'Google Drive could not be reached. Allow the connector for this page and try again.'}}})}
   if(a==='backup')return buildBackup();
 });
-document.addEventListener('change',e=>{const s=e.target.closest('[data-step]');if(s&&S.goal){const d=docs['goal_'+S.goal];d.done=d.done||{};d.done[s.dataset.step]=s.checked?1:0;put('goal_'+S.goal,d)}});
+document.addEventListener('change',e=>{if(e.target.id==='cscope'){S.cscope=e.target.value;render();return}const s=e.target.closest('[data-step]');if(s&&S.goal){const d=docs['goal_'+S.goal];d.done=d.done||{};d.done[s.dataset.step]=s.checked?1:0;put('goal_'+S.goal,d)}});
 
 /* ---------- Boot ---------- */
 (async()=>{
