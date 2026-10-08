@@ -49,7 +49,8 @@ async function startSession(env, userId) {
 /* ---------- The app's AI on the website ----------
    Inside Claude the app uses Claude itself. On the website it asks this server, which uses Claude when an ANTHROPIC_API_KEY secret
    is set and otherwise Cloudflare Workers AI (the AI binding), trying a short list of models in order. A daily allowance per account
-   keeps the cost bounded (AI_DAILY, default 200 requests). */
+   keeps the cost bounded (AI_DAILY, default 200 requests). With the key set, AI_MODEL and AI_MODEL_QUICK choose the Claude models
+   (defaults: claude-sonnet-5-5 for lessons, questions and plans; claude-haiku-4-5-20251001 for quick replies). */
 const AI_MODELS = { quick: ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/openai/gpt-oss-120b', '@cf/meta/llama-4-scout-17b-16e-instruct', '@cf/meta/llama-3.1-8b-instruct-fp8'],
   default: ['@cf/openai/gpt-oss-120b', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-4-scout-17b-16e-instruct', '@cf/meta/llama-3.1-8b-instruct-fp8'] };
 const AI_SYSTEM = 'You are the teaching engine of Doctor Career Companion, a continuing medical education and career development app for one practicing physician. Write at attending level. Base clinical statements on current guidelines from the major professional societies and name the guideline and year. Never invent a citation, statistic, dose or threshold: when unsure, say so plainly. Follow the instructions in the messages exactly. When asked for JSON, reply with only valid JSON: no prose before or after it and no code fences.';
@@ -63,7 +64,7 @@ function aiText(r) {
 async function aiReply(env, messages, tier) {
   if (env.ANTHROPIC_API_KEY) {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: env.AI_MODEL || 'claude-haiku-5-5', max_tokens: 8000, system: AI_SYSTEM, messages }) });
+      body: JSON.stringify({ model: tier === 'quick' ? (env.AI_MODEL_QUICK || 'claude-haiku-4-5-20251001') : (env.AI_MODEL || 'claude-sonnet-5-5'), max_tokens: 8000, system: AI_SYSTEM, messages }) });
     if (!r.ok) throw new Error('ai upstream ' + r.status);
     const j = await r.json();
     return { text: (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('').trim(), model: j.model || 'claude' };
@@ -171,7 +172,7 @@ async function api(request, env, url) {
 
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
-    return json({ ...profile(user), connector: link ? link.created : null, areas: await summary(env, user.id) });
+    return json({ ...profile(user), ai: env.ANTHROPIC_API_KEY ? 'claude' : env.AI ? 'workers' : 'none', connector: link ? link.created : null, areas: await summary(env, user.id) });
   }
   /* Connector link: a private address, one per account, that lets the app inside Claude read and save this account's record. */
   if (route === 'POST /api/connector') {

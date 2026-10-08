@@ -145,7 +145,7 @@ let toastT=null;function toast(t,ms=3500){const el=$('#toast');el.textContent=t;
 function md(t){const out=[];let ul=null;String(t||'').split(/\n/).forEach(l=>{const li=/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/.exec(l);const f=x=>esc(x).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^#{1,4}\s*/,'');
   if(li){if(!ul){ul=[];out.push(ul)}ul.push('<li>'+f(li[1])+'</li>')}else{ul=null;if(l.trim())out.push('<p>'+(/^#{1,4}\s/.test(l)?'<b>'+f(l)+'</b>':f(l))+'</p>')}});
   return '<div class="md">'+out.map(x=>Array.isArray(x)?'<ul>'+x.join('')+'</ul>':x).join('')+'</div>'}
-const thinking=t=>`<div class="thinking"><span class="dot"></span><span>${esc(WEB?String(t).replace(/^Claude/,'The AI'):t)}</span></div>`;
+const thinking=t=>`<div class="thinking"><span class="dot"></span><span>${esc(WEB&&WEBAI!=='claude'?String(t).replace(/^Claude/,'The AI'):t)}</span></div>`;
 
 /* ---------- Curriculum ----------
    Four tracks. Internal medicine follows the subject divisions of a board review syllabus; the other three are the practice-building tracks.
@@ -193,7 +193,7 @@ const SETTING={out:'Outpatient',mix:'Mixed',in:'Inpatient'};
    2. Claude's own storage for this page, kept as a second copy (and the only copy until the server is set up).
    3. A journal in this browser: every change is written here first and cleared only when the central copy accepts it. */
 const CONN='Doctor Career Companion',GD='Google Drive',AREA='med',JK='dcc:q:',LS='dcc:docs';
-let WEB=false,OFFLINE=false,MCP=null,LINKED=false,DB=null,COLL='companion',docs={},SAMPLE=null,DL=null,pending=0,wait=4000,retryT=null,lastPull=0;
+let WEBAI='',WEB=false,OFFLINE=false,MCP=null,LINKED=false,DB=null,COLL='companion',docs={},SAMPLE=null,DL=null,pending=0,wait=4000,retryT=null,lastPull=0;
 const clone=o=>JSON.parse(JSON.stringify(o));
 const jget=n=>{try{return JSON.parse(localStorage.getItem(JK+n))}catch(e){return null}};
 const jkeys=()=>{const o=[];try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith(JK))o.push(k.slice(JK.length))}}catch(e){}return o};
@@ -577,7 +577,7 @@ function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h
   <div class="card"><h3>Questions</h3><div class="plain"><span class="eyebrow">Default set size</span>${segBtns('setSize',[[3,'3'],[5,'5'],[10,'10']],p.setSize)}</div><div class="plain"><span class="eyebrow">Accuracy review</span>${segBtns('audit',[[true,'Check every set with a second pass'],[false,'Off (faster)']],p.audit)}</div></div>
   <div class="card"><h3>Reference library</h3><p class="small muted">${WEB?'The website cannot reach your Google Drive. Open the app inside Claude to ground lessons in your own text.':MCP?'Clinical lessons and questions are grounded in the matching chapter of your own text in Google Drive. The text is read at the moment it is needed and is not stored here.':'Google Drive is not connected to this page.'}</p>
    ${MCP?`${segBtns('lib',[[true,'Use my library'],[false,'Off']],p.lib)}<label class="f">Drive folder name<input type="text" id="libname" value="${esc(p.libName)}"></label><div class="row"><button class="btn" data-act="libcheck">${st.lib?'Rescan folder':'Connect and scan'}</button>${st.lib?`<span class="small muted">${Object.keys(st.lib.folders).length} subject folders found</span>`:''}</div>`:''}</div>
-  <div class="card"><h3>How far to trust it</h3><p class="small">Lessons and questions are written by AI ${WEB?'(Cloudflare Workers AI on this website)':'(Claude)'} from its training and, where connected, your own reference text. It has no live access to journals or society websites from inside this app, so a guideline published recently may be missing. Each lesson names its sources and lists what to verify. Flag any question you find wrong and it leaves your statistics.</p></div>
+  <div class="card"><h3>How far to trust it</h3><p class="small">Lessons and questions are written by AI ${WEB&&WEBAI!=='claude'?'(Cloudflare Workers AI on this website; Claude inside the Claude app)':'(Claude)'} from its training and, where connected, your own reference text. It has no live access to journals or society websites from inside this app, so a guideline published recently may be missing. Each lesson names its sources and lists what to verify. Flag any question you find wrong and it leaves your statistics.</p></div>
   <div class="card"><h3>Your record</h3><p class="small muted">${LINKED?'Saved to your Doctor Career Companion account.':DB?'Saved in Claude. Once the server is deployed and its connector is added, the same record follows you to the website.':'Saved in this browser only.'}</p><div class="row"><button class="btn" data-act="backup">Download a backup</button>${WEB?'<a class="btn" href="/account.html">Account</a>':''}</div></div>`}
 
 /* ---------- Actions ---------- */
@@ -670,7 +670,7 @@ document.addEventListener('change',e=>{if(e.target.id==='cscope'){S.cscope=e.tar
   if(!C){let r=null;try{r=await fetch('/api/me',{cache:'no-store'})}catch(e){}
     if(r&&r.status===401){location.replace('/account.html?next=1');return}
     let me=null;if(r&&r.ok){try{me=await r.json()}catch(e){}}
-    if(me&&me.id){WEB=true;let d=null;try{d=await fetchServer()}catch(e){}
+    if(me&&me.id){WEB=true;WEBAI=me.ai||'workers';let d=null;try{d=await fetchServer()}catch(e){}
       if(d)docs=strip(d);else{try{const c=JSON.parse(localStorage.getItem('dcc:cache'));if(c){OFFLINE=true;docs=c}}catch(e){}}
       LINKED=true;SAMPLE=webSample();lastPull=Date.now();cacheDocs()}}
   else if(MCP){try{const r=await MCP.callTool(CONN,'load_progress',{area:AREA,since:0},{cache:false});const p=r&&r.payload;if(p&&p.docs&&typeof p.docs==='object')sdocs=strip(p.docs)}catch(e){}}

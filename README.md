@@ -4,7 +4,7 @@ A continuing-education and career app for one physician, built to be listened to
 
 - **The app** (`app/companion.html`) is published as an artifact in Claude. Claude writes the lessons, questions, tutor answers and career plans.
 - **The server** (`src/worker.js`, a Cloudflare Worker with a D1 database) holds accounts and the study record. The app inside Claude reaches it through a connector at `/mcp/<token>`.
-- **The website** runs the same app at `/` (`public/index.html`, built from `app/companion.html` by `python3 tools/build.py`). Its AI is `/api/ai`: Cloudflare Workers AI through the `AI` binding (reasoning models first), or Claude if an `ANTHROPIC_API_KEY` secret is set. `AI_DAILY` caps requests per account per day (default 200).
+- **The website** runs the same app at `/` (`public/index.html`, built from `app/companion.html` by `python3 tools/build.py`). Its AI is `/api/ai`: Cloudflare Workers AI through the `AI` binding (reasoning models first), or Claude if an `ANTHROPIC_API_KEY` secret is set. `AI_DAILY` caps requests per account per day (default 200). With the key set, `AI_MODEL` and `AI_MODEL_QUICK` pick the Claude models (defaults `claude-sonnet-5-5` and `claude-haiku-4-5-20251001`).
 - **The account page** (`public/account.html`): sign up, reset a password, make the connector link, download a backup.
 
 After changing `app/companion.html`, run `python3 tools/build.py` before committing.
