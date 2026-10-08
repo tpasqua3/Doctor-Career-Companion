@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Doctor Career Companion account</title>
+<link rel="manifest" href="/manifest.json"><link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{--paper:#f2f5f4;--card:#fff;--ink:#12242b;--muted:#55686f;--line:#d5dedc;--cobalt:#0d6e6a;--cobalt-ink:#fff;--cobalt-soft:#dcefec;--good:#1b7a4e;--good-soft:#dff2e7;--bad:#b23a2a;--bad-soft:#fae6e2;--note:#f8edd6;
+  --es:"IBM Plex Serif",Georgia,serif;--ui:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--paper:#0c1517;--card:#142023;--ink:#e3ecea;--muted:#93a6a6;--line:#24363a;--cobalt:#5fc9bf;--cobalt-ink:#0c1517;--cobalt-soft:#16302f;--good:#55c591;--good-soft:#143021;--bad:#f0836f;--bad-soft:#3a1d18;--note:#2e2613;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 var(--ui);padding-top:env(safe-area-inset-top,0px)}
+.wrap{max-width:560px;margin:0 auto;padding-inline:16px;padding-block:28px 64px;display:flex;flex-direction:column;gap:16px}
+h1,h2{font-family:var(--es);margin:0;line-height:1.2}
+h1{font-size:1.7rem}h2{font-size:1.2rem}
+p{margin:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:12px}
+.muted{color:var(--muted)}.small{font-size:.85rem}
+label{display:flex;flex-direction:column;gap:4px;font-size:.85rem;font-weight:600}
+input{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+input:focus-visible,.btn:focus-visible,a:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{font:inherit;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:9px 15px;border-radius:9px;cursor:pointer;text-decoration:none;display:inline-block}
+.btn.pri{background:var(--cobalt);border-color:var(--cobalt);color:var(--cobalt-ink)}
+.btn.link{border:0;background:none;color:var(--cobalt);padding:4px 0}
+.btn.danger{color:var(--bad);border-color:var(--bad)}
+.err{background:var(--bad-soft);color:var(--bad);border-radius:9px;padding:9px 12px;font-size:.88rem}
+.ok{background:var(--good-soft);color:var(--good);border-radius:9px;padding:9px 12px;font-size:.88rem}
+.note{background:var(--note);border-radius:9px;padding:10px 12px;font-size:.88rem}
+code{display:block;word-break:break-all;background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:.82rem}
+ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.chip{display:inline-block;font-size:.75rem;font-weight:700;padding:3px 9px;border-radius:99px;background:var(--cobalt-soft);color:var(--cobalt)}
+.chip.on{background:var(--good-soft);color:var(--good)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><p class="muted">Loading…</p></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const LANGS={med:'Study and career record'};
+let me=null,mode='login',newLink='',msg='',confirmDel=false;
+const nextUrl=new URLSearchParams(location.search).has('next');
+const resetTok=(new URLSearchParams(location.search).get('reset')||'').match(/^[a-f0-9]{64}$/)?.[0]||'';
+async function api(method,path,body){const r=await fetch(path,{method,headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});let j={};try{j=await r.json()}catch(e){}if(!r.ok)throw new Error(j.error||'Something went wrong. Try again.');return j}
+function auth(){
+  if(resetTok)return `<h1>Choose a new password</h1><div class="card"><label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label>${msg}<div class="row"><button class="btn pri" data-act="reset">Save password</button></div></div>`;
+  const su=mode==='signup',fg=mode==='forgot';
+  return `<div><h1>Doctor Career Companion</h1><p class="muted">Your account keeps your study record (question history, mastery by topic, lessons, career plans) whether you use the app here or inside Claude.</p></div>
+  <div class="card"><h2>${su?'Create your account':fg?'Reset your password':'Log in'}</h2>
+   ${su?`<div class="row"><label style="flex:1">First name<input id="first" autocomplete="given-name"></label><label style="flex:1">Last name<input id="last" autocomplete="family-name"></label></div>`:''}
+   <label>${su||fg?'Recovery email':'Email'}<input id="email" type="email" autocomplete="email"></label>
+   ${su?'<span class="small muted">Used only to send you a password reset link.</span>':''}
+   ${fg?'':`<label>Password<input id="pw" type="password" autocomplete="${su?'new-password':'current-password'}"></label>`}
+   ${msg}
+   <div class="row"><button class="btn pri" data-act="${su?'signup':fg?'forgot':'login'}">${su?'Create account':fg?'Email me a reset link':'Log in'}</button></div>
+   <div class="row small">${su?'<button class="btn link" data-mode="login">I already have an account</button>':`<button class="btn link" data-mode="signup">Create an account</button>${fg?'<button class="btn link" data-mode="login">Back to log in</button>':'<button class="btn link" data-mode="forgot">Forgot password?</button>'}`}</div></div>`}
+function home(){
+  const langs=me.areas||[];
+  return `<div class="row" style="justify-content:space-between"><h1>${esc(me.firstName?'Dr. '+(me.lastName||me.firstName):'Your account')}</h1><button class="btn link" data-act="logout">Log out</button></div>
+  <div class="card"><h2>The app</h2><p class="small muted">Use it here in the browser, or inside Claude. Both read and save the same record.</p><div class="row"><a class="btn pri" href="/">Open the app</a></div></div>
+  <div class="card"><div class="row" style="justify-content:space-between"><h2>Claude connector</h2><span class="chip ${me.connector?'on':''}">${me.connector?'On':'Not set up'}</span></div>
+   ${newLink?`<div class="ok">Your new connector link. Copy it now; it is shown only once.</div><code id="lnk">${esc(newLink)}</code><div class="row"><button class="btn pri" data-act="copy">Copy link</button></div>
+     <ol class="small"><li>In Claude, open <b>Settings → Connectors</b> and choose <b>Add custom connector</b>.</li><li>Name it <b>Doctor Career Companion</b> and paste the link as the URL.</li><li>Set its tools: load_progress, get_profile and save_doc to <b>Always allow</b>; delete_doc to <b>Ask</b>.</li><li>Open the app in Claude and reload it. The header should say "Saved to your account".</li></ol>`
+    :`<p class="small muted">${me.connector?'Your link was made on '+esc(new Date(me.connector).toLocaleDateString())+'. If you lost it or think someone else has it, make a new one; the old link stops working.':'The app inside Claude saves to this account through a private connector link. Make one, then add it in Claude.'}</p>
+     <div class="row"><button class="btn pri" data-act="mklink">${me.connector?'Make a new link':'Make my connector link'}</button>${me.connector?'<button class="btn" data-act="offlink">Turn off</button>':''}</div>`}</div>
+  <div class="card"><h2>Your record</h2>${langs.length?`<table><thead><tr><th>Area</th><th>Saved items</th><th>Last saved</th></tr></thead><tbody>${langs.map(l=>`<tr><td>${esc(LANGS[l.lang]||l.lang)}</td><td>${l.n}</td><td>${esc(new Date(l.updated).toLocaleString())}</td></tr>`).join('')}</tbody></table>`:'<p class="small muted">Nothing saved yet. Your record appears here after your first session.</p>'}
+   <div class="row"><a class="btn" href="/api/backup">Download a backup</a></div></div>
+  ${msg}
+  <div class="card"><h2>Account</h2><p class="small muted">${esc(me.email)} · recovery email</p>
+   <div class="row">${confirmDel?'<button class="btn danger" data-act="delacct">Yes, delete my account and everything saved</button><button class="btn" data-act="nodel">Keep it</button>':'<button class="btn danger" data-act="askdel">Delete account</button>'}</div></div>`}
+function draw(){$('#app').innerHTML=me?home():auth()}
+const v=id=>($('#'+id)||{}).value||'';
+const show=(t,ok)=>{msg=`<div class="${ok?'ok':'err'}">${esc(t)}</div>`;draw()};
+document.addEventListener('click',async e=>{
+  const m=e.target.closest('[data-mode]');if(m){mode=m.dataset.mode;msg='';draw();return}
+  const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;msg='';
+  try{
+    if(a==='login'){await api('POST','/api/login',{email:v('email'),password:v('pw')});if(nextUrl)return location.replace('/');return load()}
+    if(a==='signup'){await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw')});if(nextUrl)return location.replace('/');return load()}
+    if(a==='forgot'){await api('POST','/api/forgot',{email:v('email')});return show('Check your email for a reset link. It works for one hour.',true)}
+    if(a==='reset'){await api('POST','/api/reset',{token:resetTok,password:v('pw')});location.replace('/account.html?next=1');return}
+    if(a==='logout'){await api('POST','/api/logout');me=null;mode='login';draw();return}
+    if(a==='mklink'){const r=await api('POST','/api/connector');newLink=r.url;return load()}
+    if(a==='offlink'){await api('DELETE','/api/connector');newLink='';return load()}
+    if(a==='copy'){try{await navigator.clipboard.writeText(newLink);b.textContent='Copied'}catch(x){const r=document.createRange();r.selectNodeContents($('#lnk'));getSelection().removeAllRanges();getSelection().addRange(r)}return}
+    if(a==='askdel'){confirmDel=true;draw();return}
+    if(a==='nodel'){confirmDel=false;draw();return}
+    if(a==='delacct'){await api('DELETE','/api/account');me=null;confirmDel=false;mode='login';draw();return}
+  }catch(x){show(x.message)}
+});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.tagName==='INPUT'){const p=document.querySelector('.btn.pri');if(p)p.click()}});
+async function load(){try{me=await api('GET','/api/me')}catch(e){me=null}draw()}
+load();
+</script>
+</body>
+</html>

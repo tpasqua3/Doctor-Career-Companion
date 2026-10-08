@@ -1,0 +1,615 @@
+<title>Doctor Career Companion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column for a phone or a laptop, sticky tab strip on top, and a fixed audio transport along the bottom whenever a lesson is loaded. Lesson text is set in a book face because it is read as well as heard; numbers are monospaced like a chart. */
+:root{
+  --paper:#f2f5f4; --card:#ffffff; --ink:#12242b; --muted:#55686f; --line:#d5dedc;
+  --teal:#0d6e6a; --teal-ink:#ffffff; --teal-soft:#dcefec; --amber:#a8690a; --amber-soft:#f8edd6;
+  --good:#1b7a4e; --good-soft:#dff2e7; --bad:#b23a2a; --bad-soft:#fae6e2;
+  --read:"IBM Plex Serif",Georgia,"Times New Roman",serif; --ui:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --num:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#0c1517; --card:#142023; --ink:#e3ecea; --muted:#93a6a6; --line:#24363a;
+  --teal:#5fc9bf; --teal-ink:#0c1517; --teal-soft:#16302f; --amber:#eab455; --amber-soft:#2e2613;
+  --good:#55c591; --good-soft:#143021; --bad:#f0836f; --bad-soft:#3a1d18; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0c1517; --card:#142023; --ink:#e3ecea; --muted:#93a6a6; --line:#24363a;
+  --teal:#5fc9bf; --teal-ink:#0c1517; --teal-soft:#16302f; --amber:#eab455; --amber-soft:#2e2613;
+  --good:#55c591; --good-soft:#143021; --bad:#f0836f; --bad-soft:#3a1d18; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font:15px/1.55 var(--ui);margin:0}
+.wrap{max-width:760px;margin:0 auto;padding-inline:16px;padding-block:10px 150px}
+h1,h2,h3{font-family:var(--read);font-weight:600;line-height:1.22;text-wrap:balance;margin:0}
+h1{font-size:1.5rem} h2{font-size:1.25rem} h3{font-size:1.05rem}
+p{margin:0} a{color:var(--teal)}
+button,input,select,textarea{font:inherit;color:inherit}
+.top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-block:6px 4px}
+.brand{font-family:var(--read);font-weight:600;font-size:1.15rem}
+.sync{font-size:.78rem;color:var(--muted)} .sync[data-warn="1"]{color:var(--amber)}
+.tabs{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--paper);display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;padding-block:6px;border-bottom:1px solid var(--line);margin-bottom:16px}
+.tabs::-webkit-scrollbar{display:none}
+.tab{border:0;background:none;padding:8px 12px;border-radius:8px;font-weight:500;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{background:var(--teal-soft);color:var(--teal);font-weight:600}
+.stack{display:flex;flex-direction:column;gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.plain{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.between{justify-content:space-between}
+.muted{color:var(--muted)} .small{font-size:.85rem} .tiny{font-size:.76rem}
+.eyebrow{font-size:.72rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.num{font-family:var(--num);font-variant-numeric:tabular-nums}
+.btn{font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:9px 14px;border-radius:9px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.btn.pri{background:var(--teal);border-color:var(--teal);color:var(--teal-ink)}
+.btn.sm{padding:5px 10px;font-size:.85rem}
+.btn.link{border:0;background:none;color:var(--teal);padding:4px 0}
+.btn.danger{color:var(--bad);border-color:var(--bad)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn:focus-visible,.tab:focus-visible,.opt:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,.item:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+input[type=text],select,textarea{background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:9px 11px;width:100%;min-width:0}
+textarea{min-height:76px;resize:vertical}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:.85rem;font-weight:600;flex:1;min-width:150px}
+.seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;flex-wrap:wrap}
+.seg button{border:0;background:var(--card);padding:8px 12px;cursor:pointer;flex:1;white-space:nowrap;font-weight:500;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--teal);color:var(--teal-ink);font-weight:600}
+.note{background:var(--amber-soft);border-radius:9px;padding:10px 12px;font-size:.88rem}
+.err{background:var(--bad-soft);color:var(--bad);border-radius:9px;padding:10px 12px;font-size:.88rem}
+.chip{display:inline-block;font-size:.72rem;font-weight:600;padding:3px 8px;border-radius:99px;background:var(--teal-soft);color:var(--teal);white-space:nowrap}
+.chip.warn{background:var(--amber-soft);color:var(--amber)} .chip.good{background:var(--good-soft);color:var(--good)} .chip.bad{background:var(--bad-soft);color:var(--bad)} .chip.off{background:var(--paper);color:var(--muted);border:1px solid var(--line)}
+.thinking{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:.9rem}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--teal);animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.dot{animation:none}}
+/* figures */
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.fig{display:flex;flex-direction:column;gap:2px;min-width:0}
+.fig b{font-family:var(--num);font-size:1.35rem;font-weight:500;font-variant-numeric:tabular-nums}
+.fig span{font-size:.76rem;color:var(--muted)}
+.week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.day{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:.7rem;color:var(--muted)}
+.day i{display:block;width:100%;height:8px;border-radius:4px;background:var(--line)}
+.day[data-on="1"] i{background:var(--teal)} .day[data-today="1"]{color:var(--ink);font-weight:600}
+.bars{display:flex;align-items:flex-end;gap:3px;height:70px}
+.bars div{flex:1;background:var(--teal);border-radius:3px 3px 0 0;min-height:2px;opacity:.85}
+.bars div[data-z="1"]{background:var(--line)}
+.meter{height:6px;border-radius:3px;background:var(--line);overflow:hidden;min-width:60px;flex:1}
+.meter i{display:block;height:100%;background:var(--teal)}
+/* lists */
+.item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);background:none;border-left:0;border-right:0;border-top:0;width:100%;text-align:left;cursor:pointer}
+.item:last-child{border-bottom:0}
+.item>div{min-width:0}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.86rem}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+td.n,th.n{text-align:right;font-family:var(--num);font-variant-numeric:tabular-nums}
+/* lesson text */
+.lesson{font-family:var(--read);font-size:1.06rem;line-height:1.7;max-width:66ch}
+.lesson section{padding:10px 12px;margin-inline:-12px;border-radius:8px;display:flex;flex-direction:column;gap:6px}
+.lesson section[data-now="1"]{background:var(--teal-soft)}
+.lesson h3{font-size:1.02rem}
+ul.pts{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:5px}
+/* questions */
+.stem{font-family:var(--read);font-size:1.04rem;line-height:1.65;max-width:68ch}
+.opts{display:flex;flex-direction:column;gap:8px}
+.opt{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1px solid var(--line);background:var(--card);border-radius:9px;padding:10px 12px;cursor:pointer;width:100%}
+.opt b{font-family:var(--num);font-weight:500;color:var(--muted)}
+.opt[data-s="right"]{border-color:var(--good);background:var(--good-soft)}
+.opt[data-s="wrong"]{border-color:var(--bad);background:var(--bad-soft)}
+.opt:disabled{cursor:default}
+.rate{display:flex;gap:6px;flex-wrap:wrap}
+.rate button{flex:1;min-width:52px;border:1px solid var(--line);background:var(--card);border-radius:9px;padding:8px 4px;cursor:pointer;display:flex;flex-direction:column;align-items:center;font-size:.72rem;color:var(--muted)}
+.rate button b{font-family:var(--num);font-size:1.05rem;color:var(--ink);font-weight:500}
+.rate button[aria-pressed="true"]{border-color:var(--teal);background:var(--teal-soft)}
+.md p+p,.md ul+p,.md p+ul{margin-top:8px} .md ul{margin:0;padding-left:20px}
+.msg{border-radius:12px;padding:10px 13px;max-width:92%}
+.msg.u{align-self:flex-end;background:var(--teal-soft)} .msg.a{align-self:flex-start;background:var(--card);border:1px solid var(--line)}
+/* audio transport */
+.player{position:fixed;left:0;right:0;bottom:0;z-index:8;background:var(--card);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px))}
+.player .in{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
+.player .t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctl{display:flex;align-items:center;gap:8px}
+.ctl button{border:1px solid var(--line);background:var(--card);border-radius:50%;width:42px;height:42px;cursor:pointer;display:grid;place-items:center;flex:none}
+.ctl button.big{width:54px;height:54px;background:var(--teal);border-color:var(--teal);color:var(--teal-ink)}
+.ctl svg{width:20px;height:20px;fill:currentColor}
+.ctl .sp{border-radius:9px;width:auto;padding:0 10px;font-family:var(--num);font-size:.85rem}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(120px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:9px 14px;border-radius:9px;font-size:.88rem;z-index:20;max-width:calc(100% - 32px)}
+</style>
+<div class="wrap">
+  <div class="top"><span class="brand">Doctor Career Companion</span><span class="sync" id="sync"></span></div>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <main id="app" class="stack"><p class="muted">Loading your record…</p></main>
+</div>
+<div class="player" id="player" hidden></div>
+<div class="toast" id="toast" hidden></div>
+<script>
+'use strict';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,44);
+const dayStr=(d=new Date())=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const pct=(a,b)=>b?Math.round(100*a/b):0;
+const hm=m=>{m=Math.round(m);return m<60?m+' min':Math.floor(m/60)+' h '+(m%60)+' min'};
+let toastT=null;function toast(t,ms=3500){const el=$('#toast');el.textContent=t;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,ms)}
+function md(t){const out=[];let ul=null;String(t||'').split(/\n/).forEach(l=>{const li=/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/.exec(l);const f=x=>esc(x).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^#{1,4}\s*/,'');
+  if(li){if(!ul){ul=[];out.push(ul)}ul.push('<li>'+f(li[1])+'</li>')}else{ul=null;if(l.trim())out.push('<p>'+(/^#{1,4}\s/.test(l)?'<b>'+f(l)+'</b>':f(l))+'</p>')}});
+  return '<div class="md">'+out.map(x=>Array.isArray(x)?'<ul>'+x.join('')+'</ul>':x).join('')+'</div>'}
+const thinking=t=>`<div class="thinking"><span class="dot"></span><span>${esc(WEB?String(t).replace(/^Claude/,'The AI'):t)}</span></div>`;
+
+/* ---------- Curriculum ----------
+   Four tracks. Internal medicine follows the subject divisions of a board review syllabus; the other three are the practice-building tracks.
+   w = how much the planner favors a section (3 = core outpatient). A trailing ~ marks a topic that is mainly hospital medicine.
+   lib = folder titles in the reference library (Google Drive) that hold this section's chapters. */
+const TRACKS=[
+ {id:'im',name:'Internal Medicine',blurb:'Board content by body system',sections:[
+  {id:'cv',name:'Cardiovascular Medicine',w:3,lib:['Cardiology'],src:'ACC/AHA, ESC, USPSTF',topics:['Hypertension','Lipid management and ASCVD risk','Chronic coronary disease','Acute coronary syndromes~','Heart failure','Atrial fibrillation and anticoagulation','Arrhythmias and syncope','Valvular heart disease','Peripheral artery and aortic disease','Preoperative cardiac evaluation','Pericardial and myocardial disease~','Adult congenital and pregnancy-related heart disease']},
+  {id:'endo',name:'Endocrinology and Metabolism',w:3,lib:['Endocrinology'],src:'ADA Standards of Care, Endocrine Society, AACE, ATA, BHOF',topics:['Type 2 diabetes','Type 1 diabetes and insulin management','Obesity medicine','Thyroid disorders','Thyroid nodules and cancer','Osteoporosis and bone health','Calcium and parathyroid disorders','Adrenal disorders','Pituitary disorders','Male hypogonadism','Menopause and female reproductive endocrinology','Hyperglycemic emergencies and inpatient glycemic control~']},
+  {id:'gim',name:'General Internal Medicine',w:3,lib:['Interdisciplinary','Foundations','Common Symptoms'],src:'USPSTF, CDC/ACIP, ACP, AGS, APA, ACOG',topics:['Preventive care and screening','Immunizations','Perioperative medicine','Geriatric syndromes and deprescribing','Women\'s health','Men\'s health','Depression and anxiety in primary care','Substance use disorders','Chronic pain and opioid stewardship','Musculoskeletal and sports medicine','Common symptoms: cough, fatigue, dizziness, edema','Eye, ear, nose and throat problems','Palliative care and goals of care','Biostatistics and evidence appraisal','Ethics and professionalism','Patient safety and quality improvement','Allergic rhinitis, anaphylaxis and drug allergy','Lifestyle medicine and nutrition counseling']},
+  {id:'pulm',name:'Pulmonary and Critical Care',w:2,lib:['Pulmonology','Critical Care'],src:'GOLD, GINA, ATS, CHEST, Fleischner Society, AASM, SCCM',topics:['Asthma','COPD','Pulmonary function testing','Pulmonary nodules and lung cancer screening','Interstitial lung disease','Obstructive sleep apnea','Pleural disease','Pulmonary hypertension','Pulmonary embolism','Respiratory failure and mechanical ventilation~','Shock and resuscitation~','ARDS, toxicology and other critical care syndromes~']},
+  {id:'gi',name:'Gastroenterology and Hepatology',w:2,lib:['Gastroenterology','Hepatology'],src:'ACG, AGA, AASLD, US Multi-Society Task Force',topics:['GERD and esophageal disorders','Peptic ulcer disease and Helicobacter pylori','Colorectal cancer screening and polyp surveillance','Irritable bowel syndrome and functional disorders','Inflammatory bowel disease','Celiac disease and malabsorption','Abnormal liver tests','Metabolic dysfunction-associated steatotic liver disease','Viral hepatitis','Cirrhosis and its complications','Pancreatic disease','Gallbladder and biliary disease','Gastrointestinal bleeding~','Diarrhea and Clostridioides difficile']},
+  {id:'neph',name:'Nephrology',w:2,lib:['Nephrology'],src:'KDIGO, ACC/AHA, AUA',topics:['Chronic kidney disease','Acute kidney injury~','Proteinuria, hematuria and glomerular disease','Sodium and water disorders','Potassium disorders','Acid-base disorders','Kidney stones','Secondary and resistant hypertension','Cystic and genetic kidney disease','Kidney disease in pregnancy']},
+  {id:'id',name:'Infectious Disease',w:2,lib:['Infectious Disease'],src:'IDSA, CDC, ATS, HHS guidelines',topics:['Respiratory tract infections and pneumonia','Urinary tract infections','Skin and soft tissue infections','Sexually transmitted infections','HIV prevention and primary care','Tuberculosis','Travel and tick-borne infections','Osteomyelitis and diabetic foot infection','Antimicrobial stewardship','Endocarditis and bloodstream infections~','Sepsis and hospital-acquired infections~','Infections in immunocompromised hosts~','Central nervous system infections~']},
+  {id:'rheum',name:'Rheumatology',w:2,lib:['Rheumatology'],src:'ACR, EULAR',topics:['Approach to joint pain and autoantibody testing','Osteoarthritis','Rheumatoid arthritis','Gout and crystal arthropathy','Spondyloarthritis','Systemic lupus erythematosus','Vasculitis and polymyalgia rheumatica','Systemic sclerosis, Sjogren disease and myositis','Fibromyalgia','Septic arthritis~']},
+  {id:'neuro',name:'Neurology',w:2,lib:['Neurology'],src:'AAN, AHA/ASA, AHS',topics:['Headache','Stroke and transient ischemic attack','Seizures and epilepsy','Dementia and cognitive impairment','Parkinson disease and movement disorders','Multiple sclerosis and demyelinating disease','Peripheral neuropathy','Neuromuscular disorders','Dizziness and vertigo','Back and neck pain with neurologic features']},
+  {id:'heme',name:'Hematology',w:2,lib:['Hematology'],src:'ASH, CHEST, ISTH',topics:['Anemia evaluation','Iron deficiency and iron overload','Hemoglobinopathies','Bleeding disorders','Venous thromboembolism and anticoagulation','Thrombophilia testing','Platelet disorders','Monoclonal gammopathy and plasma cell disorders','Myeloproliferative neoplasms','Transfusion medicine~']},
+  {id:'derm',name:'Dermatology',w:2,lib:['Dermatology'],src:'AAD',topics:['Eczema, psoriasis and seborrheic dermatitis','Acne and rosacea','Skin cancer and pigmented lesions','Skin infections and infestations','Urticaria and drug eruptions','Hair, nail and mucosal disorders','Skin signs of systemic disease']},
+  {id:'onc',name:'Oncology',w:1,lib:['Oncology'],src:'USPSTF, NCCN, ASCO, ACS',topics:['Cancer screening','Breast cancer','Lung cancer','Prostate and genitourinary cancers','Colorectal and gastrointestinal cancers','Lymphoma and leukemia','Survivorship and late effects of cancer therapy','Oncologic emergencies~']}]},
+ {id:'omm',name:'Osteopathic Manipulative Medicine',blurb:'Diagnosis, technique and anatomy for the office',sections:[
+  {id:'ommf',name:'Principles and Diagnosis',w:2,src:'AOA, AACOM ECOP Glossary of Osteopathic Terminology, Foundations of Osteopathic Medicine',topics:['Osteopathic tenets and the five models','Somatic dysfunction and TART findings','Fryette principles and spinal mechanics','Structural examination and screening','Viscerosomatic reflexes and autonomic levels','Chapman points','Lymphatic system and treatment sequencing','Indications, contraindications and safety of OMT']},
+  {id:'ommt',name:'Techniques',w:2,src:'AOA, Foundations of Osteopathic Medicine, Atlas of Osteopathic Techniques',topics:['Soft tissue and myofascial release','Muscle energy','Counterstrain','High-velocity low-amplitude technique','Facilitated positional release and Still technique','Balanced ligamentous tension and articulatory technique','Osteopathic cranial manipulative medicine','Lymphatic techniques','Visceral techniques']},
+  {id:'ommr',name:'Regional Anatomy and Treatment',w:2,src:'AOA, Foundations of Osteopathic Medicine',topics:['Cervical spine','Thoracic spine','Ribs and thoracic cage','Lumbar spine','Sacrum and pelvis','Innominates and pubic symphysis','Upper extremity','Lower extremity','Head, temporomandibular joint and sinuses']},
+  {id:'ommc',name:'Clinical Integration',w:2,src:'AOA clinical practice guidelines, AMA CPT, CMS',topics:['OMT for low back pain','OMT for neck pain and headache','OMT in pregnancy','OMT in respiratory illness and the hospitalized patient','OMT for the older adult','Home exercise prescription','OMT documentation, coding and billing']}]},
+ {id:'proc',name:'Procedures and Regenerative Medicine',blurb:'Hands-on primary care, ultrasound and musculoskeletal care',sections:[
+  {id:'poff',name:'Office Procedures',w:2,src:'AAFP, ACP, ACOG, AAD, AAOS',topics:['Joint and bursa injections','Trigger point injections','Skin biopsy and excision','Cryotherapy and lesion destruction','Incision and drainage','Laceration repair','Nail procedures','Contraceptive procedures: intrauterine device and implant','Endometrial biopsy and cervical cancer screening','Office spirometry and ECG interpretation','Consent, anticoagulation and procedural safety']},
+  {id:'pus',name:'Point-of-Care Ultrasound',w:2,src:'ACP, AIUM, ACEP, AAFP, SHM',topics:['Ultrasound physics, knobology and image optimization','Musculoskeletal ultrasound','Ultrasound-guided injections','Focused cardiac ultrasound','Lung ultrasound','Abdominal aortic aneurysm screening','Lower extremity compression ultrasound for DVT','Soft tissue ultrasound: abscess and cellulitis','Kidney and bladder ultrasound','Ultrasound documentation, billing and credentialing']},
+  {id:'preg',name:'Regenerative and Musculoskeletal Medicine',w:2,src:'AAOS, ACR, AMSSM, ISMST, FDA',topics:['Extracorporeal shockwave therapy','Platelet-rich plasma','Prolotherapy','Corticosteroid and hyaluronic acid injection evidence','Tendinopathy management','Orthobiologics: evidence and regulation','Exercise prescription']},
+  {id:'pfun',name:'Functional and Lifestyle Medicine',w:2,src:'ACLM, AHA, ADA, Endocrine Society, The Menopause Society, USPSTF',topics:['Nutrition and dietary patterns','Metabolic health and insulin resistance','Sleep and circadian health','Testosterone and menopausal hormone therapy evidence','Dietary supplements: evidence review','Gut health and microbiome: claims versus evidence','Longevity and preventive testing: evidence review']}]},
+ {id:'prac',name:'Practice, Quality and the EHR',blurb:'Value-based care, coding and workflow',sections:[
+  {id:'qual',name:'Quality and Value-Based Care',w:2,src:'CMS, NCQA, AAFP, ACP',topics:['HEDIS measures in primary care','Medicare Advantage Star ratings','MIPS and the Quality Payment Program','HCC risk adjustment and diagnosis specificity','Care gaps and population health','Annual wellness visit','Transitional and chronic care management','Accountable care and shared savings basics']},
+  {id:'code',name:'Billing and Coding',w:2,src:'AMA CPT, CMS Physician Fee Schedule, AAFP, ACP',topics:['Outpatient E/M by medical decision making','Outpatient E/M by time','Modifier 25 and procedures with visits','Preventive visit with a problem-oriented visit','Visit complexity add-on code G2211','Telehealth and virtual check-ins','Prolonged services','Hospital E/M: admission, subsequent and discharge~','Documentation that supports the code','Compliance and audits']},
+  {id:'ehr',name:'EHR Optimization',w:2,src:'Vendor documentation, AMA STEPS Forward, AMIA',topics:['Epic SmartPhrases, SmartLinks and SmartLists','Epic SmartTexts, SmartSets and Express Lanes','Epic preference lists, order panels and QuickActions','Epic In Basket management','Epic reporting: SlicerDicer and Reporting Workbench','Oracle Health (Cerner) auto text, Dynamic Documentation and MPages','Oracle Health (Cerner) PowerPlans, favorites and Message Center','MEDITECH Expanse templates, order sets and favorites','athenahealth and eClinicalWorks templates and macros','Ambient AI scribes and dictation','Problem-based note templates','Inbox, refill and result protocols']},
+  {id:'flow',name:'Workflow and Practice Management',w:2,src:'AMA STEPS Forward, AAFP, MGMA, IHI',topics:['Pre-visit planning and agenda setting','Team-based care and standing orders','Panel management','Scheduling templates and access','Prior authorization','Time management and burnout prevention']}]}];
+const SEC={},TOP={};
+TRACKS.forEach(tr=>tr.sections.forEach(s=>{s.track=tr;SEC[s.id]=s;s.t=s.topics.map(n=>{const inp=n.endsWith('~');const name=inp?n.slice(0,-1):n;const t={id:s.id+'.'+slug(name),name,inp,sec:s};TOP[t.id]=t;return t})}));
+const CAREER_AREAS=['Board certification and credentials','Job search and contracts','Income and compensation','Practice building and service lines','Procedural and OMM skills','Leadership and teaching','Business and ventures','Financial foundation'];
+const COMMIT={hy:{name:'High-yield',min:8,lessons:1,len:'short',sub:'One short lesson and two questions'},std:{name:'Standard',min:20,lessons:2,len:'std',sub:'Two lessons with questions'},deep:{name:'Deep',min:40,lessons:3,len:'deep',sub:'Three longer lessons'},long:{name:'Long listen',min:60,lessons:5,len:'deep',sub:'About an hour, hands-free'}};
+const LEN={short:{name:'High-yield',words:750,min:6},std:{name:'Standard',words:1300,min:10},deep:{name:'Deep dive',words:1900,min:14}};
+const SETTING={out:'Outpatient',mix:'Mixed',in:'Inpatient'};
+
+/* ---------- Storage ----------
+   1. The Doctor Career Companion account on its own server (Cloudflare Worker + D1), reached through the connector of the same name
+      inside Claude, or directly on the website. This is the central copy.
+   2. Claude's own storage for this page, kept as a second copy (and the only copy until the server is set up).
+   3. A journal in this browser: every change is written here first and cleared only when the central copy accepts it. */
+const CONN='Doctor Career Companion',GD='Google Drive',AREA='med',JK='dcc:q:',LS='dcc:docs';
+let WEB=false,OFFLINE=false,MCP=null,LINKED=false,DB=null,COLL='companion',docs={},SAMPLE=null,DL=null,pending=0,wait=4000,retryT=null,lastPull=0;
+const clone=o=>JSON.parse(JSON.stringify(o));
+const jget=n=>{try{return JSON.parse(localStorage.getItem(JK+n))}catch(e){return null}};
+const jkeys=()=>{const o=[];try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith(JK))o.push(k.slice(JK.length))}}catch(e){}return o};
+const jset=(n,m,b)=>{const t=Date.now()+Math.random();try{localStorage.setItem(JK+n,JSON.stringify({m,b,t}));return t}catch(e){return 0}};
+const jdone=(n,t)=>{try{const j=jget(n);if(j&&j.t===t)localStorage.removeItem(JK+n)}catch(e){}};
+function syncNote(){const el=$('#sync');if(!el)return;const n=jkeys().length;
+  el.textContent=LINKED?(n?`${n} change${n===1?'':'s'} waiting to save`:pending?'Saving…':OFFLINE?'Offline · saved on this device':'Saved to your account'):DB?'Saved in Claude':'Saved in this browser';
+  el.dataset.warn=n&&!pending?'1':''}
+function webSave(m,n,b){const text=b?JSON.stringify(b):undefined;return fetch('/api/doc?path='+encodeURIComponent(AREA+'/'+n),{method:m,headers:text?{'Content-Type':'application/json'}:{},body:text,keepalive:!text||text.length<60000})
+  .then(r=>{if(r.status===401){location.replace('/account.html?next=1');throw{code:'session_expired'}}if(r.status>=400&&r.status<500&&r.status!==408&&r.status!==429)throw{code:'invalid_argument',message:'The server refused it ('+r.status+').'};if(!r.ok)throw{code:'unavailable'};OFFLINE=false})}
+let cacheT=null;function cacheDocs(){if(!WEB)return;clearTimeout(cacheT);cacheT=setTimeout(()=>{try{localStorage.setItem('dcc:cache',JSON.stringify(docs))}catch(e){}},1200)}
+function primary(m,n,b){if(WEB)return webSave(m,n,b);if(LINKED)return MCP.callTool(CONN,m==='DELETE'?'delete_doc':'save_doc',m==='DELETE'?{path:AREA+'/'+n}:{path:AREA+'/'+n,body:b},{cache:false});
+  if(DB)return m==='DELETE'?DB.doc(COLL+'/'+n).delete():DB.doc(COLL+'/'+n).set(b);return Promise.resolve()}
+function again(){clearTimeout(retryT);retryT=setTimeout(flush,wait);wait=Math.min(60000,wait*2)}
+function send(n,m,b,t){pending++;syncNote();
+  return primary(m,n,b).then(()=>{jdone(n,t);wait=4000},e=>{const c=e&&e.code;if(c==='invalid_argument'||c==='tool_error'&&/too large|not a valid/i.test(e.message||'')){jdone(n,t);toast('Could not save '+n+': '+(e.message||c),6000)}else again()})
+    .finally(()=>{pending--;syncNote()})}
+function flush(){if(pending)return;jkeys().forEach(n=>{const j=jget(n);if(j)send(n,j.m,j.b,j.t)})}
+function put(name,obj){obj._t=Date.now();const b=clone(obj);docs[name]=obj;cacheDocs();
+  if(!DB&&!LINKED){try{localStorage.setItem(LS,JSON.stringify(docs))}catch(e){}return}
+  const t=jset(name,'PUT',b);send(name,'PUT',b,t);if(LINKED&&DB)DB.doc(COLL+'/'+name).set(b).catch(()=>{})}
+function del(name){delete docs[name];cacheDocs();if(!DB&&!LINKED){try{localStorage.setItem(LS,JSON.stringify(docs))}catch(e){}return}
+  const t=jset(name,'DELETE',null);send(name,'DELETE',null,t);if(LINKED&&DB)DB.doc(COLL+'/'+name).delete().catch(()=>{})}
+function overlay(){jkeys().forEach(n=>{const j=jget(n);if(!j)return;if(j.m==='DELETE')delete docs[n];else docs[n]=j.b})}
+addEventListener('online',()=>{wait=4000;flush()});
+const timers={};function later(name,fn,ms=700){clearTimeout(timers[name]);timers[name]=setTimeout(fn,ms)}
+function saveNow(){if(timers.state){clearTimeout(timers.state);timers.state=null;put('state',st)}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible'){saveNow();return}flush();pull()});
+addEventListener('pagehide',saveNow);
+async function fetchServer(){if(WEB){const r=await fetch('/api/progress?area='+AREA,{cache:'no-store'});if(r.status===401){location.replace('/account.html?next=1');return null}if(!r.ok)return null;OFFLINE=false;return (await r.json()).docs}
+  const r=await MCP.callTool(CONN,'load_progress',{area:AREA,since:0},{cache:false});const p=r&&r.payload;return p&&p.docs}
+const strip=d=>{const o={};Object.entries(d||{}).forEach(([k,v])=>{if(k.startsWith(AREA+'/'))o[k.slice(AREA.length+1)]=v});return o};
+async function pull(){if(!LINKED||pending||jkeys().length||Date.now()-lastPull<15000||P.on)return;lastPull=Date.now();
+  try{const d=await fetchServer();if(!d||pending||jkeys().length)return;const fresh=strip(d);
+    const sig=o=>Object.keys(o).sort().map(k=>k+':'+((o[k]&&o[k]._t)||0)).join('|');
+    if(sig(fresh)===sig(docs))return;docs=fresh;cacheDocs();loadState();render();toast('Updated with your record from another device.')}catch(e){}}
+
+/* ---------- The record ---------- */
+const blank=()=>({v:1,prefs:{about:'Internal medicine physician preparing for the ABIM certification examination and moving into outpatient primary care. Uses osteopathic manipulative treatment in practice.',setting:'out',commit:'std',rate:1,passive:true,audit:true,setSize:5,lib:true,libName:'MKSAP Database'},
+  topics:{},days:{},gaps:[],sets:[],lessons:[],goals:[],areas:[],lib:null,best:0});
+let st=blank();
+const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
+function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),docs.state);st.prefs=Object.assign(blank().prefs,st.prefs||{})}}
+const tS=id=>st.topics[id]||(st.topics[id]={n:0,c:0,les:0,last:0,rate:0});
+const day=(d=dayStr())=>st.days[d]||(st.days[d]={min:0,listen:0,q:0,c:0,les:0,done:0});
+const bank=sid=>docs['bank_'+sid]||(docs['bank_'+sid]={qs:[]});
+const saveBank=sid=>{const b=bank(sid);if(b.qs.length>120)b.qs=b.qs.slice(-120);later('bank_'+sid,()=>put('bank_'+sid,b))};
+const allQs=()=>Object.keys(docs).filter(k=>k.startsWith('bank_')).flatMap(k=>docs[k].qs||[]);
+const dueQs=()=>allQs().filter(q=>q.due&&q.due<=Date.now()&&!q.flag);
+
+/* Mastery of a topic, 0–100: accuracy on its questions (smoothed, so two lucky answers do not read as mastery), scaled by how much
+   evidence there is, blended with the physician's own rating, and faded when the topic has not been touched for a month. */
+function mastery(id){const t=st.topics[id];if(!t||(!t.n&&!t.les))return null;
+  const acc=(t.c+1)/(t.n+2),cov=Math.min(1,(t.n+(t.les?2:0))/10),self=t.rate?(t.rate-1)/4:acc;
+  let m=100*cov*(.75*acc+.25*self);const d=(Date.now()-(t.last||0))/864e5;if(d>30)m*=Math.max(.6,1-(d-30)/200);return Math.round(m)}
+const level=m=>m==null?['Not started','off']:m>=85?['Mastered','good']:m>=65?['Proficient','good']:m>=40?['Developing','']:['Learning','warn'];
+const overconfident=id=>{const t=st.topics[id];return !!t&&t.rate>=4&&t.n>=4&&t.c/t.n<.6};
+/* What to study next. Higher = sooner. Weak or untouched topics in the sections that matter for the chosen practice setting come first;
+   a stated gap, a missed question that is due, or confidence that outruns accuracy each push a topic up; anything studied today drops. */
+function priority(t){const s=st.topics[t.id],m=mastery(t.id),set=st.prefs.setting;
+  let w=t.sec.w;if(set==='out'&&t.inp)w=.25;if(set==='in')w=t.inp?3:Math.min(w,1.5);
+  let p=(100-(m??0))*w,why=m==null?'Not started yet':m<40?'Weak on questions so far':'Keeps it fresh';
+  if(s&&s.last){const d=(Date.now()-s.last)/864e5;if(d<.6)p-=250;else if(d>21&&m!=null){p+=Math.min(60,d);why='Not reviewed in '+Math.round(d)+' days'}}
+  if(overconfident(t.id)){p+=90;why='Confidence is ahead of your accuracy'}
+  const due=dueQs().filter(q=>q.tid===t.id).length;if(due){p+=40+due*10;why=due+' missed question'+(due>1?'s':'')+' due for review'}
+  if(st.gaps.some(g=>!g.done&&g.tid===t.id)){p+=160;why='You named this as a gap'}
+  return {t,p,why}}
+const ranked=()=>Object.values(TOP).map(priority).sort((a,b)=>b.p-a.p);
+function plan(n){const out=[],seen={};for(const r of ranked()){if(out.length>=n)break;if((seen[r.t.sec.id]||0)>=1&&n<=3)continue;seen[r.t.sec.id]=(seen[r.t.sec.id]||0)+1;out.push(r)}return out}
+function secStats(s){let n=0,c=0,started=0,ms=0,mc=0,last=0;s.t.forEach(t=>{const x=st.topics[t.id];if(!x)return;n+=x.n;c+=x.c;if(x.n>=3||x.les)started++;const m=mastery(t.id);if(m!=null){ms+=m;mc++}last=Math.max(last,x.last||0)});
+  return {n,c,started,total:s.t.length,m:mc?Math.round(ms/s.t.length):null,last}}
+
+/* ---------- Time, streaks and consistency ---------- */
+let lastAct=Date.now();['pointerdown','keydown','input'].forEach(e=>addEventListener(e,()=>lastAct=Date.now(),{passive:true}));
+setInterval(()=>{const speaking=P.on&&!P.paused;if((document.visibilityState==='visible'&&Date.now()-lastAct<120000&&S.tab!=='settings')||speaking){const d=day();d.min=Math.round((d.min+.25)*100)/100;if(speaking)d.listen=Math.round((d.listen+.25)*100)/100;if(!d.done&&d.min>=COMMIT[st.prefs.commit].min)d.done=1;saveState(30000);if(S.tab==='today'&&!S.busy&&!S.lesson&&!S.quiz)drawFigs()}},15000);
+const active=d=>{const x=st.days[d];return !!x&&(x.min>=1||x.done||x.q>0)};
+const back=n=>{const d=new Date();d.setDate(d.getDate()-n);return d};
+function streak(){let n=0,i=active(dayStr())?0:1;while(active(dayStr(back(i)))){n++;i++}if(n>(st.best||0))st.best=n;return n}
+function span(days){let min=0,listen=0,act=0,q=0,c=0;for(let i=0;i<days;i++){const k=dayStr(back(i)),x=st.days[k];if(x){min+=x.min;listen+=x.listen||0;q+=x.q;c+=x.c}if(active(k))act++}return {min,listen,act,q,c}}
+const weekDays=()=>{const d=new Date(),wd=(d.getDay()+6)%7;return Array.from({length:7},(_,i)=>{const x=new Date(d);x.setDate(d.getDate()-wd+i);return x})};
+const monthSoFar=()=>new Date().getDate();
+
+/* ---------- Audio ----------
+   The browser's speech voice reads a queue of short pieces, one sentence group at a time, so pause, skip and speed all work and the
+   section being read can be lit on screen. A queue item is spoken text, a silent wait (thinking time before an answer), or a marker. */
+const TTS='speechSynthesis' in window&&typeof SpeechSynthesisUtterance!=='undefined';
+let VOICE=null;function pickVoice(){if(!TTS)return;const vs=speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang||''));VOICE=vs.find(v=>/natural|neural|enhanced|premium|siri/i.test(v.name)&&/en[-_]US/i.test(v.lang))||vs.find(v=>/en[-_]US/i.test(v.lang))||vs[0]||null}
+if(TTS){pickVoice();try{speechSynthesis.onvoiceschanged=pickVoice}catch(e){}}
+const chunks=t=>{const out=[];let cur='';(String(t).replace(/\s+/g,' ').match(/[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$/g)||[]).forEach(s=>{if((cur+s).length>240&&cur){out.push(cur.trim());cur=''}cur+=s});if(cur.trim())out.push(cur.trim());return out};
+const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:null,
+  load(items,title,sub,done){this.stop(true);this.q=[];items.forEach(it=>{if(it.say)chunks(it.say).forEach(c=>this.q.push({say:c,seg:it.seg}));else this.q.push(it)});this.i=0;this.title=title;this.sub=sub||'';this.done=done||null;this.on=true;this.paused=false;this.run()},
+  run(){clearTimeout(this.timer);const tok=++this.tok;if(!this.on||this.paused)return drawPlayer();
+    if(this.i>=this.q.length){this.on=false;drawPlayer();mark(-1);const d=this.done;this.done=null;if(d)d();return}
+    const it=this.q[this.i],next=()=>{if(tok!==this.tok)return;this.i++;this.run()};mark(it.seg??-1);drawPlayer();
+    if(it.wait){this.timer=setTimeout(next,it.wait);return}
+    if(!TTS){this.timer=setTimeout(next,Math.max(1500,it.say.length*55/st.prefs.rate));return}
+    try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(it.say);if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}else u.lang='en-US';u.rate=st.prefs.rate;u.onend=next;u.onerror=e=>{if(e.error!=='interrupted'&&e.error!=='canceled')next()};speechSynthesis.speak(u)}catch(e){next()}},
+  toggle(){if(!this.on)return;this.paused=!this.paused;if(this.paused){this.tok++;clearTimeout(this.timer);try{speechSynthesis.cancel()}catch(e){}drawPlayer()}else this.run()},
+  jump(n){if(!this.on)return;const seg=this.q[this.i]&&this.q[this.i].seg;let i=this.i;
+    if(n>0){while(i<this.q.length&&this.q[i].seg===seg)i++}else{while(i>0&&this.q[i-1].seg===seg)i--;if(i===this.i&&i>0){const s2=this.q[i-1].seg;i--;while(i>0&&this.q[i-1].seg===s2)i--}}
+    this.i=i;this.tok++;try{speechSynthesis.cancel()}catch(e){}this.paused=false;this.run()},
+  stop(quiet){this.tok++;clearTimeout(this.timer);this.on=false;this.paused=false;this.done=null;try{if(TTS)speechSynthesis.cancel()}catch(e){}if(!quiet){mark(-1);drawPlayer()}}};
+function mark(seg){document.querySelectorAll('[data-seg]').forEach(el=>{const on=String(seg)===el.dataset.seg;if(on&&el.dataset.now!=='1'&&P.on)el.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});el.dataset.now=on?'1':''})}
+const IC={play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
+function drawPlayer(){const el=$('#player');if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
+  el.innerHTML=`<div class="in"><div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><div class="t">${esc(P.title)}</div><div class="tiny muted">${esc(P.sub)}${P.q[P.i]&&P.q[P.i].wait?' · thinking time':''}</div></div><span class="tiny num muted">${p}%</span></div>
+  <div class="meter"><i style="width:${p}%"></i></div>
+  <div class="ctl"><button data-act="pprev" aria-label="Back one section">${IC.prev}</button><button class="big" data-act="ptoggle" aria-label="${P.paused?'Play':'Pause'}">${P.paused?IC.play:IC.pause}</button><button data-act="pnext" aria-label="Skip one section">${IC.next}</button>
+  <button class="sp" data-act="prate" aria-label="Reading speed">${st.prefs.rate.toFixed(2).replace(/0$/,'')}×</button><span style="flex:1"></span><button data-act="pstop" aria-label="Stop">${IC.stop}</button></div></div>`}
+
+/* ---------- Reference library (Google Drive) ----------
+   The physician's own board review text lives in a Drive folder, one subfolder per subject and one document per chapter. For a clinical
+   topic the page finds the best chapter, pulls the sections that match, and hands them to the AI as the factual basis for the lesson.
+   The text is used in the moment and never stored in this app. */
+const chapterCache=new Map();
+async function drive(tool,input){const r=await MCP.callTool(GD,tool,input,{cache:{staleTime:6e5}});let p=r.payload??r.structuredContent;
+  if(typeof p==='string'){try{p=JSON.parse(p)}catch(e){p={fileContent:p}}}
+  if(!p&&r.content){const t=r.content.find(c=>c.type==='text');if(t){try{p=JSON.parse(t.text)}catch(e){p={fileContent:t.text}}}}return p||{}}
+const q1=s=>String(s).replace(/\\/g,'').replace(/'/g,"\\'");
+async function libInit(force){if(!MCP||!st.prefs.lib)return null;if(st.lib&&st.lib.name===st.prefs.libName&&!force)return st.lib;
+  const f=await drive('search_files',{query:`title = '${q1(st.prefs.libName)}' and mimeType = 'application/vnd.google-apps.folder'`,excludeContentSnippets:true,pageSize:5});
+  const root=(f.files||[])[0];if(!root)throw{code:'no_library',message:'No Drive folder named "'+st.prefs.libName+'" was found.'};
+  const folders={};let tok;do{const r=await drive('search_files',{query:`parentId = '${root.id}' and mimeType = 'application/vnd.google-apps.folder'`,excludeContentSnippets:true,pageSize:100,pageToken:tok});(r.files||[]).forEach(x=>folders[x.title]=x.id);tok=r.nextPageToken}while(tok);
+  st.lib={name:st.prefs.libName,root:root.id,folders,t:Date.now()};saveState();return st.lib}
+const words=s=>String(s).toLowerCase().split(/[^a-z0-9]+/).filter(w=>w.length>3&&!/^(with|from|that|this|other|disease|diseases|disorders|management|evaluation|approach|common|care|medicine)$/.test(w));
+function excerpt(text,keys,max=12000){text=text.replace(/^Mark this topic completed\s*$/gm,'').replace(/^Test your knowledge:\s*\n+\s*\d+ answered of \d+ questions?\s*$/gm,'').replace(/\]\(https?:[^)]*\)/g,']').replace(/\\([<>*\[\]])/g,'$1').replace(/\n{3,}/g,'\n\n');
+  const parts=text.split(/\n(?=#{1,4} )/);if(text.length<=max)return text;
+  const sc=parts.map((p,i)=>{const head=(p.split('\n')[0]||'').toLowerCase(),low=p.toLowerCase();let s=0;keys.forEach(k=>{if(head.includes(k))s+=8;s+=Math.min(6,low.split(k).length-1)});return {i,p,s:s/Math.sqrt(1+p.length/1500)+(/key points?/i.test(p)?.5:0)}});
+  const pick=new Set();let len=0;[...sc].sort((a,b)=>b.s-a.s).forEach(x=>{if(len+x.p.length<=max||!pick.size){pick.add(x.i);len+=Math.min(x.p.length,max)}});
+  return sc.filter(x=>pick.has(x.i)).map(x=>x.p).join('\n').slice(0,max)}
+async function libRef(t,focus){if(!MCP||!st.prefs.lib||!t.sec.lib)return null;
+  try{const lib=await libInit();if(!lib)return null;const ids=Object.keys(lib.folders).filter(n=>t.sec.lib.some(l=>n.toLowerCase().startsWith(l.toLowerCase()))).map(n=>lib.folders[n]);if(!ids.length)return null;
+    const keys=[...new Set(words(t.name+' '+(focus||'')))];let best=null;
+    for(const term of [focus,t.name.split(/[:,]| and /)[0]].filter(Boolean).map(x=>x.trim().slice(0,60))){
+      for(const id of ids){const r=await drive('search_files',{query:`parentId = '${id}' and fullText contains '${q1(term)}'`,excludeContentSnippets:true,pageSize:6});
+        (r.files||[]).forEach((f,rank)=>{if(!/document|pdf|word/.test(f.mimeType||''))return;const tw=words(f.title);const s=keys.filter(k=>tw.some(w=>w.startsWith(k.slice(0,5)))).length*3-rank*.4;if(!best||s>best.s)best={s,f}})}
+      if(best)break}
+    if(!best)return null;let text=chapterCache.get(best.f.id);if(!text){text=(await drive('read_file_content',{fileId:best.f.id})).fileContent||'';chapterCache.set(best.f.id,text)}
+    if(text.length<400)return null;return {title:best.f.title,text:excerpt(text,keys)}}
+  catch(e){if(e&&e.code==='no_library')toast(e.message,6000);return null}}
+
+/* ---------- The AI ---------- */
+const ERR={not_granted:'Claude is turned off for this page. Reload it and choose Allow.',rate_limited:'The AI is busy right now. Try again in a minute.',invalid_json:'The answer came back in a broken format. Try again.',prompt_too_large:'That was too much text for one request.',refused:'The AI declined that request.',session_expired:'Your session expired. Reload the page.',unavailable:'The AI is not available in this view.'};
+const errMsg=e=>e&&e.code==='cancelled'?'':(e&&(e.code==='rate_limited'||e.code==='upstream_error')&&e.message)||ERR[e&&e.code]||'The AI could not answer just now ('+((e&&e.code)||'error')+'). Try again.';
+async function ask(input,tier){if(!SAMPLE)throw{code:'unavailable'};return SAMPLE.json(input,{modelTier:tier||'default',cache:false})}
+async function askText(input,tier){if(!SAMPLE)throw{code:'unavailable'};return (await SAMPLE(input,{modelTier:tier||'default',cache:false})).text}
+function webSample(){const call=async(input,opt)=>{const r=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input,tier:opt&&opt.modelTier==='quick'?'quick':'default'})});
+    if(r.status===401){location.replace('/account.html?next=1');throw{code:'session_expired'}}let j={};try{j=await r.json()}catch(e){}if(!r.ok)throw{code:r.status===429?'rate_limited':'upstream_error',message:j.error};return {text:j.text||'',truncated:false}};
+  call.json=async(input,opt)=>{const t=(await call(input,opt)).text.replace(/^```(?:json)?/i,'').replace(/```\s*$/,'');const a=t.search(/[{[]/),b=Math.max(t.lastIndexOf('}'),t.lastIndexOf(']'));try{return JSON.parse(t.slice(a,b+1))}catch(e){throw{code:'invalid_json'}}};return call}
+const rules=t=>`You are the teaching engine of a continuing medical education app used by one physician.
+Learner: ${st.prefs.about}
+Practice setting to emphasize: ${SETTING[st.prefs.setting]}.
+Section: ${t.sec.track.name} — ${t.sec.name}. Topic: ${t.name}.
+Rules:
+- Attending level. No basic-science padding. Favor the decisions that change management and the points examiners test.
+- Base every clinical statement on the current guidelines of the major societies (for this section: ${t.sec.src}) and on the reference text when one is supplied. Name the guideline body and year when you state a recommendation.
+- Never invent a citation, trial, statistic, dose or threshold. If you are unsure of a number, or of whether guidance has changed recently, leave it out of the teaching and list it under "uncertain" so the physician can check it.
+- Where societies disagree, say so and name both positions.
+- For osteopathic, regenerative, functional and lifestyle topics, state the strength of evidence plainly (strong, moderate, limited, insufficient) and separate guideline-supported practice from investigational or unproven use.
+- For billing, coding, quality programs and EHR features, rules change yearly and vary by payer and by each organization's build. State the general rule, name the governing source (CMS, AMA CPT, NCQA, the vendor), and flag what must be confirmed locally.`;
+const refBlock=ref=>ref?`\n\nREFERENCE TEXT (from the physician's own licensed board review syllabus, chapter "${ref.title}"). Treat it as the primary factual basis. Teach in your own words: do not copy its sentences and do not reproduce its questions. Where a newer guideline you are confident of supersedes it, say so.\n<<<\n${ref.text}\n>>>`:'';
+const QSPEC=`Each question: a clinical vignette (age, setting, history, examination, relevant results with units), a clear lead-in, and five options A to E that are parallel and plausible, with exactly one best answer under current guidelines. Test the next step in management, the diagnosis, or the interpretation of a result, at the difficulty of the ABIM certification examination. Do not test trivia. Vary which letter is correct. The explanation says why the answer is right, naming the guideline, then gives one line on why each other option is wrong. Write original questions; never reuse one from a question bank.`;
+const QJSON=`{"stem":"","options":["","","","",""],"answer":"A","explanation":"","objective":"one-sentence educational objective","sources":["Organization. Guideline or statement title. Year."]}`;
+function cleanQ(q,t,extra){if(!q||!q.stem||!Array.isArray(q.options)||q.options.length<4)return null;const ans='ABCDE'.indexOf(String(q.answer||'').trim().toUpperCase()[0]);if(ans<0||ans>=q.options.length)return null;
+  return Object.assign({id:uid(),tid:t.id,stem:String(q.stem),opts:q.options.slice(0,5).map(o=>String(o).replace(/^\s*[A-E][.)]\s+/,'')),ans,exp:String(q.explanation||''),obj:String(q.objective||''),src:(q.sources||[]).map(String).slice(0,4),t:Date.now(),hist:[],due:0,stage:0},extra||{})}
+/* A second pass acts as an item reviewer: any question whose keyed answer is arguable or whose facts look wrong is dropped before the physician sees it. */
+async function audit(qs,t,ref){if(!st.prefs.audit||!qs.length)return {qs,dropped:0,reviewed:false};
+  try{const r=await ask(`${rules(t)}${refBlock(ref)}\n\nYou are now the item reviewer for a board examination committee. Check each question below against current guidelines${ref?' and the reference text':''}. Reject a question if the keyed answer is not clearly the single best answer, if any stated fact, dose or threshold is wrong or outdated, or if two options are equally defensible. Be strict: when in doubt, reject.\n\nQUESTIONS:\n${JSON.stringify(qs.map((q,i)=>({i,stem:q.stem,options:q.opts,keyed:'ABCDE'[q.ans],explanation:q.exp})))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject","note":"reason if rejected"}]}`);
+    const bad=new Set((r.reviews||[]).filter(x=>x.verdict==='reject').map(x=>x.i));return {qs:qs.filter((q,i)=>!bad.has(i)).map(q=>(q.rev=1,q)),dropped:bad.size,reviewed:true}}
+  catch(e){return {qs,dropped:0,reviewed:false}}}
+async function genQuestions(t,n,focus,gapId){const ref=await libRef(t,focus);const seen=bank(t.sec.id).qs.filter(q=>q.tid===t.id).slice(-15).map(q=>q.obj).filter(Boolean);
+  const r=await ask(`${rules(t)}${refBlock(ref)}\n\nTASK: Write ${n} board-style questions on this topic${focus?`, concentrating on this stated knowledge gap: "${focus}"`:''}. ${QSPEC}${seen.length?'\nAlready asked, so test different points: '+seen.join(' | '):''}\n\nReply with JSON only: {"questions":[${QJSON}]}`);
+  const qs=(r.questions||[]).map(q=>cleanQ(q,t,{ref:ref?ref.title:'',gap:gapId||''})).filter(Boolean);if(!qs.length)throw{code:'invalid_json'};
+  const a=await audit(qs,t,ref);if(!a.qs.length)throw{code:'upstream_error',message:'Every question in that set failed the accuracy review. Try again.'};
+  bank(t.sec.id).qs.push(...a.qs);saveBank(t.sec.id);return a}
+async function genLesson(t,len,focus){const L=LEN[len],ref=await libRef(t,focus);
+  const r=await ask(`${rules(t)}${refBlock(ref)}\n\nTASK: Write a ${L.name.toLowerCase()} audio lesson of about ${L.words} words on this topic${focus?`, concentrating on: "${focus}"`:''}.
+It will be read aloud by a speech voice while the physician drives or rests after clinic, and shown as text for reading. Write it to be heard: the voice of a senior colleague teaching at the bedside, full sentences, no bullet lists, no tables, no symbols that read badly aloud (write "greater than or equal to", "milligrams per deciliter"), and spell out an abbreviation the first time.
+Shape: open with a two or three sentence patient case that makes the topic matter; teach the concept and the reasoning; come back to the case and work through the decision; finish with what to do differently in clinic. Do not repeat a point in different words. ${len==='short'?'Keep only the highest-yield points: what is tested and what changes management.':'Go deeper into the reasoning, the exceptions, and the evidence behind the recommendation.'}
+Then write 2 check questions on what the lesson taught. ${QSPEC}
+
+Reply with JSON only: {"title":"","segments":[{"heading":"short heading","text":"spoken paragraph(s)"}],"keyPoints":["4 to 6 one-sentence take-aways"],"pitfalls":["1 to 3 common errors"],"sources":["Organization. Guideline or statement title. Year."],"uncertain":["anything the physician should verify, or empty"],"questions":[${QJSON}]}
+Use 4 to 7 segments.`);
+  if(!r||!Array.isArray(r.segments)||!r.segments.length)throw{code:'invalid_json'};
+  const id=uid(),qs=(r.questions||[]).map(q=>cleanQ(q,t,{ref:ref?ref.title:'',les:id})).filter(Boolean);
+  const a=await audit(qs,t,ref);bank(t.sec.id).qs.push(...a.qs);saveBank(t.sec.id);
+  const les={id,tid:t.id,len,focus:focus||'',title:String(r.title||t.name),segs:r.segments.map(s=>({h:String(s.heading||''),x:String(s.text||'')})),pts:(r.keyPoints||[]).map(String),pit:(r.pitfalls||[]).map(String),src:(r.sources||[]).map(String),unc:(r.uncertain||[]).map(String).filter(x=>x&&!/^none/i.test(x)),qids:a.qs.map(q=>q.id),ref:ref?ref.title:'',t:Date.now()};
+  put('les_'+id,les);st.lessons.push({id,tid:t.id,title:les.title,len,t:les.t});while(st.lessons.length>80){del('les_'+st.lessons.shift().id)}
+  const s=tS(t.id);s.les++;s.last=Date.now();day().les++;saveState();return les}
+const findQ=id=>allQs().find(q=>q.id===id);
+
+/* ---------- Screen state ---------- */
+const S={tab:'today',busy:'',err:'',track:null,sec:null,topic:null,lesson:null,quiz:null,session:null,chat:[],goal:null,brief:null,form:{}};
+const TABS=[['today','Today'],['learn','Curriculum'],['questions','Questions'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
+function render(){ $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
+  const v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,learn:vLearn,questions:vQuestions,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])();
+  $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1)}
+const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="tiny muted">${st.prefs.audit?'Each set is written, then checked by a second review pass before you see it.':''}</p></div>`:'';
+const segBtns=(name,opts,cur)=>`<div class="seg" role="group">${opts.map(([v,l])=>`<button data-set="${name}" data-v="${v}" aria-pressed="${String(cur)===String(v)}">${esc(l)}</button>`).join('')}</div>`;
+
+/* ----- Today: the daily check-in ----- */
+function figs(){const d=day(),w=weekDays(),wAct=w.filter(x=>active(dayStr(x))).length,wMin=w.reduce((a,x)=>a+((st.days[dayStr(x)]||{}).min||0),0),goal=COMMIT[st.prefs.commit].min;
+  return `<div class="figs"><div class="fig"><b>${streak()}</b><span>day streak</span></div><div class="fig"><b>${Math.round(d.min)}<span class="small muted"> / ${goal}</span></b><span>minutes today</span></div><div class="fig"><b>${wAct}/7</b><span>days this week (${pct(wAct,7)}%)</span></div><div class="fig"><b>${hm(wMin)}</b><span>this week</span></div></div>
+  <div class="week">${w.map(x=>`<div class="day" data-on="${active(dayStr(x))?1:''}" data-today="${dayStr(x)===dayStr()?1:''}"><i></i>${'MTWTFSS'[(x.getDay()+6)%7]}</div>`).join('')}</div>`}
+function drawFigs(){const el=$('#figs');if(el)el.innerHTML=figs()}
+function vToday(){const d=day(),c=COMMIT[st.prefs.commit],pl=plan(Math.max(3,c.lessons)),due=dueQs().length,gaps=st.gaps.filter(g=>!g.done);
+  return `<div class="card"><div class="row between"><div><div class="eyebrow">${new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</div><h1>${d.done?'Checked in for today':'Daily check-in'}</h1></div>${d.done?'<span class="chip good">Done</span>':''}</div><div id="figs" class="stack" style="gap:12px">${figs()}</div></div>
+  ${busy()}
+  ${S.busy?'':`<div class="card"><h2>${d.done?'Keep going':'Today\'s session'}</h2>
+   <div class="plain"><span class="eyebrow">How much today</span>${segBtns('commit',Object.entries(COMMIT).map(([k,v])=>[k,v.name+' · '+v.min+' min']),st.prefs.commit)}<span class="small muted">${c.sub}. Lessons play one after another; the text follows along on screen.</span></div>
+   <div class="plain"><span class="eyebrow">Practice setting</span>${segBtns('setting',Object.entries(SETTING),st.prefs.setting)}</div>
+   <div class="plain"><span class="eyebrow">Up next, chosen from your record</span>${pl.slice(0,c.lessons).map(r=>`<div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><b>${esc(r.t.name)}</b><div class="tiny muted">${esc(r.t.sec.name)} · ${esc(r.why)}</div></div></div>`).join('')}</div>
+   <div class="row"><button class="btn pri" data-act="session">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} Start ${c.min}-minute session</button>${due?`<button class="btn" data-act="review">Review ${due} missed question${due>1?'s':''}</button>`:''}</div>
+   ${SAMPLE?'':'<div class="note">The AI is not available in this view, so new lessons and questions cannot be written here. Saved lessons still play.</div>'}${TTS?'':'<div class="note">This browser has no speech voice. Lessons show as text only.</div>'}</div>`}
+  ${gaps.length?`<div class="card"><h3>Your stated gaps</h3>${gaps.slice(0,5).map(g=>`<div class="row between"><div style="min-width:0;flex:1"><b>${esc(g.text)}</b><div class="tiny muted">${esc(TOP[g.tid]?TOP[g.tid].name:'')}${g.n?` · ${g.c}/${g.n} correct`:''}</div></div><button class="btn sm" data-act="gaplearn" data-id="${g.id}">Teach</button><button class="btn sm" data-act="gapquiz" data-id="${g.id}">Test</button></div>`).join('')}</div>`:''}
+  <div class="card"><div class="row between"><h3>Chief resident's brief</h3><button class="btn sm" data-act="brief" ${S.busy||!SAMPLE?'disabled':''}>${S.brief?'Refresh':'Get my brief'}</button></div>${S.brief?md(S.brief)+`<div class="row"><button class="btn sm" data-act="saytext" data-k="brief">Listen</button></div>`:'<p class="small muted">A short read on what your record shows: where you are strong, what is slipping, and what to do this week.</p>'}</div>`}
+
+/* ----- Curriculum ----- */
+function vLearn(){
+  if(S.topic)return vTopic(TOP[S.topic]);
+  if(S.sec){const s=SEC[S.sec],x=secStats(s);return `<div class="row"><button class="btn link" data-act="up">← ${esc(s.track.name)}</button></div><div class="plain"><h1>${esc(s.name)}</h1><p class="small muted">Sources: ${esc(s.src)} · ${x.started}/${x.total} topics started${x.n?` · ${pct(x.c,x.n)}% correct on ${x.n} questions`:''}</p></div>
+    <div class="card" style="gap:0">${s.t.map(t=>{const m=mastery(t.id),[l,c]=level(m);return `<button class="item" data-topic="${t.id}"><div><b>${esc(t.name)}</b>${t.inp?' <span class="tiny muted">hospital</span>':''}</div><span class="row" style="flex-wrap:nowrap">${overconfident(t.id)?'<span class="chip bad">Check calibration</span>':''}<span class="chip ${c}">${l}${m!=null?' · '+m:''}</span></span></button>`}).join('')}</div>`}
+  if(S.track){const tr=TRACKS.find(t=>t.id===S.track);return `<div class="row"><button class="btn link" data-act="up">← All tracks</button></div><div class="plain"><h1>${esc(tr.name)}</h1><p class="small muted">${esc(tr.blurb)}</p></div>
+    <div class="card" style="gap:0">${tr.sections.map(s=>{const x=secStats(s);return `<button class="item" data-sec="${s.id}"><div><b>${esc(s.name)}</b><div class="tiny muted">${x.started}/${x.total} topics started${x.n?` · ${pct(x.c,x.n)}% correct`:''}</div></div><span class="row" style="flex-wrap:nowrap;min-width:110px"><span class="meter"><i style="width:${pct(x.started,x.total)}%"></i></span><span class="tiny num muted">${pct(x.started,x.total)}%</span></span></button>`}).join('')}</div>`}
+  const recent=st.lessons.slice(-6).reverse();
+  return `<div class="plain"><h1>Curriculum</h1><p class="small muted">Structured by discipline. Every lesson can be listened to or read, and ends with questions that feed your mastery record.</p></div>
+  <div class="card" style="gap:0">${TRACKS.map(tr=>{let a=0,b=0;tr.sections.forEach(s=>{const x=secStats(s);a+=x.started;b+=x.total});return `<button class="item" data-track="${tr.id}"><div><b>${esc(tr.name)}</b><div class="tiny muted">${esc(tr.blurb)} · ${tr.sections.length} sections</div></div><span class="row" style="flex-wrap:nowrap;min-width:110px"><span class="meter"><i style="width:${pct(a,b)}%"></i></span><span class="tiny num muted">${pct(a,b)}%</span></span></button>`}).join('')}</div>
+  ${recent.length?`<div class="card" style="gap:0"><h3>Recent lessons</h3>${recent.map(l=>`<button class="item" data-les="${l.id}"><div><b>${esc(l.title)}</b><div class="tiny muted">${esc(TOP[l.tid]?TOP[l.tid].sec.name:'')} · ${LEN[l.len].min} min · ${new Date(l.t).toLocaleDateString()}</div></div><span class="chip">Open</span></button>`).join('')}</div>`:''}`}
+function vTopic(t){const s=st.topics[t.id]||{n:0,c:0,les:0,rate:0},m=mastery(t.id),[l,c]=level(m),past=st.lessons.filter(x=>x.tid===t.id).reverse(),nq=bank(t.sec.id).qs.filter(q=>q.tid===t.id).length;
+  return `<div class="row"><button class="btn link" data-act="up">← ${esc(t.sec.name)}</button></div>
+  <div class="card"><div class="row between"><h1>${esc(t.name)}</h1><span class="chip ${c}">${l}${m!=null?' · '+m:''}</span></div>
+   <div class="figs"><div class="fig"><b>${s.n?pct(s.c,s.n)+'%':'—'}</b><span>correct on ${s.n} questions</span></div><div class="fig"><b>${s.les}</b><span>lessons</span></div><div class="fig"><b>${s.rate||'—'}</b><span>your rating, 1 to 5</span></div><div class="fig"><b>${s.last?new Date(s.last).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—'}</b><span>last studied</span></div></div>
+   ${overconfident(t.id)?'<div class="note">You rate this topic higher than your answers support. Worth a set of questions.</div>':''}
+   <p class="tiny muted">Sources for this section: ${esc(t.sec.src)}${t.sec.lib&&MCP&&st.prefs.lib?' · grounded in your '+esc(st.prefs.libName)+' text':''}</p></div>
+  ${busy()}${S.busy?'':`<div class="card"><h3>Learn it</h3><label class="f">Focus (optional)<input type="text" id="focus" placeholder="A subtopic, a question, or leave blank for the core lesson" value="${esc(S.form.focus||'')}"></label>
+   <div class="row">${Object.entries(LEN).map(([k,v])=>`<button class="btn ${k==='std'?'pri':''}" data-act="lesson" data-len="${k}">${v.name} · ${v.min} min</button>`).join('')}</div>
+   <h3>Test it</h3><div class="row"><button class="btn" data-act="quiz" data-n="${st.prefs.setSize}">${st.prefs.setSize} new questions</button><button class="btn" data-act="quiz" data-n="10">10 new questions</button>${nq?`<button class="btn" data-act="requiz">Redo from your ${nq} saved</button>`:''}</div></div>`}
+  ${past.length?`<div class="card" style="gap:0"><h3>Lessons on this topic</h3>${past.map(x=>`<button class="item" data-les="${x.id}"><div><b>${esc(x.title)}</b><div class="tiny muted">${LEN[x.len].name} · ${new Date(x.t).toLocaleDateString()}</div></div><span class="chip">Open</span></button>`).join('')}</div>`:''}`}
+
+/* ----- A lesson: text on screen, audio in the transport ----- */
+function lessonQueue(L,withQs){const q=[{say:L.title+'.',seg:0}];L.segs.forEach((s,i)=>{if(s.h)q.push({say:s.h+'.',seg:i});q.push({say:s.x,seg:i});q.push({wait:500,seg:i})});
+  if(L.pts.length)q.push({say:'Key points. '+L.pts.join(' '),seg:'pts'});
+  if(withQs)L.qids.map(findQ).filter(Boolean).forEach((x,n)=>{q.push({say:`Question ${n+1}. ${x.stem} `+x.opts.map((o,i)=>'ABCDE'[i]+'. '+o+'.').join(' '),seg:'q'+n});q.push({wait:7000,seg:'q'+n});q.push({say:`The answer is ${'ABCDE'[x.ans]}. ${x.opts[x.ans]}. ${x.exp}`,seg:'q'+n})});return q}
+function playLesson(L,done){P.load(lessonQueue(L,st.prefs.passive),L.title,(TOP[L.tid]?TOP[L.tid].sec.name:'')+' · '+LEN[L.len].min+' min',done)}
+function vLesson(){const L=S.lesson,t=TOP[L.tid],ss=S.session,qs=L.qids.map(findQ).filter(Boolean),s=tS(L.tid);
+  return `<div class="row between"><button class="btn link" data-act="closelesson">← ${ss?'End session':'Back'}</button>${ss?`<span class="chip">Lesson ${ss.i+1} of ${ss.plan.length}${ss.next?' · next is ready':ss.i+1<ss.plan.length?' · writing the next one':''}</span>`:''}</div>
+  <div class="plain"><span class="eyebrow">${esc(t?t.sec.name+' · '+t.name:'')}</span><h1>${esc(L.title)}</h1>
+   <div class="row"><button class="btn pri" data-act="listen">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} ${P.on?'Restart audio':'Listen'}</button><span class="small muted">${LEN[L.len].name} · about ${LEN[L.len].min} min${L.ref?' · grounded in '+esc(st.prefs.libName)+': '+esc(L.ref):''}</span></div></div>
+  <div class="lesson">${L.segs.map((x,i)=>`<section data-seg="${i}">${x.h?`<h3>${esc(x.h)}</h3>`:''}${x.x.split(/\n+/).map(p=>`<p>${esc(p)}</p>`).join('')}</section>`).join('')}</div>
+  ${L.pts.length?`<div class="card" data-seg="pts"><h3>Key points</h3><ul class="pts">${L.pts.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>${L.pit.length?`<h3>Pitfalls</h3><ul class="pts">${L.pit.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>`:''}</div>`:''}
+  ${L.unc.length?`<div class="note"><b>Verify before relying on it.</b><ul class="pts">${L.unc.map(p=>`<li>${esc(p)}</li>`).join('')}</ul></div>`:''}
+  ${qs.map((q,n)=>`<div class="card" data-seg="q${n}"><span class="eyebrow">Check question ${n+1}</span>${qBody(q,S.lq&&S.lq[q.id])}</div>`).join('')}
+  <div class="card"><h3>How well do you know this now?</h3>${rateRow(L.tid,s.rate)}</div>
+  ${L.src.length?`<div class="plain"><span class="eyebrow">Sources named in this lesson</span><ul class="pts small muted">${L.src.map(p=>`<li>${esc(p)}</li>`).join('')}</ul><p class="tiny muted">Written by AI${L.ref?' from your reference text':''}. Confirm against the source before changing practice.</p></div>`:''}
+  ${ss&&ss.i+1<ss.plan.length?`<div class="row"><button class="btn pri" data-act="nextlesson" ${ss.next?'':'disabled'}>Next lesson</button></div>`:ss?`<div class="row"><button class="btn pri" data-act="closelesson">Finish session</button></div>`:''}`}
+const rateRow=(tid,cur)=>`<div class="rate">${[[1,'New to me'],[2,'Shaky'],[3,'Getting there'],[4,'Solid'],[5,'Could teach it']].map(([v,l])=>`<button data-rate="${v}" data-tid="${tid}" aria-pressed="${cur===v}"><b>${v}</b>${l}</button>`).join('')}</div>`;
+function qBody(q,picked){const done=picked!=null;
+  return `<p class="stem">${esc(q.stem)}</p><div class="opts">${q.opts.map((o,i)=>`<button class="opt" data-pick="${i}" data-q="${q.id}" ${done?'disabled':''} data-s="${done?(i===q.ans?'right':i===picked?'wrong':''):''}"><b>${'ABCDE'[i]}</b><span>${esc(o)}</span></button>`).join('')}</div>
+  ${done?`<div class="plain"><b style="color:var(--${picked===q.ans?'good':'bad'})">${picked===q.ans?'Correct.':'Incorrect. The answer is '+'ABCDE'[q.ans]+'.'}</b><p>${esc(q.exp)}</p>${q.obj?`<p class="small"><b>Educational objective:</b> ${esc(q.obj)}</p>`:''}${q.src&&q.src.length?`<p class="tiny muted">${q.src.map(esc).join(' · ')}</p>`:''}
+   <div class="row"><span class="chip ${q.rev?'good':'off'}">${q.rev?'Passed accuracy review':'Not reviewed'}</span>${q.ref?`<span class="chip off">${esc(q.ref)}</span>`:''}<button class="btn sm" data-act="sayq" data-q="${q.id}">Listen</button><button class="btn sm" data-act="askq" data-q="${q.id}">Ask about this</button><button class="btn sm ${q.flag?'danger':''}" data-act="flag" data-q="${q.id}">${q.flag?'Flagged as wrong':'Flag as inaccurate'}</button></div></div>`:''}`}
+/* Scoring one answer: the topic, the day, the stated gap and the question's own review schedule all update. A miss comes back in 1, 3, 7 and 21 days. */
+function score(q,pick){const ok=pick===q.ans,s=tS(q.tid),d=day();q.hist.push({t:Date.now(),ok});s.n++;d.q++;if(ok){s.c++;d.c++}s.last=Date.now();
+  if(!ok){q.stage=1;q.due=Date.now()+864e5}else if(q.stage){q.stage++;q.due=q.stage>4?0:Date.now()+[0,1,3,7,21][q.stage]*864e5}
+  const g=q.gap&&st.gaps.find(x=>x.id===q.gap);if(g){g.n=(g.n||0)+1;if(ok)g.c=(g.c||0)+1}
+  saveBank(TOP[q.tid].sec.id);saveState();return ok}
+
+/* ----- Question sets ----- */
+function startQuiz(qs,title,tid){if(!qs.length)return toast('No questions to show.');P.stop();S.quiz={qs,i:0,picks:{},title,tid:tid||'',id:uid(),note:''};S.lesson=null;render();scrollTo(0,0)}
+function endQuiz(){const Q=S.quiz;if(!Q)return;const n=Object.keys(Q.picks).length;if(n){st.sets.push({t:Date.now(),title:Q.title,tid:Q.tid,n,c:Q.qs.filter(q=>Q.picks[q.id]===q.ans).length,total:Q.qs.length});if(st.sets.length>150)st.sets.shift();saveState()}S.quiz=null}
+function vQuiz(){const Q=S.quiz,n=Object.keys(Q.picks).length;
+  if(Q.i>=Q.qs.length){const c=Q.qs.filter(q=>Q.picks[q.id]===q.ans).length,tids=[...new Set(Q.qs.map(q=>q.tid))].slice(0,4);
+    return `<div class="card"><span class="eyebrow">${esc(Q.title)}</span><h1>Set complete</h1><div class="figs"><div class="fig"><b>${c}/${n}</b><span>correct</span></div><div class="fig"><b>${pct(c,n)}%</b><span>this set</span></div><div class="fig"><b>${pct(n,Q.qs.length)}%</b><span>completed</span></div></div>
+    ${tids.map(id=>`<div class="plain"><b>${esc(TOP[id].name)}</b><span class="small muted">How well do you know this now?</span>${rateRow(id,tS(id).rate)}</div>`).join('')}
+    <div class="row"><button class="btn pri" data-act="quizdone">Done</button></div></div>`}
+  const q=Q.qs[Q.i];return `<div class="row between"><button class="btn link" data-act="quizdone">← End set</button><span class="chip num">${Q.i+1} / ${Q.qs.length}</span></div>
+  ${Q.note?`<div class="note">${esc(Q.note)}</div>`:''}
+  <div class="card"><span class="eyebrow">${esc(TOP[q.tid].sec.name)} · ${esc(TOP[q.tid].name)}</span>${qBody(q,Q.picks[q.id])}${Q.picks[q.id]!=null?`<div class="row"><button class="btn pri" data-act="qnext">${Q.i+1<Q.qs.length?'Next question':'See results'}</button></div>`:`<div class="row"><button class="btn sm" data-act="sayq" data-q="${q.id}">Read it to me</button></div>`}</div>
+  <div class="meter"><i style="width:${pct(n,Q.qs.length)}%"></i></div>`}
+function vQuestions(){const all=allQs(),ans=all.filter(q=>q.hist.length),tot=Object.values(st.topics).reduce((a,t)=>a+t.n,0),cor=Object.values(st.topics).reduce((a,t)=>a+t.c,0),due=dueQs().length,gaps=st.gaps;
+  return `<div class="plain"><h1>Questions</h1><p class="small muted">Board-style single best answer. Every answer feeds the mastery record for its topic.</p></div>
+  <div class="card"><div class="figs"><div class="fig"><b>${tot}</b><span>answered</span></div><div class="fig"><b>${tot?pct(cor,tot)+'%':'—'}</b><span>correct overall</span></div><div class="fig"><b>${st.sets.length}</b><span>sets</span></div><div class="fig"><b>${due}</b><span>due for review</span></div></div>
+   ${busy()}${S.busy?'':`<div class="row"><button class="btn pri" data-act="mixed">Mixed set from weak topics</button>${due?`<button class="btn" data-act="review">Review ${due} missed</button>`:''}${all.length>ans.length?`<button class="btn" data-act="unseen">${all.length-ans.length} unanswered</button>`:''}</div>`}</div>
+  <div class="card"><h3>Tell it what you do not know</h3><p class="small muted">Name a gap in your own words. It is filed under a topic, pushed up the plan, and tested until your answers show it has closed.</p>
+   <label class="f">Knowledge gap<input type="text" id="gaptext" placeholder="e.g. when to start a statin in someone with borderline risk"></label>
+   <label class="f">File under<select id="gapsec">${TRACKS.map(tr=>`<optgroup label="${esc(tr.name)}">${tr.sections.map(s=>s.t.map(t=>`<option value="${t.id}">${esc(s.name)} — ${esc(t.name)}</option>`).join('')).join('')}</optgroup>`).join('')}</select></label>
+   <div class="row"><button class="btn" data-act="addgap">Add gap</button></div>
+   ${gaps.map(g=>`<div class="row between" style="border-top:1px solid var(--line);padding-top:8px"><div style="min-width:0;flex:1"><b>${esc(g.text)}</b><div class="tiny muted">${esc(TOP[g.tid]?TOP[g.tid].name:'')} · ${g.n?`${g.c}/${g.n} correct (${pct(g.c,g.n)}%)`:'not tested yet'}${g.done?' · closed':''}</div></div>${g.done?'':`<button class="btn sm" data-act="gapquiz" data-id="${g.id}">Test</button><button class="btn sm" data-act="gaplearn" data-id="${g.id}">Teach</button>`}<button class="btn sm" data-act="gapdone" data-id="${g.id}">${g.done?'Reopen':'Close'}</button></div>`).join('')}</div>
+  ${st.sets.length?`<div class="card"><h3>Recent sets</h3><div class="tablewrap"><table><thead><tr><th>Set</th><th class="n">Correct</th><th class="n">%</th><th class="n">Completed</th><th>Date</th></tr></thead><tbody>${st.sets.slice(-10).reverse().map(s=>`<tr><td>${esc(s.title)}</td><td class="n">${s.c}/${s.n}</td><td class="n">${pct(s.c,s.n)}</td><td class="n">${pct(s.n,s.total)}%</td><td>${new Date(s.t).toLocaleDateString()}</td></tr>`).join('')}</tbody></table></div></div>`:''}`}
+
+/* ----- Progress ----- */
+function vProgress(){const w=span(7),mo=span(monthSoFar()),all=Object.values(st.days),tot=all.reduce((a,d)=>a+d.min,0),lis=all.reduce((a,d)=>a+(d.listen||0),0),actDays=Object.keys(st.days).filter(active).length,wk=weekDays(),wAct=wk.filter(x=>active(dayStr(x))).length;
+  const last=Array.from({length:28},(_,i)=>{const k=dayStr(back(27-i));return (st.days[k]||{}).min||0}),mx=Math.max(10,...last);
+  const cal=Object.values(TOP).filter(t=>overconfident(t.id)),weak=Object.values(TOP).map(t=>({t,m:mastery(t.id)})).filter(x=>x.m!=null&&st.topics[x.t.id].n>=4).sort((a,b)=>a.m-b.m).slice(0,6);
+  const neglected=Object.values(TOP).filter(t=>{const s=st.topics[t.id];return s&&s.last&&(Date.now()-s.last)/864e5>30}).slice(0,6);
+  return `<div class="plain"><h1>Progress</h1></div>
+  <div class="card"><h3>Consistency</h3><div class="figs"><div class="fig"><b>${streak()}</b><span>current streak, days</span></div><div class="fig"><b>${st.best||0}</b><span>longest streak</span></div><div class="fig"><b>${wAct}/7</b><span>days this week (${pct(wAct,7)}%)</span></div><div class="fig"><b>${mo.act}/${monthSoFar()}</b><span>days this month (${pct(mo.act,monthSoFar())}%)</span></div></div>
+   <div class="figs"><div class="fig"><b>${hm(day().min)}</b><span>today</span></div><div class="fig"><b>${hm(w.min)}</b><span>last 7 days</span></div><div class="fig"><b>${hm(mo.min)}</b><span>this month</span></div><div class="fig"><b>${hm(tot)}</b><span>all time</span></div></div>
+   <div class="figs"><div class="fig"><b>${hm(w.min/7)}</b><span>average per day, last 7</span></div><div class="fig"><b>${actDays?hm(tot/actDays):'—'}</b><span>average per active day</span></div><div class="fig"><b>${hm(lis)}</b><span>listening, all time</span></div><div class="fig"><b>${tot?pct(lis,tot)+'%':'—'}</b><span>of time spent listening</span></div></div>
+   <div class="plain"><span class="eyebrow">Minutes per day, last 4 weeks</span><div class="bars" role="img" aria-label="Minutes per day over the last 28 days">${last.map(v=>`<div style="height:${Math.max(3,Math.round(100*v/mx))}%" data-z="${v?'':1}" title="${Math.round(v)} min"></div>`).join('')}</div><div class="row between tiny muted"><span>4 weeks ago</span><span class="num">tallest bar ${Math.round(Math.max(...last))} min</span><span>today</span></div></div></div>
+  <div class="card"><h3>Mastery by section</h3><div class="tablewrap"><table><thead><tr><th>Section</th><th class="n">Started</th><th class="n">Questions</th><th class="n">Correct</th><th class="n">Mastery</th><th>Last studied</th></tr></thead><tbody>
+   ${TRACKS.map(tr=>`<tr><td colspan="6"><span class="eyebrow">${esc(tr.name)}</span></td></tr>`+tr.sections.map(s=>{const x=secStats(s);return `<tr><td>${esc(s.name)}</td><td class="n">${pct(x.started,x.total)}%</td><td class="n">${x.n}</td><td class="n">${x.n?pct(x.c,x.n)+'%':'—'}</td><td class="n">${x.m??'—'}</td><td>${x.last?new Date(x.last).toLocaleDateString():'—'}</td></tr>`}).join('')).join('')}</tbody></table></div>
+   <p class="tiny muted">Started = share of topics with a lesson or at least three answered questions. Mastery is 0 to 100: accuracy weighted by how many questions back it up, blended with your own rating, and faded after a month without review.</p></div>
+  ${weak.length?`<div class="card" style="gap:0"><h3>Weakest topics with enough data</h3>${weak.map(x=>`<button class="item" data-topic="${x.t.id}"><div><b>${esc(x.t.name)}</b><div class="tiny muted">${esc(x.t.sec.name)} · ${st.topics[x.t.id].c}/${st.topics[x.t.id].n} correct</div></div><span class="chip warn num">${x.m}</span></button>`).join('')}</div>`:''}
+  ${cal.length?`<div class="card" style="gap:0"><h3>Confidence ahead of accuracy</h3>${cal.map(t=>`<button class="item" data-topic="${t.id}"><div><b>${esc(t.name)}</b><div class="tiny muted">You rated it ${st.topics[t.id].rate}/5 · ${pct(st.topics[t.id].c,st.topics[t.id].n)}% correct</div></div><span class="chip bad">Recheck</span></button>`).join('')}</div>`:''}
+  ${neglected.length?`<div class="card" style="gap:0"><h3>Not reviewed in over a month</h3>${neglected.map(t=>`<button class="item" data-topic="${t.id}"><div><b>${esc(t.name)}</b><div class="tiny muted">${esc(t.sec.name)}</div></div><span class="chip off">${Math.round((Date.now()-st.topics[t.id].last)/864e5)} days</span></button>`).join('')}</div>`:''}`}
+function recordSummary(){const rows=[];TRACKS.forEach(tr=>tr.sections.forEach(s=>{const x=secStats(s);if(x.n||x.started)rows.push(`${s.name}: ${x.started}/${x.total} topics started, ${x.n} questions, ${x.n?pct(x.c,x.n):0}% correct, mastery ${x.m??'n/a'}`)}));
+  const w=span(7),weak=Object.values(TOP).map(t=>({t,m:mastery(t.id)})).filter(x=>x.m!=null).sort((a,b)=>a.m-b.m).slice(0,8).map(x=>`${x.t.name} (${x.m}; ${st.topics[x.t.id].c}/${st.topics[x.t.id].n}; self-rating ${st.topics[x.t.id].rate||'none'})`);
+  return `Streak ${streak()} days; ${w.act}/7 days active in the last week; ${Math.round(w.min)} minutes in the last 7 days; ${dueQs().length} missed questions due for review.\nSections with activity:\n${rows.join('\n')||'none yet'}\nWeakest topics: ${weak.join('; ')||'none yet'}\nConfidence ahead of accuracy: ${Object.values(TOP).filter(t=>overconfident(t.id)).map(t=>t.name).join('; ')||'none'}\nStated gaps still open: ${st.gaps.filter(g=>!g.done).map(g=>g.text).join('; ')||'none'}\nSections never touched: ${Object.values(SEC).filter(s=>!secStats(s).started).map(s=>s.name).join('; ')||'none'}`}
+
+/* ----- Ask: the tutor ----- */
+function vAsk(){return `<div class="plain"><h1>Ask</h1><p class="small muted">A tutor that knows your record. Ask it to explain, compare, quiz you aloud, or build a smart phrase.</p></div>
+  <div class="stack">${S.chat.map((m,i)=>`<div class="msg ${m.role==='user'?'u':'a'}">${m.role==='user'?esc(m.content):md(m.content)+`<div class="row" style="margin-top:6px"><button class="btn sm" data-act="saytext" data-k="chat" data-i="${i}">Listen</button></div>`}</div>`).join('')}${S.busy?thinking(S.busy):''}</div>
+  <div class="card"><label class="f">Your question<textarea id="chatin" placeholder="e.g. Walk me through working up an incidental adrenal mass, then ask me two questions."></textarea></label><div class="row"><button class="btn pri" data-act="chatsend" ${S.busy||!SAMPLE?'disabled':''}>Ask</button>${S.chat.length?'<button class="btn" data-act="chatclear">New conversation</button>':''}</div></div>`}
+
+/* ----- Career ----- */
+const areas=()=>CAREER_AREAS.concat(st.areas||[]);
+function vCareer(){
+  if(S.goal){const g=st.goals.find(x=>x.id===S.goal),d=docs['goal_'+g.id]||{},p=d.plan;
+    return `<div class="row"><button class="btn link" data-act="up">← Career</button></div><div class="plain"><span class="eyebrow">${esc(g.area)}${g.horizon?' · '+esc(g.horizon):''}</span><h1>${esc(g.text)}</h1></div>${busy()}
+    ${p?`<div class="card">${md(p.summary)}<h3>Steps</h3>${(p.steps||[]).map((s,i)=>`<div class="row" style="align-items:flex-start;flex-wrap:nowrap"><input type="checkbox" id="st${i}" data-step="${i}" ${d.done&&d.done[i]?'checked':''} style="margin-top:5px"><label for="st${i}" style="min-width:0"><b>${esc(s.title)}</b>${s.when?` <span class="chip off">${esc(s.when)}</span>`:''}<div class="small">${esc(s.detail)}</div></label></div>`).join('')}
+      ${(p.metrics||[]).length?`<h3>How you will know it is working</h3><ul class="pts">${p.metrics.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:''}${(p.risks||[]).length?`<h3>Risks</h3><ul class="pts">${p.risks.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:''}
+      ${(p.verify||[]).length?`<div class="note"><b>Look these up before acting.</b><ul class="pts">${p.verify.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}
+      ${(p.questions||[]).length?`<h3>Questions that would sharpen this plan</h3><ul class="pts">${p.questions.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:''}</div>`:''}
+    ${S.busy?'':`<div class="card"><label class="f">${p?'Add detail or answer the questions above, then rebuild':'Anything the plan should account for (optional)'}<textarea id="goalctx">${esc(d.ctx||'')}</textarea></label><div class="row"><button class="btn pri" data-act="goalplan" ${SAMPLE?'':'disabled'}>${p?'Rebuild plan':'Build plan'}</button><button class="btn danger" data-act="goaldel">Delete goal</button></div></div>`}`}
+  return `<div class="plain"><h1>Career</h1><p class="small muted">State what you want. Each goal gets a reasoned plan with steps, measures, risks and the sources to check.</p></div>
+  ${areas().map(a=>{const gs=st.goals.filter(g=>g.area===a);return gs.length?`<div class="card" style="gap:0"><h3>${esc(a)}</h3>${gs.map(g=>{const d=docs['goal_'+g.id]||{},n=d.plan?(d.plan.steps||[]).length:0,k=d.done?Object.values(d.done).filter(Boolean).length:0;return `<button class="item" data-goal="${g.id}"><div><b>${esc(g.text)}</b><div class="tiny muted">${g.horizon?esc(g.horizon)+' · ':''}${n?`${k}/${n} steps done`:'no plan yet'}</div></div><span class="chip ${n&&k===n?'good':''}">${n?pct(k,n)+'%':'Plan'}</span></button>`}).join('')}</div>`:''}).join('')}
+  <div class="card"><h3>Add a goal</h3><label class="f">Area<select id="garea">${areas().map(a=>`<option>${esc(a)}</option>`).join('')}</select></label><label class="f">What you want to accomplish<input type="text" id="gtext" placeholder="e.g. add an OMT half-day and ultrasound-guided injections in my first year"></label><label class="f">By when (optional)<input type="text" id="ghor" placeholder="e.g. within 12 months of starting"></label><div class="row"><button class="btn pri" data-act="addgoal">Add goal</button></div>
+   <label class="f">Add your own area<input type="text" id="newarea" placeholder="e.g. Concierge or direct primary care"></label><div class="row"><button class="btn" data-act="addarea">Add area</button></div></div>`}
+
+/* ----- Settings ----- */
+function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h1></div>
+  <div class="card"><h3>About you</h3><label class="f">Used to pitch every lesson and plan<textarea id="about">${esc(p.about)}</textarea></label><div class="row"><button class="btn" data-act="saveabout">Save</button></div></div>
+  <div class="card"><h3>Audio</h3><div class="plain"><span class="eyebrow">Reading speed</span>${segBtns('rate',[[.85,'0.85×'],[1,'1×'],[1.15,'1.15×'],[1.3,'1.3×'],[1.5,'1.5×']],p.rate)}</div>
+   <div class="plain"><span class="eyebrow">After each lesson</span>${segBtns('passive',[[true,'Read the check questions aloud, pause, then give the answer'],[false,'Stop after the lesson']],p.passive)}<span class="small muted">Questions heard hands-free are not scored. Tap an answer on screen to score it.</span></div></div>
+  <div class="card"><h3>Questions</h3><div class="plain"><span class="eyebrow">Default set size</span>${segBtns('setSize',[[3,'3'],[5,'5'],[10,'10']],p.setSize)}</div><div class="plain"><span class="eyebrow">Accuracy review</span>${segBtns('audit',[[true,'Check every set with a second pass'],[false,'Off (faster)']],p.audit)}</div></div>
+  <div class="card"><h3>Reference library</h3><p class="small muted">${WEB?'The website cannot reach your Google Drive. Open the app inside Claude to ground lessons in your own text.':MCP?'Clinical lessons and questions are grounded in the matching chapter of your own text in Google Drive. The text is read at the moment it is needed and is not stored here.':'Google Drive is not connected to this page.'}</p>
+   ${MCP?`${segBtns('lib',[[true,'Use my library'],[false,'Off']],p.lib)}<label class="f">Drive folder name<input type="text" id="libname" value="${esc(p.libName)}"></label><div class="row"><button class="btn" data-act="libcheck">${st.lib?'Rescan folder':'Connect and scan'}</button>${st.lib?`<span class="small muted">${Object.keys(st.lib.folders).length} subject folders found</span>`:''}</div>`:''}</div>
+  <div class="card"><h3>How far to trust it</h3><p class="small">Lessons and questions are written by AI ${WEB?'(Cloudflare Workers AI on this website)':'(Claude)'} from its training and, where connected, your own reference text. It has no live access to journals or society websites from inside this app, so a guideline published recently may be missing. Each lesson names its sources and lists what to verify. Flag any question you find wrong and it leaves your statistics.</p></div>
+  <div class="card"><h3>Your record</h3><p class="small muted">${LINKED?'Saved to your Doctor Career Companion account.':DB?'Saved in Claude. Once the server is deployed and its connector is added, the same record follows you to the website.':'Saved in this browser only.'}</p><div class="row"><button class="btn" data-act="backup">Download a backup</button>${WEB?'<a class="btn" href="/account.html">Account</a>':''}</div></div>`}
+
+/* ---------- Actions ---------- */
+async function run(label,fn){if(S.busy)return;S.busy=label;S.err='';render();try{await fn()}catch(e){S.err=errMsg(e);console.error(e)}S.busy='';render()}
+function openLesson(L){S.lesson=L;S.lq={};S.quiz=null;render();scrollTo(0,0)}
+async function startSession(){const c=COMMIT[st.prefs.commit],pl=plan(c.lessons);S.lesson=null;P.stop(true);S.session={plan:pl.map(r=>r.t),i:0,len:c.len,next:null,loading:false};
+  await run('Claude is writing your first lesson on '+pl[0].t.name+'…',async()=>{const L=await genLesson(pl[0].t,c.len);openLesson(L)});
+  if(S.lesson&&S.session){playSession();prefetch()}else S.session=null}
+function playSession(){const ss=S.session;playLesson(S.lesson,()=>{if(S.session!==ss)return;if(ss.i+1<ss.plan.length){if(ss.next)advance();else ss.waiting=true}else finishSession(true)})}
+async function prefetch(){const ss=S.session;if(!ss||ss.loading||ss.next||ss.i+1>=ss.plan.length)return;ss.loading=true;
+  try{const L=await genLesson(ss.plan[ss.i+1],ss.len);if(S.session!==ss)return;ss.next=L;ss.loading=false;if(ss.waiting){ss.waiting=false;advance()}else if(S.lesson&&!S.busy)render()}
+  catch(e){ss.loading=false;if(S.session===ss){toast('The next lesson could not be written. '+errMsg(e),6000);if(ss.waiting)finishSession(true)}}}
+function advance(){const ss=S.session;if(!ss||!ss.next)return;ss.i++;const L=ss.next;ss.next=null;openLesson(L);playSession();prefetch()}
+function finishSession(completed){const ss=S.session;S.session=null;if(completed){day().done=1;saveState();toast('Checked in. Session complete.')}if(!P.on)render()}
+function gapTopic(id){const g=st.gaps.find(x=>x.id===id);return g&&TOP[g.tid]?[g,TOP[g.tid]]:[null,null]}
+async function buildBackup(){const data=JSON.stringify({app:'doctor-career-companion',saved:new Date().toISOString(),docs},null,1),name='doctor-career-companion-'+dayStr()+'.json';
+  if(WEB){location.href='/api/backup';return}if(DL){try{await DL.save({filename:name,data})}catch(e){if(e&&e.code!=='cancelled'&&e.code!=='declined')toast('The backup could not be saved.')}return}toast('Backups download from the website or from Claude.')}
+
+document.addEventListener('click',async e=>{
+  const tab=e.target.closest('[data-tab]');if(tab){if(S.quiz)endQuiz();S.tab=tab.dataset.tab;S.lesson=null;S.err='';if(S.session&&!P.on)S.session=null;render();scrollTo(0,0);return}
+  const nav=e.target.closest('[data-track],[data-sec],[data-topic],[data-goal],[data-les]');
+  if(nav){const d=nav.dataset;if(d.track)S.track=d.track;if(d.sec)S.sec=d.sec;if(d.topic){S.tab='learn';S.topic=d.topic;S.sec=TOP[d.topic].sec.id;S.track=TOP[d.topic].sec.track.id;S.form={}}if(d.goal)S.goal=d.goal;
+    if(d.les){const L=docs['les_'+d.les];if(L){S.session=null;openLesson(L)}else toast('That lesson is no longer saved.');return}S.err='';render();scrollTo(0,0);return}
+  const set=e.target.closest('[data-set]');if(set){let v=set.dataset.v;if(v==='true')v=true;else if(v==='false')v=false;else if(!isNaN(v))v=Number(v);st.prefs[set.dataset.set]=v;saveState();render();return}
+  const rate=e.target.closest('[data-rate]');if(rate){const s=tS(rate.dataset.tid);s.rate=Number(rate.dataset.rate);s.rated=Date.now();saveState();render();return}
+  const pick=e.target.closest('[data-pick]');if(pick){const q=findQ(pick.dataset.q);if(!q)return;const i=Number(pick.dataset.pick);if(S.quiz){if(S.quiz.picks[q.id]!=null)return;S.quiz.picks[q.id]=i}else{S.lq=S.lq||{};if(S.lq[q.id]!=null)return;S.lq[q.id]=i}score(q,i);render();return}
+  const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act,v=id=>(($('#'+id)||{}).value||'').trim();
+  if(a==='ptoggle')return P.toggle();if(a==='pnext')return P.jump(1);if(a==='pprev')return P.jump(-1);
+  if(a==='pstop'){P.stop();if(S.session)S.session.waiting=false;return}
+  if(a==='prate'){const r=[.85,1,1.15,1.3,1.5],i=r.indexOf(st.prefs.rate);st.prefs.rate=r[(i+1)%r.length];saveState();if(P.on&&!P.paused){P.tok++;P.run()}drawPlayer();return}
+  if(a==='up'){if(S.tab==='career')S.goal=null;else if(S.topic)S.topic=null;else if(S.sec)S.sec=null;else S.track=null;S.err='';render();return}
+  if(a==='session')return startSession();
+  if(a==='listen'){if(S.session)playSession();else playLesson(S.lesson);render();return}
+  if(a==='nextlesson')return advance();
+  if(a==='closelesson'){const ss=S.session;P.stop();S.lesson=null;if(ss)finishSession(ss.i+1>=ss.plan.length);render();return}
+  if(a==='lesson'){const t=TOP[S.topic],len=b.dataset.len,f=v('focus');S.form.focus=f;S.session=null;return run('Claude is writing a '+LEN[len].name.toLowerCase()+' lesson on '+t.name+'…',async()=>{openLesson(await genLesson(t,len,f));S.form={}})}
+  if(a==='quiz'){const t=TOP[S.topic],n=Number(b.dataset.n),f=v('focus');return run('Claude is writing '+n+' questions on '+t.name+'…',async()=>{const r=await genQuestions(t,n,f);startQuiz(r.qs,t.name,t.id);S.quiz.note=r.dropped?`${r.dropped} question${r.dropped>1?'s':''} failed the accuracy review and ${r.dropped>1?'were':'was'} removed.`:''})}
+  if(a==='requiz'){const qs=bank(TOP[S.topic].sec.id).qs.filter(q=>q.tid===S.topic&&!q.flag).sort(()=>Math.random()-.5).slice(0,10);return startQuiz(qs,TOP[S.topic].name+' (saved)',S.topic)}
+  if(a==='review')return startQuiz(dueQs().slice(0,15),'Missed question review');
+  if(a==='unseen')return startQuiz(allQs().filter(q=>!q.hist.length&&!q.flag).slice(0,10),'Unanswered questions');
+  if(a==='mixed'){const pl=plan(3);return run('Claude is writing a mixed set from your weakest topics…',async()=>{const qs=[];let dropped=0;for(const r of pl){const x=await genQuestions(r.t,2);qs.push(...x.qs);dropped+=x.dropped}startQuiz(qs,'Mixed: '+pl.map(r=>r.t.name).join(', '));S.quiz.note=dropped?dropped+' failed the accuracy review and were removed.':''})}
+  if(a==='qnext'){S.quiz.i++;P.stop(true);render();scrollTo(0,0);return}
+  if(a==='quizdone'){endQuiz();P.stop(true);render();return}
+  if(a==='sayq'){const q=findQ(b.dataset.q),done=(S.quiz?S.quiz.picks:S.lq||{})[q.id]!=null;P.load([{say:done?`The answer is ${'ABCDE'[q.ans]}. ${q.opts[q.ans]}. ${q.exp}`:q.stem+' '+q.opts.map((o,i)=>'ABCDE'[i]+'. '+o+'.').join(' ')}],done?'Explanation':'Question','');return}
+  if(a==='flag'){const q=findQ(b.dataset.q);if(!q.flag){q.flag=1;const last=q.hist[q.hist.length-1],s=tS(q.tid);if(last){s.n=Math.max(0,s.n-1);if(last.ok)s.c=Math.max(0,s.c-1)}q.due=0;toast('Flagged. It no longer counts in your statistics.')}else q.flag=0;saveBank(TOP[q.tid].sec.id);saveState();render();return}
+  if(a==='askq'){const q=findQ(b.dataset.q);if(S.quiz)endQuiz();S.lesson=null;S.tab='ask';S.chat=[];render();$('#chatin').value=`About this question: "${q.stem}" The keyed answer was ${'ABCDE'[q.ans]} (${q.opts[q.ans]}). `;$('#chatin').focus();return}
+  if(a==='addgap'){const text=v('gaptext'),tid=v('gapsec');if(!text)return toast('Describe the gap first.');st.gaps.unshift({id:uid(),text,tid,t:Date.now(),n:0,c:0,done:0});saveState();render();return}
+  if(a==='gapdone'){const g=st.gaps.find(x=>x.id===b.dataset.id);g.done=g.done?0:1;saveState();render();return}
+  if(a==='gapquiz'){const [g,t]=gapTopic(b.dataset.id);if(!g)return;return run('Claude is writing questions on "'+g.text+'"…',async()=>{const r=await genQuestions(t,st.prefs.setSize,g.text,g.id);startQuiz(r.qs,'Gap: '+g.text,t.id)})}
+  if(a==='gaplearn'){const [g,t]=gapTopic(b.dataset.id);if(!g)return;S.session=null;return run('Claude is writing a lesson on "'+g.text+'"…',async()=>{openLesson(await genLesson(t,'std',g.text))})}
+  if(a==='brief')return run('Claude is reading your record…',async()=>{S.brief=await askText(`You are the chief resident mentoring one physician. ${st.prefs.about}\nHere is the study record:\n${recordSummary()}\n\nWrite a brief of at most 170 words, spoken plainly to the physician as "you": what the record shows is strong, what is weak or slipping, any topic where confidence is ahead of accuracy, anything neglected, and exactly what to do in the next three sessions. If there is little data yet, say so and recommend a starting sequence weighted to outpatient medicine. No headings, no preamble.`,'default')});
+  if(a==='saytext'){const t=b.dataset.k==='brief'?S.brief:S.chat[Number(b.dataset.i)].content;P.load([{say:String(t).replace(/[*#_`]/g,'')}],b.dataset.k==='brief'?'Chief resident\'s brief':'Tutor','');return}
+  if(a==='chatsend'){const t=v('chatin');if(!t)return;S.chat.push({role:'user',content:t});const first={role:'user',content:`You are a physician tutor and mentor inside a continuing education app. ${st.prefs.about}\nThe physician's record:\n${recordSummary()}\nAnswer at attending level, concisely, as a colleague. Name the guideline and year behind a recommendation. Never invent a citation, statistic, dose or threshold; say when you are unsure or when guidance may have changed. For EHR, billing and quality topics, flag what depends on the local build or payer. You have no live web access here.\n\nFirst message: ${S.chat[0].content}`};
+    return run('Claude is thinking…',async()=>{try{const r=await askText([first,...S.chat.slice(1)].slice(-21),'default');S.chat.push({role:'assistant',content:r})}catch(x){S.chat.pop();throw x}})}
+  if(a==='chatclear'){S.chat=[];render();return}
+  if(a==='addgoal'){const text=v('gtext');if(!text)return toast('Say what you want to accomplish.');const g={id:uid(),area:v('garea'),text,horizon:v('ghor'),t:Date.now()};st.goals.push(g);saveState();S.goal=g.id;render();return}
+  if(a==='addarea'){const n=v('newarea');if(n&&!areas().includes(n)){st.areas.push(n);saveState();render()}return}
+  if(a==='goaldel'){del('goal_'+S.goal);st.goals=st.goals.filter(g=>g.id!==S.goal);S.goal=null;saveState();render();return}
+  if(a==='goalplan'){const g=st.goals.find(x=>x.id===S.goal),ctx=v('goalctx'),d=docs['goal_'+g.id]||{};return run('Claude is reasoning through this goal…',async()=>{
+    const p=await ask(`You are a career strategist for a physician. ${st.prefs.about}\nArea: ${g.area}\nGoal: ${g.text}\nTime frame: ${g.horizon||'not stated'}\nOther goals on the list: ${st.goals.filter(x=>x.id!==g.id).map(x=>x.text).join('; ')||'none'}\nContext from the physician: ${ctx||'none given'}\n\nReason carefully about what actually drives this outcome, then write a concrete plan. Ground it in how physician careers, compensation, credentialing, contracts and practice economics work in the United States. Prefer evidence where it exists and name the kind of source (for example MGMA or AMGA compensation surveys, the CMS Physician Fee Schedule, AMA or specialty society guidance, state medical board rules, peer-reviewed studies). You have no live web access: do not state specific dollar figures, percentages, deadlines or legal rules unless you are confident, and put anything that must be looked up under "verify". Be specific to this physician and avoid generic advice.\n\nReply with JSON only: {"summary":"3 to 5 sentences on the strategy and the reasoning behind it","steps":[{"title":"","detail":"what to do and why it matters","when":"timing"}],"metrics":["measurable signs of progress"],"risks":["what could go wrong and how to guard against it"],"verify":["specific facts or figures to look up, and where"],"questions":["what you would ask the physician to sharpen the plan"]}\nUse 5 to 9 steps in order.`,'complex');
+    if(!p||!Array.isArray(p.steps))throw{code:'invalid_json'};put('goal_'+g.id,{plan:p,ctx,done:{},t:Date.now()})})}
+  if(a==='saveabout'){st.prefs.about=v('about')||blank().prefs.about;saveState();toast('Saved.');return}
+  if(a==='libcheck'){st.prefs.libName=v('libname')||st.prefs.libName;return run('Looking in Google Drive…',async()=>{try{await libInit(true);toast('Library connected.')}catch(x){throw{code:'upstream_error',message:(x&&x.message)||'Google Drive could not be reached. Allow the connector for this page and try again.'}}})}
+  if(a==='backup')return buildBackup();
+});
+document.addEventListener('change',e=>{const s=e.target.closest('[data-step]');if(s&&S.goal){const d=docs['goal_'+S.goal];d.done=d.done||{};d.done[s.dataset.step]=s.checked?1:0;put('goal_'+S.goal,d)}});
+
+/* ---------- Boot ---------- */
+(async()=>{
+  const C=window.claude&&window.claude.use?window.claude:null;let db=null,user=null;
+  if(C){[db,user,SAMPLE,MCP,DL]=await Promise.all(['db','user','sample','mcp','downloads'].map(n=>C.use(n).catch(()=>null)))}
+  if(db){let owner=false;try{owner=user?await user.isOwner():false}catch(e){}
+    if(!owner){let id=null;try{id=user?await user.id():null}catch(e){}if(id)COLL='data/users/'+id;else db=null}}
+  let cdocs={};if(db){try{const q=await db.collection(COLL).limit(1000).get();q.docs.forEach(d=>{cdocs[d.id]=d.data()});DB=db}catch(e){DB=null}}
+  let sdocs=null;
+  if(!C){let r=null;try{r=await fetch('/api/me',{cache:'no-store'})}catch(e){}
+    if(r&&r.status===401){location.replace('/account.html?next=1');return}
+    let me=null;if(r&&r.ok){try{me=await r.json()}catch(e){}}
+    if(me&&me.id){WEB=true;let d=null;try{d=await fetchServer()}catch(e){}
+      if(d)docs=strip(d);else{try{const c=JSON.parse(localStorage.getItem('dcc:cache'));if(c){OFFLINE=true;docs=c}}catch(e){}}
+      LINKED=true;SAMPLE=webSample();lastPull=Date.now();cacheDocs()}}
+  else if(MCP){try{const r=await MCP.callTool(CONN,'load_progress',{area:AREA,since:0},{cache:false});const p=r&&r.payload;if(p&&p.docs&&typeof p.docs==='object')sdocs=strip(p.docs)}catch(e){}}
+  if(sdocs){LINKED=true;docs=sdocs;lastPull=Date.now();
+    Object.keys(cdocs).forEach(n=>{const c=cdocs[n],s=docs[n];if(!s||((c&&c._t)||0)>(s._t||0)){docs[n]=c;if(!jget(n))jset(n,'PUT',clone(c))}})}
+  else if(DB)docs=cdocs;
+  else if(!WEB){try{docs=JSON.parse(localStorage.getItem(LS))||{}}catch(e){docs={}}}
+  overlay();loadState();pickVoice();render();flush();
+})();
+</script>

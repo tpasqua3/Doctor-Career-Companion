@@ -1,0 +1,12 @@
+{
+  // Doctor Career Companion server: accounts and each physician's study record in a D1 database, reached by the app inside Claude through a connector.
+  // ./public holds the website (the app at / and the account page). /api/* and /mcp/* run src/worker.js.
+  "name": "doctor-career-companion",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-09-01",
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*"] },
+  // No database_id: wrangler creates the database on the first deploy and reuses it afterwards.
+  "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }],
+  // The app on the website asks Cloudflare Workers AI (reasoning models first). Set an ANTHROPIC_API_KEY secret to use Claude instead.
+  "ai": { "binding": "AI" }
+}
