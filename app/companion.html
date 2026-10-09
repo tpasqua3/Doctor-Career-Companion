@@ -665,7 +665,8 @@ function drawAsk(){const el=$('#askp'),fab=$('#fab');fab.hidden=!!S.askOpen||S.t
 const S={askOpen:false,asking:false,deck:null,clist:false,cscope:'all',tab:'today',busy:'',err:'',track:null,sec:null,topic:null,lesson:null,quiz:null,session:null,chat:[],goal:null,brief:null,form:{}};
 const TABS=[['today','Today'],['boards','Boards'],['history','History'],['learn','Curriculum'],['questions','Questions'],['cards','Cards'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
 function render(){ $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
-  const v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,history:vHistory,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])();
+  /* A screen that fails to draw says so, instead of leaving the last tab's content under the new tab's name. */
+  let v;try{v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,history:vHistory,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])()}catch(e){console.error(e);v=`<div class="err">This screen could not be shown: ${esc(String((e&&e.message)||e).slice(0,160))}. Send this message to Claude.</div>`}
   $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();drawAsk();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1)}
 const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="small muted">${/lesson/.test(S.busy)?'Writing a lesson takes about a minute. '+(st.prefs.auto?'It starts playing as soon as it is ready; keep this screen open.':'It opens as text as soon as it is ready.'):''}</p><p class="tiny muted">${st.prefs.audit?'Each set is written, then checked by a second review pass before you see it.':''}</p></div>`:'';
 const modeRow=()=>`<div class="plain"><span class="eyebrow">When the lesson is ready</span>${segBtns('auto',[[true,'Listen: play it aloud'],[false,'Read: show the text']],st.prefs.auto)}<span class="small muted">${st.prefs.auto?'Audio starts by itself and the text follows along on screen. Controls sit at the bottom.':'The lesson opens as text. A Listen button on it plays the audio whenever you want.'}</span></div>`;
@@ -863,7 +864,7 @@ function vAsk(){return `<div class="plain"><h1>Ask</h1><p class="small muted">Th
   <div class="card"><label class="f">Your question<textarea id="chatin" placeholder="e.g. Walk me through working up an incidental adrenal mass, then ask me two questions."></textarea></label><div class="row"><button class="btn pri" data-act="chatsend" ${S.asking||!SAMPLE?'disabled':''}>Ask</button>${S.chat.length?'<button class="btn" data-act="chatclear">New conversation</button>':''}</div></div>`}
 
 /* ----- Career ----- */
-const areas=()=>CAREER_AREAS.concatA(st.areas);
+const areas=()=>CAREER_AREAS.concat(A(st.areas));
 function vCareer(){
   if(S.goal){const g=st.goals.find(x=>x.id===S.goal),d=docs['goal_'+g.id]||{},p=d.plan;
     return `<div class="row"><button class="btn link" data-act="up">← Career</button></div><div class="plain"><span class="eyebrow">${esc(g.area)}${g.horizon?' · '+esc(g.horizon):''}</span><h1>${esc(g.text)}</h1></div>${busy()}
