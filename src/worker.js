@@ -103,6 +103,8 @@ async function api(request, env, url) {
   if (route === 'POST /api/signup') {
     const email = str(body.email, 200).toLowerCase(), password = typeof body.password === 'string' ? body.password : '';
     const first = str(body.firstName, 60), last = str(body.lastName, 60);
+    /* Sign-up can be limited to invited people: set a SIGNUP_CODE secret and only someone who types it can create an account. */
+    if (env.SIGNUP_CODE && !same(str(body.code, 100), String(env.SIGNUP_CODE))) return fail(403, 'This site is by invitation. Enter the invitation code you were given.');
     if (!first) return fail(400, 'Enter your first name.');
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter a valid recovery email address.');
     if (password.length < 8 || password.length > 200) return fail(400, 'Choose a password of at least 8 characters.');

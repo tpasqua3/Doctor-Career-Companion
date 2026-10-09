@@ -23,7 +23,7 @@ After changing `app/companion.html`, run `python3 tools/build.py` before committ
 - **Cards.** Short high-yield flashcards per topic, written on request and added by every lesson. Flip, rate confidence on a five-point scale, and each card returns on a spaced schedule. Decks can be flipped, read as a list or listened to; views are counted per day.
 - **Mastery.** Per topic: questions answered, percent correct, lessons, self-rating, last studied. A 0–100 score blends smoothed accuracy, the amount of evidence, the self-rating and time since review. Confidence that outruns accuracy is flagged.
 - **Consistency.** Streaks, days active per week and month, minutes per day, week and month, listening share.
-- **Reference library.** Inside Claude, clinical lessons and questions are grounded in the matching chapter of the physician's own board review text in Google Drive (a folder with one subfolder per subject). The text is read when needed and never stored by the app or this repository.
+- **Reference library.** Inside Claude, clinical lessons, questions and cards are grounded in the user's own texts in Google Drive: a board review syllabus as the first source and optional textbook folders as a second, each with an edition year so time-sensitive content follows the most recent source. Figures in a chapter (a title, the image, its legend) can be shown beside the lesson section that covers exactly that finding. Text and images are read when needed and are never stored by the app or this repository; each user connects their own library.
 - **Career.** Goals by area, each with an AI-reasoned plan: steps, measures, risks and the facts to look up.
 
 ## Accuracy
@@ -32,6 +32,6 @@ Content is generated, not hand-written. The prompts require named guidelines, fo
 
 ## Deploy
 
-Cloudflare dashboard → Workers & Pages → Create → Import a repository → this repo. Every push to `main` deploys. The D1 database is created on the first deploy. Optional: a `RESEND_API_KEY` secret (and `MAIL_FROM`) turns on password reset by email.
+Cloudflare dashboard → Workers & Pages → Create → Import a repository → this repo. Every push to `main` deploys. The D1 database is created on the first deploy. Optional: a `SIGNUP_CODE` secret limits sign-up to people who are given that code (without it, anyone with the address can create an account and use the site's AI allowance). Optional: a `RESEND_API_KEY` secret (and `MAIL_FROM`) turns on password reset by email.
 
 Then, on the site's account page, make a connector link and add it in Claude as a custom connector named **Doctor Career Companion**.

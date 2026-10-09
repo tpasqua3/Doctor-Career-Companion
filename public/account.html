@@ -59,6 +59,7 @@ function auth(){
    ${su?`<div class="row"><label style="flex:1">First name<input id="first" autocomplete="given-name"></label><label style="flex:1">Last name<input id="last" autocomplete="family-name"></label></div>`:''}
    <label>${su||fg?'Recovery email':'Email'}<input id="email" type="email" autocomplete="email"></label>
    ${su?'<span class="small muted">Used only to send you a password reset link.</span>':''}
+   ${su?'<label>Invitation code<input id="code" autocomplete="off" placeholder="Only if you were given one"></label>':''}
    ${fg?'':`<label>Password<input id="pw" type="password" autocomplete="${su?'new-password':'current-password'}"></label>`}
    ${msg}
    <div class="row"><button class="btn pri" data-act="${su?'signup':fg?'forgot':'login'}">${su?'Create account':fg?'Email me a reset link':'Log in'}</button></div>
@@ -85,7 +86,7 @@ document.addEventListener('click',async e=>{
   const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;msg='';
   try{
     if(a==='login'){await api('POST','/api/login',{email:v('email'),password:v('pw')});if(nextUrl)return location.replace('/');return load()}
-    if(a==='signup'){await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw')});if(nextUrl)return location.replace('/');return load()}
+    if(a==='signup'){await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw'),code:v('code')});if(nextUrl)return location.replace('/');return load()}
     if(a==='forgot'){await api('POST','/api/forgot',{email:v('email')});return show('Check your email for a reset link. It works for one hour.',true)}
     if(a==='reset'){await api('POST','/api/reset',{token:resetTok,password:v('pw')});location.replace('/account.html?next=1');return}
     if(a==='logout'){await api('POST','/api/logout');me=null;mode='login';draw();return}
