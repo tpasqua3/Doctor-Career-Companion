@@ -887,10 +887,15 @@ async function auditLesson(t,r,ref){const out={done:false,fixed:0,flagged:0,drop
   out.done=ok===groups.length;out.parts=groups.length;return out}
 /* A lesson is only its text. A long one is written in parts of about 1,500 words against one outline, so no single reply is long
    enough to be cut short and the length a lesson can reach is not set by one reply. The check questions and the flashcards are
-   written afterwards, in their own requests, from the reviewed text: they take nothing from the lesson's length and are checked on their own. */
+   written afterwards, in their own requests, from the reviewed text: they take nothing from the lesson's length and are checked on their own.
+   Nothing written is held only in memory. A long lesson is saved to the account after every part, marked as partway, so a closed tab,
+   a dropped connection or an AI limit costs at most the part in progress; it is picked up again from that point (X.resume). The
+   reviewed lesson is saved again before its questions and cards are written, and once more when they are attached. */
 const LPART=1500,headTail=(x,n)=>{const w=String(x||'').trim().split(/\s+/);return w.length<=n?w.join(' '):w.slice(0,n).join(' ')+' …'};
 async function genLesson(t,len,focus,X){X=X||{};const L=LEN[len],ref=await libRef(t,focus),figs=await refFigures(ref);
-  const N=L.words<=1900?1:Math.ceil(L.words/LPART),per=Math.round(L.words/N/50)*50,label=S.busy;
+  const D=X.resume&&X.resume.part&&Array.isArray(X.resume.segs)&&X.resume.segs.length?X.resume:null,id=D?D.id:uid(),k0=D?Math.min(D.part.k,D.part.of-1):0;
+  const N=D?D.part.of:L.words<=1900?1:Math.ceil(L.words/LPART),per=Math.round(L.words/N/50)*50,label=S.busy;
+  const listed=title=>{const e=st.lessons.find(x=>x.id===id);if(e)e.title=title;else st.lessons.push({id,tid:t.id,title,len,min:L.min,t:Date.now(),deeper:X.from?1:0})};
   const SEG=`{"heading":"short heading","text":"spoken paragraph(s)","flag":"one sentence naming what in this segment is uncertain, disputed or possibly out of date; empty string if nothing","table":null or {"title":"","columns":["",""],"rows":[["",""]]},"figure":null or the number of one listed figure}`;
   const TAIL=`"keyPoints":["4 to 6 one-sentence take-aways"],"pitfalls":["1 to 3 common errors"],"sources":["Organization. Guideline or statement title. Year."],"uncertain":["anything the physician should verify, or empty"]`;
   const head=`${rules(t)}${refBlock(ref)}\n\nTASK: Write a ${L.name.toLowerCase()} audio lesson of about ${L.words} words on this topic${focus?`, concentrating on: "${focus}"`:''}.${X.basis?'\n'+X.basis:''}${figs.length?'\n\nFIGURES AND TABLES in the reference sources, which can be shown beside a segment exactly as published:\n'+figs.map((f,i)=>i+'. '+(f.pdf?f.label+', "'+f.title+'"'+(f.from?' (from '+f.from+')':''):'"'+f.title+'"'+(f.head?' (under "'+f.head+'")':''))+': '+String(f.legend).slice(0,f.pdf?170:400)).join('\n'):''}
@@ -899,27 +904,32 @@ Shape: open with a two or three sentence patient case that makes the topic matte
 Tables: whenever a segment teaches something graded or laid out in levels (a staging or severity classification with numeric cut-offs, a risk score, diagnostic criteria, dose steps, screening intervals by group, or a side-by-side comparison of options), give that segment a table with the levels as rows. The table is a visual aid shown on screen and is never read aloud, so the spoken text must still carry the same content in fluent sentences for a listener who is not looking: say the levels in order in plain words, and do not refer to the table or say "as shown". Put a value in a table only if you are sure of it; if a cut-off is uncertain or differs between guidelines, say so in the flag. Use null when a segment has nothing tabular.
 Figures: if figures are listed above and a segment teaches the appearance of exactly the condition or finding named in a figure's title and legend, set that segment's "figure" to that figure's number; otherwise null. Never attach a figure as a loose illustration of a related condition, and use each figure once. In a segment that has a figure, say in the spoken text what the picture shows (where on the body, the colour, shape and surface, and the feature that makes the diagnosis), in words taken from its legend, because a listener may not be looking; do not say "as shown" or "in the picture". A listed table or figure from a guideline may be attached the same way to the one segment that teaches exactly what it sets out (a recommendation table, a classification, an algorithm): the spoken text must still state its content in full sentences, and must agree with it.`;
   let r=null;const segs=[];let outline=[],short='';
-  for(let k=0;k<N;k++){const lastP=k===N-1;if(N>1&&label){S.busy=label.replace(/…$/,'')+' (part '+(k+1)+' of '+N+')…';render()}
+  if(D){r={title:D.title};outline=A(D.outline).map(String);segs.push(...D.segs.map(x=>({heading:x.h,text:x.x,flag:x.f,table:x.tb?{title:x.tb.t,columns:x.tb.c,rows:x.tb.r}:null,figure:x.fi==null?null:x.fi})))}
+  for(let k=k0;k<N;k++){const lastP=k===N-1;if(N>1&&label){S.busy=label.replace(/…$/,'')+' (part '+(k+1)+' of '+N+')…';render()}
     const task=N===1?`\n\nReply with JSON only: {"title":"","segments":[${SEG}],${TAIL}}\nUse 4 to 7 segments.`
       :k===0?`\n\nThis lesson is long, so it is written in ${N} parts of about ${per} words each. First plan the whole lesson as an ordered outline of ${Math.max(7,Math.min(26,Math.round(L.words/300)))} or so segment headings that follows the shape above. Then write PART 1 only: the opening case and the first segments of the outline, about ${per} words, stopping at the end of a segment.\n\nReply with JSON only: {"title":"","outline":["every segment heading of the whole lesson, in order"],"segments":[${SEG}]}`
       :`\n\nThis lesson is being written in ${N} parts of about ${per} words each.\nOUTLINE of the whole lesson: ${outline.map((h,i)=>(i+1)+'. '+h).join(' | ')}\nALREADY WRITTEN, in brief (do not repeat or re-teach any of it, and stay consistent with it): ${segs.map(x=>'['+x.heading+'] '+headTail(x.text,40)).join(' ')}\nThe text so far ends: "…${String(segs[segs.length-1].text).slice(-500)}"\nWrite PART ${k+1} only: carry straight on with the next segments of the outline that are not yet written${lastP?', through to the end of the outline: come back to the opening case, work through the decision, and finish with what to do differently in clinic':', stopping at the end of a segment'}, about ${per} words. Keep the outline's headings.\n\nReply with JSON only: {"segments":[${SEG}]${lastP?','+TAIL:''}}`;
     let x=null,got=[];for(let tries=0;tries<2&&!got.length;tries++){try{x=await ask(head+task);got=A(x&&x.segments).filter(y=>y&&typeof y==='object'&&y.text)}catch(e){if(!k||(e&&['rate_limited','session_expired','cancelled','not_granted'].includes(e.code))){if(!k)throw e;break}}}
-    if(!got.length){if(!k)throw{code:'invalid_json'};short=`This lesson stopped early: part ${k+1} of ${N} could not be written, so it covers less than planned. Ask for it again, or dig deeper from here.`;break}
+    if(!got.length){if(!k||(D&&k===k0))throw{code:'invalid_json'};short=`This lesson stopped early: part ${k+1} of ${N} could not be written, so it covers less than planned. Ask for it again, or dig deeper from here.`;break}
     if(!k){r=x;outline=A(x.outline).map(String).filter(Boolean).slice(0,30)}else if(lastP)['keyPoints','pitfalls','sources','uncertain'].forEach(f=>{r[f]=x[f]});
-    segs.push(...got)}
+    segs.push(...got);
+    if(N>1&&!lastP){const title=String(r.title||t.name);put('les_'+id,{id,tid:t.id,len,min:L.min,parent:X.from||'',deeper:X.from?1:0,focus:focus||'',title,part:{k:k+1,of:N},outline,
+        segs:segs.map(x=>({h:String(x.heading||''),x:String(x.text||''),f:String(x.flag||'').trim(),fx:'',tb:cleanTable(x.table),fig:null,fi:Number.isInteger(x.figure)?x.figure:null})),
+        pts:[],pit:[],src:[],unc:[`This lesson is saved partway: ${k+1} of ${N} parts are written, and it has not been through the accuracy review yet. Use "Finish writing this lesson" below to complete it.`],qids:[],ref:ref?ref.title:'',t:Date.now()});listed(title);saveState()}}
   r.segments=segs;if(label&&N>1){S.busy=label.replace(/…$/,'')+' (reviewing)…';render()}
   /* A figure is kept only if the AI chose it, its title words are actually in that segment, no other segment uses it, and the review agrees. */
   const used=new Set();r.segments.forEach(sg=>{const i=typeof sg.figure==='number'?sg.figure:parseInt(sg.figure,10),f=figs[i];sg.fig=f&&!used.has(i)&&figFits(f,sg)?(used.add(i),f):null});
-  const id=uid(),rv=await auditLesson(t,r,ref);
+  const rv=await auditLesson(t,r,ref);
   r.segments.forEach(sg=>{if(sg.fig&&(st.prefs.audit?!(rv.done&&sg.figOk===true):false))sg.fig=null;if(sg.fig&&!figFits(sg.fig,sg))sg.fig=null});
   if(st.prefs.audit)for(const sg of r.segments){if(sg.fig&&sg.fig.pdf&&(await figLooks(sg.fig))===false)sg.fig=null}rv.figs=r.segments.filter(sg=>sg.fig).length;
   const les={id,tid:t.id,len,min:L.min,rev:rv,parent:X.from||'',deeper:X.from?1:0,focus:focus||'',title:String(r.title||t.name),segs:r.segments.map(s=>({h:String(s.heading||''),x:String(s.text||''),f:String(s.flag||'').trim(),fx:String(s.fixed||''),tb:cleanTable(s.table),fig:s.fig?figRef(s.fig):null})),pts:A(r.keyPoints).map(String),pit:A(r.pitfalls).map(String),src:A(r.sources).map(String),unc:A(r.uncertain).map(String).filter(x=>x&&!/^(none|n\/a|nothing|empty)\b/i.test(x.trim())),qids:[],ref:ref?ref.title:'',t:Date.now()};
   if(short)les.unc.unshift(short);
+  put('les_'+id,les);listed(les.title);saveState();
   /* Two check questions and a few cards, each from its own request against the reviewed lesson. A failure here never costs the lesson. */
   if(label){S.busy=label.replace(/…$/,'')+' (check questions and cards)…';render()}
   const [qr]=await Promise.all([genQuestions(t,2,focus,null,{basis:basisQ(les),les:id,quiet:1}).catch(()=>null),genCards(t,4,focus,basisC(les),les.segs.map(x=>x.fig).filter(Boolean)).catch(()=>null)]);
   if(qr)les.qids=qr.qs.map(q=>q.id);if(label)S.busy=label;
-  put('les_'+id,les);st.lessons.push({id,tid:t.id,title:les.title,len,min:L.min,t:les.t,deeper:X.from?1:0});while(st.lessons.length>80){del('les_'+st.lessons.shift().id)}
+  if(les.qids.length)put('les_'+id,les);while(st.lessons.length>80){del('les_'+st.lessons.shift().id)}
   const s=tS(t.id);s.les++;s.last=Date.now();day().les++;saveState();return les}
 const findQ=id=>allQs().find(q=>q.id===id);
 
@@ -1180,7 +1190,7 @@ function vLesson(){const L=S.lesson,t=TOP[L.tid],ss=S.session,qs=L.qids.map(find
   <div class="card"><h3>How well do you know this now?</h3>${rateRow(L.tid,s.rate)}
    <div class="row">${L.done?`<span class="chip good">Completed ${new Date(L.done).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</span>`:'<button class="btn pri" data-act="lesdone">Mark as complete</button>'}<span class="small muted">${L.done?'Logged in your study record.':'Logs this lesson in your study record. Listening to the end marks it for you.'}</span></div></div>
   ${L.src.length?`<div class="plain"><span class="eyebrow">Sources named in this lesson</span><ul class="pts small muted">${L.src.map(p=>`<li>${esc(p)}</li>`).join('')}</ul><p class="tiny muted">Written by AI${L.ref?' from your reference text':''}. Confirm against the source before changing practice.</p></div>`:''}
-  ${S.busy?busy():`<div class="card"><h3>Go further with this lesson</h3>${L.parent&&docs['les_'+L.parent]?`<p class="small muted">Follows <button class="btn link" data-les="${L.parent}" style="padding:0">${esc(docs['les_'+L.parent].title)}</button></p>`:''}
+  ${S.busy?busy():L.part?`<div class="card"><h3>This lesson is not finished</h3><p class="small muted">${L.part.k} of ${L.part.of} parts were written and saved before it stopped. Finishing writes the rest from where it left off, then runs the accuracy review and adds the check questions and cards.</p><div class="row"><button class="btn pri" data-act="lesresume">Finish writing this lesson</button></div></div>`:`<div class="card"><h3>Go further with this lesson</h3>${L.parent&&docs['les_'+L.parent]?`<p class="small muted">Follows <button class="btn link" data-les="${L.parent}" style="padding:0">${esc(docs['les_'+L.parent].title)}</button></p>`:''}
    <div class="plain"><span class="eyebrow">Test what it taught</span><div class="row" style="align-items:flex-end">${qnField()}<button class="btn" data-act="lesq">Questions on this lesson</button><button class="btn" data-act="lescards">Flashcards on it</button></div></div>
    <div class="plain"><span class="eyebrow">Dig deeper</span><span class="small muted">Picks up where this lesson stops: mechanisms, exceptions, harder cases and the evidence behind the guidance.</span><div class="row"><button class="btn pri" data-act="lesdeep" data-kind="lesson">Dig deeper: lesson · ${LEN.deep.min} min</button><button class="btn" data-act="lesdeep" data-kind="quiz">Dig deeper: harder questions</button></div></div></div>`}
   ${ss&&ss.i+1<ss.plan.length?`<div class="row"><button class="btn pri" data-act="nextlesson" ${ss.next?'':'disabled'}>Next lesson</button></div>`:ss?`<div class="row"><button class="btn pri" data-act="closelesson">Finish session</button></div>`:''}`}
@@ -1377,10 +1387,11 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='nextlesson')return advance();
   if(a==='hqx'){S.hq=null;render();return}
   if(a==='hisq')return hisQuestions(b.dataset.id,Math.min(30,Math.max(1,Math.round(Number(($('#hqn')||{}).value))||5)));
-  if(a==='lesq'||a==='lescards'||a==='lesdeep'){const L=S.lesson,t=TOP[L.tid],n=qN(),kind=b.dataset.kind;if(!t)return;P.stop();S.session=null;
+  if(a==='lesq'||a==='lescards'||a==='lesdeep'||a==='lesresume'){const L=S.lesson,t=TOP[L.tid],n=qN(),kind=b.dataset.kind;if(!t)return;P.stop();S.session=null;
     if(a==='lesq')return run('Claude is writing '+n+' questions on "'+L.title+'"…',async()=>{const r=await genQuestions(t,n,'',null,{basis:basisQ(L),from:L.id});startQuiz(r.qs,'On: '+L.title,t.id);S.quiz.note=qNote(r,n)});
     if(a==='lescards')return run('Claude is writing cards on "'+L.title+'"…',async()=>{const made=await genCards(t,10,L.title);if(!made.length)throw{code:'upstream_error',message:'No new cards passed the accuracy check. Try again.'};S.lesson=null;S.tab='cards';S.cscope='top:'+t.id;startDeck(made,L.title)});
     if(kind==='quiz')return run('Claude is writing harder questions beyond "'+L.title+'"…',async()=>{const r=await genQuestions(t,n,'',null,{basis:basisDeepQ(L),from:L.id,level:Math.min(5,Math.max(4,qD()+1))});startQuiz(r.qs,'Dig deeper: '+L.title,t.id)});
+    if(a==='lesresume'){if(!L.part||!LEN[L.len])return;return run('Claude is finishing your lesson "'+L.title+'"…',async()=>{const D=await genLesson(t,L.len,L.focus||'',{resume:L,from:L.parent||''});openLesson(D);if(st.prefs.auto)playLesson(D)})}
     return run('Claude is writing a dig deeper lesson beyond "'+L.title+'"…',async()=>{const D=await genLesson(t,'deep',L.focus||'',{basis:basisDeep(L),from:L.id});openLesson(D);if(st.prefs.auto)playLesson(D)})}
   if(a==='lesdone'){completeLesson(S.lesson);render();return}
   if(a==='closelesson'){const ss=S.session;P.stop();endAct();S.lesson=null;if(ss)finishSession(ss.i+1>=ss.plan.length);render();return}
