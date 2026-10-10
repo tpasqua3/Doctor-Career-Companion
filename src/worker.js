@@ -123,8 +123,8 @@ async function driveTool(env, tool, input) {
   input = input && typeof input === 'object' ? input : {};
   if (tool === 'search_files') {
     const q = str(input.query, 600); if (!q) throw new LibError('Nothing to search for.', 400);
-    const j = await (await gfetch(env, 'files', { q: driveQuery(q), pageSize: Math.max(1, Math.min(100, Number(input.pageSize) || 20)), pageToken: str(input.pageToken, 2000), fields: 'nextPageToken,files(id,name,mimeType,parents)', includeItemsFromAllDrives: 'true' })).json();
-    return { files: (j.files || []).map(f => ({ id: f.id, title: f.name, mimeType: f.mimeType, parentId: (f.parents || [])[0] || '' })), nextPageToken: j.nextPageToken || undefined };
+    const j = await (await gfetch(env, 'files', { q: driveQuery(q), pageSize: Math.max(1, Math.min(100, Number(input.pageSize) || 20)), pageToken: str(input.pageToken, 2000), fields: 'nextPageToken,files(id,name,mimeType,parents,size)', includeItemsFromAllDrives: 'true' })).json();
+    return { files: (j.files || []).map(f => ({ id: f.id, title: f.name, mimeType: f.mimeType, parentId: (f.parents || [])[0] || '', fileSize: f.size || '' })), nextPageToken: j.nextPageToken || undefined };
   }
   const id = str(input.fileId, 200); if (!/^[A-Za-z0-9_-]{10,200}$/.test(id)) throw new LibError('Bad file.', 400);
   if (tool === 'read_file_content') {
@@ -135,7 +135,7 @@ async function driveTool(env, tool, input) {
       /* A chapter heavy with pictures can be over Google's export limit as markdown; plain text has no pictures and always fits. */
       try { text = tidyMarkdown(await (await gfetch(env, 'files/' + id + '/export', { mimeType: 'text/markdown' })).text()); }
       catch (e) { if (e.status === 404) throw e; text = await (await gfetch(env, 'files/' + id + '/export', { mimeType: 'text/plain' })).text(); }
-    } else if (/^text\//.test(meta.mimeType || '')) { text = await (await gfetch(env, 'files/' + id, { alt: 'media' })).text();
+    } else if (/^text\/|json/.test(meta.mimeType || '')) { text = await (await gfetch(env, 'files/' + id, { alt: 'media' })).text();
     } else {
       if (Number(meta.size) > 25e6) throw new LibError('That file is too large to read on the website. Split it into chapters, or keep it as Google Docs.', 413);
       if (!env.AI || !env.AI.toMarkdown) throw new LibError('Only Google Docs and text files can be read on this website.', 415);
@@ -154,6 +154,28 @@ async function driveTool(env, tool, input) {
     return { html: await (await gfetch(env, 'files/' + id + '/export', { mimeType: 'text/html' })).text(), title: meta.name || '' };
   }
   throw new LibError('Unknown library request.', 400);
+}
+/* The file itself, for the app's own PDF reader, which runs in the browser. The website streams the whole file. The connector inside
+   Claude can only pass text, and not much at a time, so it asks for the file one slice at a time. */
+const fileId = v => { const id = str(v, 200); if (!/^[A-Za-z0-9_-]{10,200}$/.test(id)) throw new LibError('Bad file.', 400); return id; };
+async function driveBytes(env, id, range) {
+  const u = new URL('https://www.googleapis.com/drive/v3/files/' + id); u.searchParams.set('alt', 'media'); u.searchParams.set('supportsAllDrives', 'true');
+  const r = await fetch(u, { headers: { Authorization: 'Bearer ' + await googleToken(env), ...(range ? { Range: range } : {}) } });
+  if (r.status === 404) throw new LibError('That file is not in the folders shared with this website.', 404);
+  if (r.status === 416) throw new LibError('Past the end of the file.', 416);
+  if (!r.ok) throw new LibError('Google Drive refused the download (' + r.status + '). Google Docs are read as text, not downloaded.', r.status === 403 ? 403 : 502);
+  return r;
+}
+const SLICE = 720000;
+async function driveSlice(env, id, offset) {
+  offset = Math.max(0, Math.floor(Number(offset) || 0));
+  const meta = await (await gfetch(env, 'files/' + id, { fields: 'id,name,mimeType,size' })).json(), size = Number(meta.size) || 0;
+  if (!size) throw new LibError('That file has no downloadable content.', 415);
+  if (size > 60e6) throw new LibError('That file is too large to read in the app.', 413);
+  if (offset >= size) return { size, offset, length: 0, data: '', done: true };
+  const end = Math.min(size, offset + SLICE) - 1, bytes = new Uint8Array(await (await driveBytes(env, id, 'bytes=' + offset + '-' + end)).arrayBuffer());
+  let bin = ''; for (let i = 0; i < bytes.length; i += 32768) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+  return { size, offset, length: bytes.length, data: btoa(bin), done: offset + bytes.length >= size, title: meta.name || '', mimeType: meta.mimeType || '' };
 }
 
 const profile = u => ({ id: u.id, email: u.email, firstName: u.first || '', lastName: u.last || '' });
@@ -299,6 +321,13 @@ async function api(request, env, url) {
     if (!out.text) return fail(502, 'The AI could not answer just now. Try again in a moment.');
     return json({ text: out.text, model: out.model, left: cap - ((row && row.n) || 0) - 1 });
   }
+  if (route === 'GET /api/drive/file') {
+    if (!libraryOn(env, user)) return fail(403, 'The reference library is not turned on for this account.');
+    try { const r = await driveBytes(env, fileId(url.searchParams.get('id')));
+      if (Number(r.headers.get('Content-Length')) > 60e6) return fail(413, 'That file is too large to read in the app.');
+      return new Response(r.body, { headers: { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'private, max-age=600' } }); }
+    catch (e) { if (e instanceof LibError) return fail(e.status, e.message); throw e; }
+  }
   /* The reference library in Google Drive, for accounts it is turned on for. */
   if (route === 'POST /api/drive') {
     if (!libraryOn(env, user)) return fail(403, 'The reference library is not turned on for this account.');
@@ -338,6 +367,10 @@ const MCP_TOOLS = [
     inputSchema: { type: 'object', properties: { path: { type: 'string' }, body: { type: 'object' } }, required: ['path', 'body'] }, annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: 'delete_doc', description: "Delete one document, e.g. an old lesson removed in the app.",
     inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }, annotations: { readOnlyHint: false, destructiveHint: true } },
+  { name: 'library_status', description: "Whether this account may read the reference library that is shared with the Doctor Career Companion website.",
+    inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
+  { name: 'library_file', description: "One slice of a file in the reference library (a guideline PDF), base64 encoded, for the app's PDF reader. Start at `offset` 0 and continue from offset + length until `done` is true.",
+    inputSchema: { type: 'object', properties: { fileId: { type: 'string' }, offset: { type: 'number' } }, required: ['fileId'] }, annotations: { readOnlyHint: true } },
 ];
 async function mcpServer(request, env, token) {
   if (request.method !== 'POST') return new Response('This address is for the Doctor Career Companion connector in Claude.', { status: 405, headers: { Allow: 'POST' } });
@@ -368,6 +401,12 @@ async function mcpServer(request, env, token) {
     if (name === 'get_profile') {
       const u = await env.DB.prepare('SELECT first, last, email FROM users WHERE id = ?').bind(uid).first();
       return out({ firstName: (u && u.first) || '', lastName: (u && u.last) || '', email: (u && u.email) || '', areas: await summary(env, uid) });
+    }
+    if (name === 'library_status' || name === 'library_file') {
+      const u = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first(), on = !!u && libraryOn(env, u);
+      if (name === 'library_status') return out({ library: on });
+      if (!on) return bad('The reference library is not turned on for this account.');
+      try { return out(await driveSlice(env, fileId(a.fileId), a.offset)); } catch (e) { if (e instanceof LibError) return bad(e.message); throw e; }
     }
     const path = String(a.path || '');
     if (!PATH_OK.test(path)) return bad('That is not a valid document path. It must start with the area, like med/state.');

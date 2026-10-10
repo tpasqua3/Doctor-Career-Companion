@@ -139,6 +139,9 @@ ul.pts{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:5px}
 .fig{margin:4px 0 0;display:flex;flex-direction:column;gap:6px;font:400 .86rem/1.45 var(--ui)}
 .fig img{max-width:100%;height:auto;border-radius:8px;border:1px solid var(--line);align-self:flex-start;display:block}
 .figimg{min-height:24px}
+.figimg.wide{overflow-x:auto;max-width:100%}
+.figimg.wide img{max-width:none;width:max(100%,680px);background:#fff}
+figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 .pager{display:flex;flex-wrap:wrap;gap:4px;align-items:center;justify-content:center;padding-top:6px}
 .pager button{min-width:36px;height:36px;border:1px solid var(--line);background:var(--card);border-radius:8px;cursor:pointer;font-family:var(--num);font-size:.85rem}
 .pager button[aria-current="true"]{background:var(--teal);border-color:var(--teal);color:var(--teal-ink);font-weight:600}
@@ -295,7 +298,7 @@ const examName=()=>{const k=bpKind(),b=bpDoc();return k==='cert'||(k==='own'&&!b
 const bpClean=cats=>A(cats).map(c=>({name:String(c.name||'').slice(0,80),pct:Number(c.pct)||0,topics:A(c.topics).filter(t=>t&&typeof t.n==='string'&&t.n.trim()&&/^(?:[HML]{4})?$/.test(t.r||'')).map(t=>Object.assign({n:t.n.trim().slice(0,160),lf:t.lf?1:0,sub:String(t.sub||'').slice(0,120),r:t.r||''},t.r?{}:{sp:Math.max(0,Math.min(100,Number(t.sp)||0))}))})).filter(c=>c.name&&c.topics.length);
 /* A blueprint file from the physician: the ABIM's PDF, the same document saved as text, or an outline or backup file this app wrote. */
 async function readBlueprintFile(f){const pdf=/pdf/i.test(f.type)||/\.pdf$/i.test(f.name);let cats=[],text='';
-  if(pdf){const base='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';if(!window.pdfjsLib){await loadScript(base+'pdf.min.js');window.pdfjsLib.GlobalWorkerOptions.workerSrc=base+'pdf.worker.min.js'}
+  if(pdf){await pdfLib();
     const doc=await window.pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise,pages=[];
     for(let i=1;i<=Math.min(doc.numPages,150);i++){const c=await (await doc.getPage(i)).getTextContent();pages.push(c.items.map(x=>({s:x.str,x:x.transform[4],y:x.transform[5],w:x.width})));text+=c.items.map(x=>x.str).join(' ')+'\n'}
     cats=parseBlueprintPages(pages);if(cats.length<5)cats=parseOutlinePages(pages)}
@@ -474,7 +477,7 @@ const landText=()=>{const L=landscape();return L.rows.length?L.rows.map(r=>`${di
 /* Reading an in-training exam report: pictures or screenshots go to the AI as images, a PDF is read as text first, pasted text is used as is. */
 const ITEPROMPT=`This is a physician's in-training examination score report (for example the ACP Internal Medicine In-Training Examination). Extract only what is printed; never estimate or fill in a number that is not shown. Reply with JSON only: {"exam":"name of the exam","year":"year or date if shown","overallPct":number or null,"overallPercentile":number or null,"areas":[{"name":"content area exactly as printed","pct":percent correct as a number,"peerPct":peer or national mean percent correct if shown else null,"percentile":number or null}],"missed":["each educational objective or topic listed as answered incorrectly, verbatim, up to 100"]}`;
 function loadScript(src){return new Promise((ok,no)=>{const e=document.createElement('script');e.src=src;e.onload=ok;e.onerror=()=>no({code:'upstream_error',message:'The PDF reader could not load.'});document.head.appendChild(e)})}
-async function pdfToInput(file){const base='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';if(!window.pdfjsLib){await loadScript(base+'pdf.min.js');window.pdfjsLib.GlobalWorkerOptions.workerSrc=base+'pdf.worker.min.js'}
+async function pdfToInput(file){await pdfLib();
   const pdf=await window.pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;let text='';const n=Math.min(pdf.numPages,12);
   for(let i=1;i<=n;i++){const c=await (await pdf.getPage(i)).getTextContent();text+=c.items.map(x=>x.str).join(' ')+'\n'}
   if(text.replace(/\s/g,'').length>300)return {text};
@@ -547,6 +550,145 @@ function drawPlayer(){const el=$('#player');$('#fab').dataset.up=P.on?'1':'';if(
   <div class="ctl"><button data-act="pprev" aria-label="Back one section">${IC.prev}</button><button class="big" data-act="ptoggle" aria-label="${P.paused?'Play':'Pause'}">${P.paused?IC.play:IC.pause}</button><button data-act="pnext" aria-label="Skip one section">${IC.next}</button>
   <button class="sp" data-act="prate" aria-label="Reading speed">${st.prefs.rate.toFixed(2).replace(/0$/,'')}×</button><span style="flex:1"></span><button data-act="pstop" aria-label="Stop">${IC.stop}</button></div></div>`}
 
+/* ---------- Reading a PDF ----------
+   Guidelines arrive as journal PDFs: two columns, running heads, tables and flow diagrams. A PDF holds no reading order, only pieces
+   of text at positions and the lines and shapes drawn around them, so the page is rebuilt from where things sit:
+   1. the shapes drawn on a page (rules, shaded rows, boxes, pictures) are grouped into regions, and a region that carries a
+      "Table 3." or "Figure 2." caption is a table or a figure;
+   2. text inside those regions is kept out of the running text, so table cells never leak into a paragraph, and each table is
+      transcribed on its own, row by row;
+   3. the remaining text is read column by column, with headings marked, hyphenated words rejoined and page furniture dropped.
+   A table or figure is shown by drawing its own region of the source page, so it is the published original, never a redrawing. */
+const PX={mul:(a,b)=>[a[0]*b[0]+a[2]*b[1],a[1]*b[0]+a[3]*b[1],a[0]*b[2]+a[2]*b[3],a[1]*b[2]+a[3]*b[3],a[0]*b[4]+a[2]*b[5]+a[4],a[1]*b[4]+a[3]*b[5]+a[5]],
+  box:(m,x0,y0,x1,y1)=>{const p=[[x0,y0],[x1,y0],[x0,y1],[x1,y1]].map(([x,y])=>[m[0]*x+m[2]*y+m[4],m[1]*x+m[3]*y+m[5]]);return [Math.min(...p.map(q=>q[0])),Math.min(...p.map(q=>q[1])),Math.max(...p.map(q=>q[0])),Math.max(...p.map(q=>q[1]))]},
+  CAP:/^(table|figure|fig\.?|central\s*illustration|box|algorithm)\s*([0-9]{1,2}[A-Za-z]?|[IVX]{1,4})?\s*[.:|]?\s*/i};
+/* Everything drawn on a page that is not text, as boxes in page units (origin bottom left). */
+async function pdfInk(page,W,H){const O=pdfjsLib.OPS,ol=await page.getOperatorList(),out=[];let m=[1,0,0,1,0,0],pend=null;const st=[];
+  for(let i=0;i<ol.fnArray.length;i++){const f=ol.fnArray[i],a=ol.argsArray[i];
+    if(f===O.save)st.push(m);else if(f===O.restore)m=st.pop()||m;else if(f===O.transform)m=PX.mul(m,a);
+    else if(f===O.constructPath){const q=a&&a[2];pend=q?PX.box(m,q[0],q[2],q[1],q[3]):null}
+    else if(f===O.stroke||f===O.closeStroke||f===O.fill||f===O.eoFill||f===O.fillStroke||f===O.eoFillStroke||f===O.closeFillStroke||f===O.closeEOFillStroke){if(pend)out.push(pend);pend=null}
+    else if(f===O.endPath)pend=null;
+    else if(f===O.paintImageXObject||f===O.paintInlineImageXObject||f===O.paintImageMaskXObject||f===O.paintImageXObjectRepeat)out.push(PX.box(m,0,0,1,1));
+    else if(f===O.paintFormXObjectBegin){st.push(m);if(a&&a[0])m=PX.mul(m,a[0])}else if(f===O.paintFormXObjectEnd)m=st.pop()||m}
+  return out.map(b=>[Math.max(0,b[0]),Math.max(0,b[1]),Math.min(W,b[2]),Math.min(H,b[3])]).filter(b=>b[2]>=b[0]&&b[3]>=b[1]&&(b[2]-b[0])*(b[3]-b[1])<.8*W*H)}
+/* Pieces of text on one baseline, split where a wide gap shows a column or cell boundary. */
+function pdfLines(items,gap){const rows=[];items.slice().sort((a,b)=>b.y-a.y||a.x-b.x).forEach(i=>{const r=rows.find(o=>Math.abs(o.y-i.y)<=Math.max(1.5,Math.min(o.h,i.h)*.35));if(r){r.it.push(i);r.h=Math.max(r.h,i.h)}else rows.push({y:i.y,h:i.h,it:[i]})});
+  const out=[];rows.forEach(r=>{r.it.sort((a,b)=>a.x-b.x);let cur=null;r.it.forEach(i=>{const g=cur?i.x-cur.x1:0;if(cur&&g<=gap){cur.s+=(g>Math.max(1,i.h*.18)&&!/\s$/.test(cur.s)&&!/^\s/.test(i.s)&&!(/[A-Za-z]-$/.test(cur.s)&&g<i.h*.6&&/^[a-z]/.test(i.s))?' ':'')+i.s;cur.x1=Math.max(cur.x1,i.x+i.w);cur.h=Math.max(cur.h,i.h)}else{cur={x0:i.x,x1:i.x+i.w,y:r.y,h:i.h,s:i.s,f:i.f};out.push(cur)}})});
+  out.forEach(l=>{l.s=l.s.replace(/\s+/g,' ').replace(/(?:\b[A-Z] ){3,}[A-Z]\b/g,m=>m.replace(/ /g,'')).trim()});return out.filter(l=>l.s)}
+/* The words inside a region, one line per row of text with | between cells, and a dash line wherever a rule or band crosses the
+   region, so the cells of one table row stay together even when a cell wraps over several lines. */
+function pdfRows(items,box,ink,skipY){const cells=pdfLines(items.filter(i=>i.y>=box[1]-1&&i.y<=box[3]+1&&i.x>=box[0]-14&&i.x+i.w<=box[2]+14&&!(skipY||[]).some(y=>Math.abs(y-i.y)<=1.5)),9),rows=[];
+  cells.sort((a,b)=>b.y-a.y||a.x0-b.x0).forEach(c=>{const row=rows.find(o=>Math.abs(o.y-c.y)<=2);if(row)row.c.push(c);else rows.push({y:c.y,c:[c]})});
+  const bw=box[2]-box[0],seps=[];(ink||[]).forEach(b=>{if(b[2]-b[0]>=bw*.55&&b[0]>=box[0]-4&&b[2]<=box[2]+4&&b[1]>=box[1]-2&&b[3]<=box[3]+2)[b[1],b[3]].forEach(y=>{if(!seps.some(v=>Math.abs(v-y)<3))seps.push(y)})});
+  const out=[];rows.forEach((o,k)=>{if(k&&seps.length>2&&seps.some(y=>y<rows[k-1].y-1&&y>o.y+1)&&out[out.length-1]!=='—')out.push('—');out.push(o.c.sort((a,b)=>a.x0-b.x0).map(c=>c.s).join(' | '))});
+  return {rows:out,n:rows.length,multi:rows.filter(o=>o.c.length>1).length,prose:rows.length>3&&rows.filter(o=>o.c.every(c=>c.s.length>38)).length>rows.length*.7}}
+async function pdfExtract(doc,opt){opt=opt||{};const NP=Math.min(doc.numPages,opt.maxPages||400),pages=[],hs={};
+  for(let p=1;p<=NP;p++){const page=await doc.getPage(p),vp=page.getViewport({scale:1}),tc=await page.getTextContent();
+    const items=tc.items.filter(i=>i.str&&i.str.trim()&&Math.abs(i.transform[1])<.01*Math.abs(i.transform[0]||1)).map(i=>({s:i.str,x:i.transform[4],y:i.transform[5],h:Math.hypot(i.transform[2],i.transform[3])||i.height||8,w:i.width,f:i.fontName}));
+    if(p<=Math.max(2,Math.ceil(NP*.5)))items.forEach(i=>{const k=Math.round(i.h*2)/2;hs[k]=(hs[k]||0)+i.s.length});pages.push({p,W:vp.width,H:vp.height,items})}
+  /* Some journal PDFs draw ≥ and ≤ from a symbol font whose text layer says $ and #. A font used for nothing but those two
+     characters is that font, and its characters are read as the signs they print. */
+  const fonts={};pages.forEach(P=>P.items.forEach(i=>{const f=fonts[i.f]||(fonts[i.f]={n:0,odd:0});f.n++;if(!/^[$#\s]+$/.test(i.s))f.odd++}));
+  pages.forEach(P=>P.items.forEach(i=>{const f=fonts[i.f];if(f&&!f.odd&&f.n>=2)i.s=i.s.replace(/\$/g,'≥').replace(/#/g,'≤')}));
+  /* A dingbat font prints its bullets and check marks as stray letters. A font that never sets more than one character at a time,
+     and only one or two different ones, is such a font; its marks are read as bullets. */
+  const ding={};pages.forEach(P=>P.items.forEach(i=>{const d=ding[i.f]||(ding[i.f]={n:0,long:0,ch:new Set()});d.n++;const t=i.s.trim();if(t.length>1)d.long++;else d.ch.add(t)}));
+  pages.forEach(P=>P.items.forEach(i=>{const d=ding[i.f];if(d&&!d.long&&d.n>=4&&d.ch.size<=2&&/^[A-Za-z]$/.test(i.s.trim())&&!(fonts[i.f]&&!fonts[i.f].odd))i.s='•'}));
+  const body=Number(Object.keys(hs).sort((a,b)=>hs[b]-hs[a])[0])||9,figs=[];let text='',stop=false;
+  for(const P of pages){if(stop)break;const {W,H}=P;let frag=pdfLines(P.items,14);
+    /* ---- regions */
+    const regions=[];let ink=[],clusters=[];
+    if(opt.ink!==false){try{ink=await pdfInk(await doc.getPage(P.p),W,H)}catch(e){}}
+    /* "Greater than or equal to" is often set as > with a short stroke drawn under it. Read as plain > it would change a threshold. */
+    const under=ink.filter(b=>b[2]-b[0]<9&&b[2]-b[0]>1.5&&b[3]-b[1]<1.6);
+    if(under.length){let fixed=0;under.forEach(b=>{const ux=(b[0]+b[2])/2;let best=null;P.items.forEach(i=>{if(!/[<>]/.test(i.s)||ux<i.x-2||ux>i.x+i.w+2||b[1]>i.y+i.h*.25||b[1]<i.y-i.h*.45)return;const n=i.s.length;[...i.s].forEach((ch,k)=>{if(ch!=='<'&&ch!=='>')return;const d=Math.abs(i.x+i.w*(k+.5)/n-ux);if(d<Math.max(12,i.w*.06)&&(!best||d<best.d))best={i,k,ch,d}})});
+        if(best){best.i.s=best.i.s.slice(0,best.k)+(best.ch==='>'?'≥':'≤')+best.i.s.slice(best.k+1);fixed++}});if(fixed)frag=pdfLines(P.items,14)}
+    if(ink.length){
+      ink=ink.filter(b=>!((b[3]>H*.94||b[1]<H*.045)&&b[3]-b[1]<6));
+      /* group shapes that touch or nearly touch; rules of the same width stacked above each other are one table */
+      const capOK=l=>{const m=PX.CAP.exec(l.s);return !!m&&(!!m[2]||/^(table|figure)\s*[.:]/i.test(l.s))},capLines=frag.filter(capOK),cl=ink.map(b=>b.slice()),near=(a,b,g)=>a[0]<=b[2]+g&&b[0]<=a[2]+g&&a[1]<=b[3]+g&&b[1]<=a[3]+g;let changed=true;
+      while(changed){changed=false;for(let i=0;i<cl.length;i++)for(let j=i+1;j<cl.length;j++){const a=cl[i],b=cl[j],rule=x=>x[3]-x[1]<3&&x[2]-x[0]>80;
+        const up=a[1]>=b[1]?a:b,lo=up===a?b:a,gapY=up[1]-lo[3],alike=Math.abs(a[0]-b[0])<8&&Math.abs(a[2]-b[2])<8,capIn=(y0,y1)=>capLines.some(l=>l.y>y0&&l.y<y1&&l.x0<lo[0]+40&&l.x0>lo[0]-14);
+        if(near(a,b,9)||(alike&&gapY>=0&&gapY<=26&&!capIn(lo[3]-34,up[1]-1))||(rule(a)&&rule(b)&&alike&&!capIn(lo[3]+2,up[1]-2))){cl[i]=[Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.max(a[2],b[2]),Math.max(a[3],b[3])];cl.splice(j,1);j--;changed=true}}}
+      clusters=cl.filter(b=>b[2]-b[0]>110&&b[3]-b[1]>28);clusters.forEach(b=>{
+        /* the caption: a line that starts with the label, inside the region near its top, or just above or below it */
+        const cands=frag.filter(l=>{const m=PX.CAP.exec(l.s),after=m?l.s.slice(m[0].length):'';return capOK(l)&&!/^[a-z]/.test(after)&&!/^(and|or|in|of|to|for|shows?|lists?|provides?|summariz|presents?)\b/i.test(after)&&l.x0>=b[0]-12&&l.x0<b[2]-40&&((l.y<=b[3]+2&&l.y>=b[3]-34)||(l.y>b[3]&&l.y<b[3]+30)||(l.y<b[1]&&l.y>b[1]-30))});
+        if(!cands.length)return;const c=cands.sort((x,y)=>Math.abs(x.x0-b[0])-Math.abs(y.x0-b[0])||y.y-x.y)[0],m=PX.CAP.exec(c.s);
+        const kind=/^t/i.test(m[1])?'Table':/^f/i.test(m[1])?'Figure':/^c/i.test(m[1])?'Central Illustration':m[1][0].toUpperCase()+m[1].slice(1).toLowerCase();
+        let box=[b[0],Math.min(b[1],c.y-3),b[2],Math.max(b[3],c.y+c.h+2)];
+        /* caption lines that wrap, and the small-print notes under a table, belong with it */
+        const rowmates=frag.filter(l=>l!==c&&Math.abs(l.y-c.y)<=Math.max(2,c.h*1.3)&&l.x0>=c.x1-1&&l.x0<b[2]&&(Math.abs(l.y-c.y)<=2||l.f===c.f)).sort((x,y2)=>(Math.abs(x.y-y2.y)>2?y2.y-x.y:x.x0-y2.x0));rowmates.forEach(l=>{box[3]=Math.max(box[3],l.y+l.h+2);box[2]=Math.max(box[2],Math.min(W,l.x1+2))});const tx=rowmates.length&&!c.s.slice(m[0].length).trim()?rowmates[0].x0:c.x0,tf=(rowmates[0]||c).f,cap=[c];let y=c.y;
+        frag.filter(l=>!rowmates.includes(l)&&l.y<c.y-2&&c.y-l.y<c.h*6&&Math.abs(l.x0-tx)<4&&l.f===tf&&Math.abs(l.h-c.h)<1.6).sort((x,y2)=>y2.y-x.y).slice(0,3).forEach(l=>{if(y-l.y<l.h*1.9){cap.push(l);y=l.y;if(c.y<b[1]||l.y<box[1])box[1]=Math.min(box[1],l.y-3)}});
+        let low=box[1];frag.filter(l=>l.y<box[1]&&l.x0>=b[0]-12&&l.x1<=b[2]+12&&l.h<body-.4).sort((x,y2)=>y2.y-x.y).forEach(l=>{if(low-l.y<l.h*2.4+4){low=l.y-3;box[1]=low}});
+        const rest=[c.s.slice(m[0].length).trim(),...rowmates.map(l=>l.s)].filter(Boolean).join(' '),more=cap.slice(1).map(l=>l.s).join(' ');
+        regions.push({kind,num:m[2]||'',box,c,capY:[c,...rowmates,...cap].map(l=>l.y),title:(rest+(more?' '+more:'')).replace(/([a-z])- ([a-z])/g,'$1-$2').trim(),capMore:''})})}
+    const inR=l=>regions.find(r=>l.y>=r.box[1]-1&&l.y<=r.box[3]+1&&l.x0>=r.box[0]-14&&l.x1<=r.box[2]+14);
+    /* A ruled box with no caption, such as a recommendation table (class, level of evidence, recommendation): kept together and
+       transcribed row by row at its place in the text. A box that only frames ordinary prose is left to be read as prose. */
+    const blocks=[];clusters.forEach(b=>{if(regions.some(r=>b[0]<r.box[2]&&r.box[0]<b[2]&&b[1]<r.box[3]&&r.box[1]<b[3]))return;const R=pdfRows(P.items,b,ink);
+      if(R.n<2||R.prose||R.multi<Math.max(2,R.n*.3))return;blocks.push({box:b,x0:b[0],x1:b[2],y:b[3],h:body,s:R.rows.join('\n'),block:1})});
+    const inB=l=>blocks.find(r=>l.y>=r.box[1]-1&&l.y<=r.box[3]+1&&l.x0>=r.box[0]-8&&l.x1<=r.box[2]+8);
+    /* ---- each region: its words, row by row, and its place on the page */
+    regions.forEach(r=>{r.rows=pdfRows(P.items,r.box,ink,r.capY).rows;
+      const pad=6;r.crop=[Math.max(0,r.box[0]-pad),Math.max(0,r.box[1]-pad),Math.min(W,r.box[2]+pad),Math.min(H,r.box[3]+pad)]});
+    regions.forEach(r=>{const cont=/\b(cont(inued|['’]d)?\.?)\b/i.test(r.title.slice(0,40)),prev=figs.find(f=>f.kind===r.kind&&f.num===r.num);
+      const part={p:P.p,box:r.crop.map(v=>Math.round(v*10)/10)};
+      if(prev&&(cont||prev.parts[prev.parts.length-1].p===P.p-1)){prev.parts.push(part);prev.rows.push(...r.rows)}
+      else if(!prev)figs.push({kind:r.kind,num:r.num,label:r.kind+(r.num?' '+r.num:''),title:r.title.replace(/\s*\(?\bcont(inued|['’]d)?\.?\)?\s*$/i,'').slice(0,220),note:r.capMore.slice(0,400),parts:[part],rows:r.rows.slice()})});
+    /* ---- running text */
+    frag=frag.filter(l=>!inR(l)&&!inB(l)&&!((l.y>H*.93||l.y<H*.055)&&l.s.length<130)&&!(l.x1-l.x0<4&&l.s.length>3)&&!/(\.\s){4,}/.test(l.s)).concat(blocks);
+    const mid=W/2,wide=l=>l.x0<mid-30&&l.x1>mid+30,left=frag.filter(l=>!wide(l)&&l.x1<=mid+12).length,right=frag.filter(l=>!wide(l)&&l.x0>=mid-12).length,two=left>6&&right>6&&(left+right)>frag.length*.6;
+    let order=[];if(two){const spans=frag.filter(wide).sort((a,b)=>b.y-a.y),cuts=[H+1,...spans.map(l=>l.y),-1];
+        for(let k=0;k<cuts.length-1;k++){if(k>0)order.push(spans[k-1]);const band=frag.filter(l=>!wide(l)&&l.y<cuts[k]&&l.y>cuts[k+1]);order.push(...band.filter(l=>(l.x0+l.x1)/2<mid).sort((a,b)=>b.y-a.y||a.x0-b.x0),...band.filter(l=>(l.x0+l.x1)/2>=mid).sort((a,b)=>b.y-a.y||a.x0-b.x0))}}
+    else order=frag.slice().sort((a,b)=>b.y-a.y||a.x0-b.x0);
+    let out='',prev=null;
+    for(const l of order){if(l.block){out+='\n\n'+l.s+'\n';prev=null;continue}const caps=l.s.length>3&&l.s.length<90&&l.s===l.s.toUpperCase()&&/[A-Z]{3}/.test(l.s),num=/^\d{1,2}(\.\d{1,2}){0,3}\.?\s+[A-Z][A-Za-z]/.test(l.s)&&l.s.length<110&&!/[.,;]$/.test(l.s),big=l.h>body+1.2&&l.s.length<140,head=(caps||num||big)&&!/^\d+$/.test(l.s);
+      if(head&&/^(references|acknowledg|author (relationships|disclosures)|appendix\b.*relationships)/i.test(l.s.replace(/^\d+(\.\d+)*\.?\s*/,''))&&P.p>NP*.4){stop=true;break}
+      const same=prev&&Math.abs(prev.x0-l.x0)<40&&prev.y-l.y>0&&prev.y-l.y<Math.max(prev.h,l.h)*1.75,samerow=prev&&Math.abs(prev.y-l.y)<=2;
+      if(head)out+=(prev&&prev.head&&same?' ':'\n\n## ')+l.s;
+      else if(!prev||prev.head)out+='\n\n'+l.s;
+      else if(samerow)out+=' '+l.s;
+      else if(same){if(/[A-Za-z]-$/.test(out)&&/^[a-z]+(?![a-z]*-)/.test(l.s))out=out.slice(0,-1)+l.s;else if(/[A-Za-z]-$/.test(out)&&/^[a-z]/.test(l.s))out+=l.s;else out+=' '+l.s}
+      else out+='\n\n'+l.s;
+      prev=l;prev.head=head}
+    text+=out+'\n';
+    regions.forEach(r=>{const f=figs.find(x=>x.kind===r.kind&&x.num===r.num);if(f&&r.kind==='Table'&&f.parts[f.parts.length-1].p===P.p)text+='\n\n### '+f.label+'. '+f.title+(f.parts.length>1?' (continued)':'')+'\n'+r.rows.join('\n')+'\n'})}
+  figs.forEach(f=>{f.content=f.rows.join(' / ').slice(0,900);delete f.rows});
+  return {text:text.replace(/\n{3,}/g,'\n\n').trim(),figs:figs.filter(f=>f.title.length>3),pages:NP,body}}
+/* One table or figure as a picture: its region of each page it runs over, stacked. */
+async function pdfCrop(doc,parts,maxW,asCanvas){const cvs=[];for(const pt of parts.slice(0,4)){const page=await doc.getPage(pt.p),b=pt.box,w=b[2]-b[0],h=b[3]-b[1],scale=Math.max(1,Math.min(3,(maxW||1100)/w)),vp=page.getViewport({scale}),full=document.createElement('canvas');full.width=Math.ceil(vp.width);full.height=Math.ceil(vp.height);
+    await page.render({canvasContext:full.getContext('2d'),viewport:vp}).promise;const c=document.createElement('canvas');c.width=Math.round(w*scale);c.height=Math.round(h*scale);c.getContext('2d').drawImage(full,Math.round(b[0]*scale),Math.round((vp.height/scale-b[3])*scale),c.width,c.height,0,0,c.width,c.height);cvs.push(c);full.width=full.height=0}
+  if(!cvs.length)return '';const out=document.createElement('canvas');out.width=Math.max(...cvs.map(c=>c.width));out.height=cvs.reduce((a,c)=>a+c.height,0)+8*(cvs.length-1);const g=out.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,out.width,out.height);let y=0;cvs.forEach(c=>{g.drawImage(c,0,y);y+=c.height+8});
+  return asCanvas?out:out.toDataURL('image/jpeg',.86)}
+
+/* ---------- Getting a PDF from the library ----------
+   The reader needs the file itself. The website downloads it from its own server. Inside Claude a file can only arrive as text
+   through a connector: a small one comes whole through the Google Drive connector, a larger one in slices through this app's own
+   connector, when that is connected and the library is turned on for the account. Failing both, the file is read as plain text. */
+const PDFJS='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+async function pdfLib(){if(!window.pdfjsLib){await loadScript(PDFJS+'pdf.min.js');window.pdfjsLib.GlobalWorkerOptions.workerSrc=PDFJS+'pdf.worker.min.js'}return window.pdfjsLib}
+const b64bytes=b=>{const bin=atob(b),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return u};
+const LIBCONN=['Doctor Companion App','Doctor Career Companion'],WHOLE=1.9e6;let sliceVia=undefined;
+async function fileBytes(fid,size){
+  if(!MCP&&WEBLIB){const r=await fetch('/api/drive/file?id='+encodeURIComponent(fid));if(r.status===401){location.replace('/account.html?next=1');throw{code:'session_expired'}}if(!r.ok)throw{code:'upstream_error',message:'That file could not be downloaded from the library.'};return new Uint8Array(await r.arrayBuffer())}
+  if(!MCP)throw{code:'unavailable'};
+  if(size&&size<=WHOLE){const p=await drive('download_file_content',{fileId:fid});if(p&&typeof p.content==='string')return b64bytes(p.content);throw{code:'upstream_error'}}
+  if(sliceVia===null)throw{code:'too_large'};
+  for(const name of (sliceVia?[sliceVia]:LIBCONN)){try{const parts=[];let off=0,total=0;
+      for(let k=0;k<120;k++){const r=await MCP.callTool(name,'library_file',{fileId:fid,offset:off},{cache:false}),q=r&&(r.payload??r.structuredContent);if(!q||typeof q.data!=='string')throw{code:'upstream_error'};
+        if(q.length){parts.push(b64bytes(q.data));off+=q.length;total+=q.length}if(q.done||!q.length)break}
+      sliceVia=name;const u=new Uint8Array(total);let at=0;parts.forEach(x=>{u.set(x,at);at+=x.length});if(!total)throw{code:'upstream_error'};return u}
+    catch(e){if(sliceVia===name)throw e}}
+  sliceVia=null;throw{code:'too_large'}}
+/* A PDF once read stays open for the session: its text, its tables and figures, and the document itself for drawing them. */
+const pdfCache=new Map(),pdfDone=new Set();
+function pdfRead(fid,size){if(pdfCache.has(fid))return pdfCache.get(fid);
+  const job=(async()=>{const lib=await pdfLib(),doc=await lib.getDocument({data:await fileBytes(fid,size)}).promise,x=await pdfExtract(doc);pdfDone.add(fid);return {doc,text:x.text,figs:x.figs,pages:x.pages}})();
+  pdfCache.set(fid,job);job.catch(()=>{if(pdfCache.get(fid)===job)pdfCache.delete(fid)});
+  if(pdfCache.size>4){const old=pdfCache.keys().next().value;const j=pdfCache.get(old);pdfCache.delete(old);Promise.resolve(j).then(v=>{try{v.doc.destroy()}catch(e){}},()=>{})}
+  return job}
+
 /* ---------- Reference library (Google Drive) ----------
    The physician's own board review text lives in a Drive folder, one subfolder per subject and one document per chapter. For a clinical
    topic the page finds the best chapter, pulls the sections that match, and hands them to the AI as the factual basis for the lesson.
@@ -568,43 +710,56 @@ const q1=s=>String(s).replace(/\\/g,'').replace(/'/g,"\\'");
 /* Libraries: the board review syllabus first, then any textbook folders added in Settings. Each is a Drive folder whose subfolders
    (to three levels) are indexed once and remembered. */
 const libList=()=>{const L=A(st.prefs.libs).filter(x=>x&&x.name);return L.length?L:[{name:st.prefs.libName||'MKSAP Database',role:'syllabus',year:''}]};
-const libSig=()=>JSON.stringify(libList().map(x=>[x.name,x.role,x.year||'']));
+const libSig=()=>JSON.stringify(['v3',libList().map(x=>[x.name,x.role,x.year||''])]);
+/* Inside a library, a folder named Guidelines (and everything under it) holds published guidelines: they are a source in their own
+   right, the authority on what they cover. If the library keeps a registry of them (a JSON file naming each guideline's label,
+   citation and status against its Drive file), that is read too, so a guideline is cited properly and a superseded one is passed over. */
 async function libInit(force){if(!LIB()||!st.prefs.lib)return null;if(st.libx&&st.libx.sig===libSig()&&!force)return st.libx;
   const roots=[],missing=[];
   for(const L of libList()){const f=await drive('search_files',{query:`title = '${q1(L.name)}' and mimeType = 'application/vnd.google-apps.folder'`,excludeContentSnippets:true,pageSize:5}),root=A(f.files)[0];if(!root){missing.push(L.name);continue}
-    const folders={};folders[root.id]=L.name;let level=[root.id];
-    for(let depth=0;depth<3&&level.length&&Object.keys(folders).length<160;depth++){const next=[];
-      for(const id of level){let tok,pages=0;do{const r=await drive('search_files',{query:`parentId = '${id}' and mimeType = 'application/vnd.google-apps.folder'`,excludeContentSnippets:true,pageSize:100,pageToken:tok});A(r.files).forEach(x=>{if(!folders[x.id]){folders[x.id]=x.title;next.push(x.id)}});tok=r.nextPageToken}while(tok&&++pages<4)}
+    const folders={},gl={};folders[root.id]=L.name;let level=[root.id];
+    for(let depth=0;depth<4&&level.length&&Object.keys(folders).length<200;depth++){const next=[];
+      for(const id of level){let tok,pages=0;do{const r=await drive('search_files',{query:`parentId = '${id}' and mimeType = 'application/vnd.google-apps.folder'`,excludeContentSnippets:true,pageSize:100,pageToken:tok});A(r.files).forEach(x=>{if(!folders[x.id]){folders[x.id]=x.title;if(gl[id]||/^(clinical |practice )*guidelines?$/i.test(String(x.title).trim()))gl[x.id]=1;next.push(x.id)}});tok=r.nextPageToken}while(tok&&++pages<4)}
       level=next}
-    roots.push({name:L.name,role:L.role==='textbook'?'textbook':'syllabus',year:String(L.year||''),root:root.id,folders})}
+    roots.push({name:L.name,role:L.role==='textbook'?'textbook':'syllabus',year:String(L.year||''),root:root.id,folders,gl:Object.keys(gl)})}
   if(!roots.length)throw{code:'no_library',message:'No Drive folder named "'+missing.join('" or "')+'" was found.'};
-  st.libx={sig:libSig(),roots,missing,t:Date.now()};saveState();return st.libx}
+  st.libx={sig:libSig(),roots,missing,t:Date.now()};saveState();
+  try{const all={};roots.forEach(R=>Object.assign(all,R.folders));const r=await drive('search_files',{query:"title contains 'registry' and title contains 'CURRENT'",excludeContentSnippets:true,pageSize:20}),f=A(r.files).find(x=>all[x.parentId]&&/json/i.test((x.mimeType||'')+(x.title||'')));
+    if(f){const j=JSON.parse(new TextDecoder('utf-8').decode(await fileBytes(f.id,Number(f.fileSize)||1))),map={};A(j&&j.sources).forEach(x=>{if(x&&x.drive_file_id)map[x.drive_file_id]={l:String(x.short_label||x.title||'').slice(0,90),c:String(x.citation||'').slice(0,120),d:String(x.doi||'').slice(0,80),o:A(x.responsible_orgs).map(String).slice(0,5).join('/'),s:String(x.status||'active').slice(0,20),y:yearOf(x.issue_date,x.published_online,x.short_label)}});
+      if(Object.keys(map).length)put('libreg',{map,name:f.title,t:Date.now()})}}catch(e){}
+  return st.libx}
+const libReg=()=>(docs.libreg&&docs.libreg.map)||{};
 const words=s=>String(s).toLowerCase().split(/[^a-z0-9]+/).filter(w=>w.length>3&&!/^(with|from|that|this|other|disease|diseases|disorders|management|evaluation|approach|common|care|medicine)$/.test(w));
-function excerpt(text,keys,max=12000){text=text.replace(/^Mark this topic completed\s*$/gm,'').replace(/^Test your knowledge:\s*\n+\s*\d+ answered of \d+ questions?\s*$/gm,'').replace(/\]\(https?:[^)]*\)/g,']').replace(/\\([<>*\[\]])/g,'$1').replace(/\n{3,}/g,'\n\n');
+function excerpt(text,keys,max=12000){text=text.replace(/^—$/gm,'-').replace(/^Mark this topic completed\s*$/gm,'').replace(/^Test your knowledge:\s*\n+\s*\d+ answered of \d+ questions?\s*$/gm,'').replace(/\]\(https?:[^)]*\)/g,']').replace(/\\([<>*\[\]])/g,'$1').replace(/\n{3,}/g,'\n\n');
   const parts=text.split(/\n(?=#{1,4} )/);if(text.length<=max)return text;
   const sc=parts.map((p,i)=>{const head=(p.split('\n')[0]||'').toLowerCase(),low=p.toLowerCase();let s=0;keys.forEach(k=>{if(head.includes(k))s+=8;s+=Math.min(6,low.split(k).length-1)});return {i,p,s:s/Math.sqrt(1+p.length/1500)+(/key points?/i.test(p)?.5:0)}});
   const pick=new Set();let len=0;[...sc].sort((a,b)=>b.s-a.s).forEach(x=>{if(len+x.p.length<=max||!pick.size){pick.add(x.i);len+=Math.min(x.p.length,max)}});
   return sc.filter(x=>pick.has(x.i)).map(x=>x.p).join('\n').slice(0,max)}
 const yearOf=(...xs)=>{for(const x of xs){const m=/\b(19[89]\d|20[0-4]\d)\b/.exec(String(x||''));if(m)return m[1]}return ''};
 async function libRef(t,focus){if(!LIB()||!st.prefs.lib)return null;
-  try{const lib=await libInit();if(!lib)return null;const owner={};lib.roots.forEach(R=>Object.entries(R.folders).forEach(([id,title])=>{if(!/backend/i.test(title))owner[id]={R,title}}));
+  try{const lib=await libInit();if(!lib)return null;const owner={},reg=libReg();lib.roots.forEach(R=>{const gl=new Set(A(R.gl));Object.entries(R.folders).forEach(([id,title])=>{if(!/backend|registry|old versions|blueprint/i.test(title))owner[id]={R,title,role:gl.has(id)?'guideline':R.role}})});
     /* A topic is not always filed where its discipline suggests (hypertension sits with the kidney chapters), so every folder of every
        library is searched. A chapter whose title names the topic wins; failing that, the few best candidates are opened and the one that
-       actually says the most about the topic is used, or none. The syllabus is the first source; a textbook chapter may join it. */
+       actually says the most about the topic is used, or none. The syllabus is the first source; the governing guideline, when the
+       library holds one, joins it as the authority on what it covers, the newest edition first; a textbook chapter may join too. */
     const home=t.sec.lib||[],keys=[...new Set(words(t.name+' '+(focus||'')))],tkeys=[...new Set(words(t.name))],cand=new Map();
     for(const term of [focus,t.name.split(/[:,(]| and /)[0]].filter(Boolean).map(x=>x.trim().slice(0,60))){
       const r=await drive('search_files',{query:`fullText contains '${q1(term)}'`,excludeContentSnippets:true,pageSize:50});
-      A(r.files).filter(f=>owner[f.parentId]&&/document|pdf|word/.test(f.mimeType||'')&&!/blueprint/i.test(f.title||'')).forEach((f,rank)=>{const o=owner[f.parentId],tw=words(f.title),hit=k=>tw.some(w=>w.startsWith(k.slice(0,5))||k.startsWith(w.slice(0,5)));
-        const isHome=o.R.role==='syllabus'&&home.some(l=>o.title.toLowerCase().startsWith(l.toLowerCase())),sc=tkeys.filter(hit).length*4+keys.filter(hit).length+(isHome?1.5:0)-rank*.05,old=cand.get(f.id);
-        if(!old||sc>old.sc)cand.set(f.id,{sc,f,titled:tkeys.some(hit),R:o.R,folder:o.title})});
+      A(r.files).filter(f=>owner[f.parentId]&&/document|pdf|word/.test(f.mimeType||'')&&!/blueprint/i.test(f.title||'')&&!(reg[f.id]&&reg[f.id].s&&!/^(active|current)$/i.test(reg[f.id].s))).forEach((f,rank)=>{const o=owner[f.parentId],g=reg[f.id],tw=words(f.title+' '+(g?g.l:'')),hit=k=>tw.some(w=>w.startsWith(k.slice(0,5))||k.startsWith(w.slice(0,5)));
+        const isHome=o.R.role==='syllabus'&&o.role!=='guideline'&&home.some(l=>o.title.toLowerCase().startsWith(l.toLowerCase())),yr=Number((g&&g.y)||yearOf(f.title))||0,sc=tkeys.filter(hit).length*4+keys.filter(hit).length+(isHome?1.5:0)+(o.role==='guideline'&&yr?Math.max(0,yr-2015)*.12:0)-rank*.05,old=cand.get(f.id);
+        if(!old||sc>old.sc)cand.set(f.id,{sc,f,titled:tkeys.some(hit),R:o.R,role:o.role,folder:o.title,g,yr,size:Number(f.fileSize)||0})});
       if([...cand.values()].some(c=>c.titled))break}
-    const read=async f=>{let text=chapterCache.get(f.id);if(text==null){text=(await drive('read_file_content',{fileId:f.id})).fileContent||'';chapterCache.set(f.id,text)}return text};
+    /* A PDF is read by the app's own reader when the file can be fetched; otherwise, and for everything else, as the plain text the library gives. */
+    const read=async c=>{const f=c.f;let text=chapterCache.get(f.id);if(text!=null)return text;
+      if(/pdf/i.test(f.mimeType||'')){try{text=(await pdfRead(f.id,c.size)).text}catch(e){text=null}}
+      if(text==null||text.length<400)text=(await drive('read_file_content',{fileId:f.id})).fileContent||'';
+      chapterCache.set(f.id,text);return text};
     const dens=x=>{const low=x.toLowerCase();return tkeys.reduce((n,k)=>n+low.split(k).length-1,0)/Math.sqrt(1+x.length/20000)};
-    const pick=async(role,max)=>{const list=[...cand.values()].filter(c=>c.R.role===role).sort((x,y)=>y.sc-x.sc);if(!list.length)return null;let best=list[0],text=await read(best.f);
-      if(!best.titled){let top=dens(text);for(const c of list.slice(1,3)){const x=await read(c.f),d=dens(x);if(d>top*1.2){top=d;best=c;text=x}}if(top<3)return null}
-      if(text.length<400)return null;return {title:best.f.title,text:excerpt(text,keys,max),fid:best.f.id,doc:/google-apps\.document/.test(best.f.mimeType||''),lib:best.R.name,role,year:best.R.year||yearOf(best.f.title,best.folder,best.R.name)}};
-    const main=t.sec.lib?await pick('syllabus',16000):null,book=await pick('textbook',main?6000:12000),first=main||book;if(!first)return null;
-    first.extra=main&&book?[book]:[];return first}
+    const pick=async(role,max)=>{const list=[...cand.values()].filter(c=>c.role===role).sort((x,y)=>y.sc-x.sc);if(!list.length)return null;let best=list[0],text=await read(best);
+      if(!best.titled){let top=dens(text);for(const c of list.slice(1,3)){const x=await read(c),d=dens(x);if(d>top*1.2){top=d;best=c;text=x}}if(top<3)return null}
+      if(text.length<400)return null;const g=best.g;return {title:(g&&g.l)||best.f.title,text:excerpt(text,keys,max),fid:best.f.id,doc:/google-apps\.document/.test(best.f.mimeType||''),pdf:pdfDone.has(best.f.id),size:best.size,lib:best.R.name,role,cite:g?[g.o,g.c,g.d?'doi '+g.d:''].filter(Boolean).join('. '):'',year:(g&&g.y)||(role==='guideline'?String(best.yr||''):best.R.year)||yearOf(best.f.title,best.folder,best.R.name)}};
+    const main=t.sec.lib?await pick('syllabus',16000):null,guide=await pick('guideline',main?9000:14000),book=await pick('textbook',main||guide?6000:12000),first=main||guide||book;if(!first)return null;
+    first.extra=[guide,book].filter(x=>x&&x!==first);return first}
   catch(e){if(e&&e.code==='no_library')toast(e.message,6000);return null}}
 /* Pictures. A chapter kept as a Google Doc carries its figures: a short title, the image, then its legend. Only a figure laid out
    exactly that way is used, so the picture, its title and its legend always come from the source together and are never re-paired. */
@@ -617,16 +772,33 @@ function parseFigures(html){const out=[],doc=new DOMParser().parseFromString(htm
     for(let k=i+1;k<=Math.min(bl.length-1,i+2);k++){if(bl[k].querySelector('img')||/^H\d$/.test(bl[k].tagName))break;const x=tx(bl[k]);if(x&&!/^expand$/i.test(x)){legend=x;break}}
     if(!title||title.length>110||/[.!?:]$/.test(title)||/^expand$/i.test(title)||legend.length<15||out.some(f=>f.title===title))return;
     out.push({title,legend:legend.slice(0,400),head,src})});return out}
-async function libFigures(fid){if(figCache.has(fid))return figCache.get(fid);let out=[];if(!LIB())return out;
-  const job=(async()=>{try{const p=await drive('download_file_content',{fileId:fid,exportMimeType:'text/html'}),html=p&&typeof p.html==='string'?p.html:p&&typeof p.content==='string'?b64utf8(p.content):'';return html?parseFigures(html):[]}catch(e){return []}})();
+async function libFigures(fid,src){src=src||{};
+  if(src.pdf){try{const X=await pdfRead(fid,src.size);return X.figs.map(f=>({pdf:1,fid,sz:src.size||0,label:f.label,title:f.title,legend:String(f.note||f.content||'').slice(0,320),head:f.label,parts:f.parts,from:src.title||'',cite:src.cite||''}))}catch(e){return []}}
+  if(figCache.has(fid))return figCache.get(fid);let out=[];if(!LIB())return out;
+  const job=(async()=>{try{const p=await drive('download_file_content',{fileId:fid,exportMimeType:'text/html'}),html=p&&typeof p.html==='string'?p.html:p&&typeof p.content==='string'?b64utf8(p.content):'';return html?parseFigures(html).map(f=>Object.assign(f,{fid})):[]}catch(e){return []}})();
   figCache.set(fid,job);out=await job;figCache.set(fid,out);return out}
+/* Every picture, table and figure the sources of one lesson offer. */
+async function refFigures(ref){if(!ref)return [];const out=[];for(const x of [ref,...A(ref.extra)]){if(x&&(x.doc||x.pdf))out.push(...await libFigures(x.fid,x))}return out.slice(0,40)}
 const figWords=f=>{const w=words(f.title);return w.length?w:[f.title.toLowerCase()]};
-const figFits=(f,seg)=>{const low=((seg.heading||'')+' '+(seg.text||'')).toLowerCase();return figWords(f).every(w=>low.includes(w.slice(0,Math.max(5,w.length-2))))};
+/* A photograph must match its segment word for word. A guideline's table or figure has a long formal title, so most of its
+   words must be there, and at least two. */
+const figFits=(f,seg)=>{const low=((seg.heading||'')+' '+(seg.text||'')).toLowerCase(),w=figWords(f),n=w.filter(x=>low.includes(x.slice(0,Math.max(5,x.length-2)))).length;return f.pdf?n>=Math.min(w.length,Math.max(2,Math.ceil(w.length*.6))):n===w.length};
+const figRef=f=>f.pdf?{pdf:1,fid:f.fid,sz:f.sz||0,label:f.label,title:f.title,legend:f.legend,parts:f.parts,from:f.from,cite:f.cite}:{fid:f.fid,title:f.title,legend:f.legend};
+const figHTML=(g,ref)=>g?(g.pdf?`<figure class="fig" data-fid="${esc(g.fid)}" data-sz="${g.sz||0}" data-pdf="${esc(JSON.stringify(g.parts))}"><div class="figimg wide"><span class="small muted">Loading ${esc(String(g.label||'the figure').toLowerCase())} from the guideline…</span></div><figcaption><b>${esc(g.label)}. ${esc(g.title)}</b><span class="tiny muted"> From ${esc(g.from||'the guideline')}${g.cite?' ('+esc(g.cite)+')':''}, page ${g.parts[0].p} of the PDF${g.parts.length>1?' and following':''}. Shown as published.</span></figcaption></figure>`
+  :`<figure class="fig" data-fid="${esc(g.fid)}" data-title="${esc(g.title)}" data-legend="${esc(g.legend)}"><div class="figimg"><span class="small muted">Loading the picture…</span></div><figcaption><b>${esc(g.title)}.</b> ${esc(g.legend)}<span class="tiny muted"> From your reference text${ref?': '+esc(ref):''}.</span></figcaption></figure>`):'';
 function hydrateFigs(){document.querySelectorAll('figure[data-fid]').forEach(el=>{if(el.dataset.done)return;el.dataset.done='1';const box=el.querySelector('.figimg');
   if(!LIB()){box.innerHTML='<span class="small muted">The picture shows where your reference library is connected.</span>';return}
+  if(el.dataset.pdf){let parts=[];try{parts=JSON.parse(el.dataset.pdf)}catch(e){}
+    pdfRead(el.dataset.fid,Number(el.dataset.sz)||0).then(X=>pdfCrop(X.doc,parts,1100)).then(url=>{if(!url)throw 0;const img=new Image();img.alt=(el.querySelector('figcaption b')||{}).textContent||'';img.src=url;box.textContent='';box.appendChild(img)}).catch(()=>{box.innerHTML='<span class="small muted">This could not be drawn from the guideline PDF just now. Its content is described in the text.</span>'});return}
   Promise.resolve(libFigures(el.dataset.fid)).then(list=>{const f=A(list).find(x=>x.title===el.dataset.title&&x.legend===el.dataset.legend);
     if(!f){box.innerHTML='<span class="small muted">The picture could not be loaded from your library just now.</span>';return}
     const img=new Image();img.alt=f.title;img.src=f.src;box.textContent='';box.appendChild(img)})})}
+/* Inside Claude, a table or figure cut from a PDF is also looked at before it is shown: it must be the item its caption names,
+   whole, and legible. Where pictures cannot be looked at, the checks made on its caption and words stand on their own. */
+async function figLooks(f){try{if(!f.pdf||WEB||!SAMPLE||!SAMPLE.limits)return null;const lim=await SAMPLE.limits();if(!lim||!lim.images)return null;
+    const X=await pdfRead(f.fid,f.sz),cv=await pdfCrop(X.doc,f.parts,900,true);if(!cv)return false;const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',.85));if(!blob)return null;
+    const r=await SAMPLE.json(`This picture was cut out of a clinical guideline PDF by a program. It is meant to be ${f.label}, titled "${f.title}". Check three things: it shows that ${/table/i.test(f.label)?'table':'figure'} and not something else; it is whole, with nothing cut off at an edge; and its text can be read. Reply with JSON only: {"ok":true or false,"why":"a few words"}`,{images:[blob],modelTier:'default',cache:false});
+    return r&&typeof r.ok==='boolean'?r.ok:null}catch(e){return null}}
 
 /* ---------- The AI ---------- */
 const ERR={not_granted:'Claude is turned off for this page. Reload it and choose Allow.',rate_limited:'The AI is busy right now. Try again in a minute.',invalid_json:'The answer came back in a broken format. Try again.',prompt_too_large:'That was too much text for one request.',refused:'The AI declined that request.',session_expired:'Your session expired. Reload the page.',unavailable:'The AI is not available in this view.'};
@@ -655,9 +827,11 @@ ${t.bp?`- This is board preparation for the ${examName()}, and the examination's
 - Where societies disagree, say so and name both positions.
 - For osteopathic, regenerative, functional and lifestyle topics, state the strength of evidence plainly (strong, moderate, limited, insufficient) and separate guideline-supported practice from investigational or unproven use.
 - For billing, coding, quality programs and EHR features, rules change yearly and vary by payer and by each organization's build. State the general rule, name the governing source (CMS, AMA CPT, NCQA, the vendor), and flag what must be confirmed locally.`;
-const refBlock=ref=>{if(!ref)return'';const src=x=>`from the physician's own library: the ${x.role==='textbook'?'textbook collection':'board review syllabus'} "${x.lib||'reference'}"${x.year?', edition year '+x.year:''}, chapter "${x.title}"`;
-  return `\n\nREFERENCE TEXT (${src(ref)}). Treat it as the primary factual basis. Teach in your own words: do not copy its sentences and do not reproduce its questions. Where a newer guideline you are confident of supersedes it, say so. Where this text does not cover what is being asked, do not stretch it: go to the highest authority instead, first the current guideline or statement of the professional society that governs the question, then the landmark trials and major secondary sources behind it, and name that source so it is clear the point did not come from this text.\n<<<\n${ref.text}\n>>>`
-    +A(ref.extra).map(x=>`\n\nSECOND SOURCE (${src(x)}). Use it for what the first source does not give: mechanism, anatomy, pathology, physical examination and background. It is not the authority on anything time-sensitive.\n<<<\n${x.text}\n>>>`).join('')};
+const refBlock=ref=>{if(!ref)return'';const src=x=>x.role==='guideline'?`a published guideline or statement kept in the physician's own library: "${x.title}"${x.cite?' ('+x.cite+')':''}${x.year?', '+x.year:''}`:`from the physician's own library: the ${x.role==='textbook'?'textbook collection':'board review syllabus'} "${x.lib||'reference'}"${x.year?', edition year '+x.year:''}, chapter "${x.title}"`;
+  const PDFN=x=>x.pdf?' Where it holds a table, each row of text is on its own line with | between cells, and a line with a single dash marks the rule between table rows; read a table row by row and never carry a value from one row into another.':'';
+  return `\n\nREFERENCE TEXT (${src(ref)}). Treat it as the primary factual basis. Teach in your own words: do not copy its sentences and do not reproduce its questions.${ref.role==='guideline'?' Take the recommendations, classes of recommendation, thresholds and criteria it gives from it, and name it when you state one.':''} Where a newer guideline you are confident of supersedes it, say so. Where this text does not cover what is being asked, do not stretch it: go to the highest authority instead, first the current guideline or statement of the professional society that governs the question, then the landmark trials and major secondary sources behind it, and name that source so it is clear the point did not come from this text.${PDFN(ref)}\n<<<\n${ref.text}\n>>>`
+    +A(ref.extra).map(x=>x.role==='guideline'?`\n\nGUIDELINE (${src(x)}). This is the guideline itself, and it is the authority on what it covers: where it and the first source differ on a recommendation, a threshold, a drug choice or a criterion, follow the guideline${x.year?' ('+x.year+')':''} unless the first source is the more recent, and say which you followed. Name it when you state one of its recommendations. Put it in your own words; do not copy its sentences.${PDFN(x)}\n<<<\n${x.text}\n>>>`
+      :`\n\nSECOND SOURCE (${src(x)}). Use it for what the first source does not give: mechanism, anatomy, pathology, physical examination and background. It is not the authority on anything time-sensitive.\n<<<\n${x.text}\n>>>`).join('')};
 const QSPEC=`Each question: a clinical vignette (age, setting, history, examination, relevant results with units), a clear lead-in, and five options A to E that are parallel and plausible, with exactly one best answer under current guidelines. Test the next step in management, the diagnosis, or the interpretation of a result, at the difficulty of the ABIM certification examination. Do not test trivia. Vary which letter is correct. The explanation says why the answer is right, naming the guideline, then gives one line on why each other option is wrong. Write original questions; never reuse one from a question bank.`;
 const QJSON=`{"stem":"","options":["","","","",""],"answer":"A","explanation":"","objective":"one-sentence educational objective","caveat":"empty unless the keyed answer rests on guidance that is uncertain, disputed or recently changed; then one sentence saying so","sources":["Organization. Guideline or statement title. Year."]}`;
 function cleanQ(q,t,extra){if(!q||typeof q!=='object'||!q.stem||!Array.isArray(q.options)||q.options.length<4)return null;const ans='ABCDE'.indexOf(String(q.answer||'').trim().toUpperCase()[0]);if(ans<0||ans>=q.options.length)return null;
@@ -697,15 +871,15 @@ async function auditLesson(t,r,ref){const out={done:false,fixed:0,flagged:0,drop
    enough to be cut short and the length a lesson can reach is not set by one reply. The check questions and the flashcards are
    written afterwards, in their own requests, from the reviewed text: they take nothing from the lesson's length and are checked on their own. */
 const LPART=1500,headTail=(x,n)=>{const w=String(x||'').trim().split(/\s+/);return w.length<=n?w.join(' '):w.slice(0,n).join(' ')+' …'};
-async function genLesson(t,len,focus,X){X=X||{};const L=LEN[len],ref=await libRef(t,focus),figs=ref&&ref.doc?await libFigures(ref.fid):[];
+async function genLesson(t,len,focus,X){X=X||{};const L=LEN[len],ref=await libRef(t,focus),figs=await refFigures(ref);
   const N=L.words<=1900?1:Math.ceil(L.words/LPART),per=Math.round(L.words/N/50)*50,label=S.busy;
   const SEG=`{"heading":"short heading","text":"spoken paragraph(s)","flag":"one sentence naming what in this segment is uncertain, disputed or possibly out of date; empty string if nothing","table":null or {"title":"","columns":["",""],"rows":[["",""]]},"figure":null or the number of one listed figure}`;
   const TAIL=`"keyPoints":["4 to 6 one-sentence take-aways"],"pitfalls":["1 to 3 common errors"],"sources":["Organization. Guideline or statement title. Year."],"uncertain":["anything the physician should verify, or empty"]`;
-  const head=`${rules(t)}${refBlock(ref)}\n\nTASK: Write a ${L.name.toLowerCase()} audio lesson of about ${L.words} words on this topic${focus?`, concentrating on: "${focus}"`:''}.${X.basis?'\n'+X.basis:''}${figs.length?'\n\nFIGURES in this chapter of the reference text, which can be shown beside a segment:\n'+figs.map((f,i)=>i+'. "'+f.title+'"'+(f.head?' (under "'+f.head+'")':'')+': '+f.legend).join('\n'):''}
+  const head=`${rules(t)}${refBlock(ref)}\n\nTASK: Write a ${L.name.toLowerCase()} audio lesson of about ${L.words} words on this topic${focus?`, concentrating on: "${focus}"`:''}.${X.basis?'\n'+X.basis:''}${figs.length?'\n\nFIGURES AND TABLES in the reference sources, which can be shown beside a segment exactly as published:\n'+figs.map((f,i)=>i+'. '+(f.pdf?f.label+', "'+f.title+'"'+(f.from?' (from '+f.from+')':''):'"'+f.title+'"'+(f.head?' (under "'+f.head+'")':''))+': '+String(f.legend).slice(0,f.pdf?170:400)).join('\n'):''}
 It will be read aloud by a speech voice while the physician drives or rests after clinic, and shown as text for reading. Write it to be heard: the voice of a senior colleague teaching at the bedside, full sentences, no bullet lists, no tables, no symbols that read badly aloud (write "greater than or equal to", "milligrams per deciliter"), and spell out an abbreviation the first time.
 Shape: open with a two or three sentence patient case that makes the topic matter; teach the concept and the reasoning; come back to the case and work through the decision; finish with what to do differently in clinic. Do not repeat a point in different words. ${len==='short'?'Keep only the highest-yield points: what is tested and what changes management.':'Go deeper into the reasoning, the exceptions, and the evidence behind the recommendation.'}
 Tables: whenever a segment teaches something graded or laid out in levels (a staging or severity classification with numeric cut-offs, a risk score, diagnostic criteria, dose steps, screening intervals by group, or a side-by-side comparison of options), give that segment a table with the levels as rows. The table is a visual aid shown on screen and is never read aloud, so the spoken text must still carry the same content in fluent sentences for a listener who is not looking: say the levels in order in plain words, and do not refer to the table or say "as shown". Put a value in a table only if you are sure of it; if a cut-off is uncertain or differs between guidelines, say so in the flag. Use null when a segment has nothing tabular.
-Figures: if figures are listed above and a segment teaches the appearance of exactly the condition or finding named in a figure's title and legend, set that segment's "figure" to that figure's number; otherwise null. Never attach a figure as a loose illustration of a related condition, and use each figure once. In a segment that has a figure, say in the spoken text what the picture shows (where on the body, the colour, shape and surface, and the feature that makes the diagnosis), in words taken from its legend, because a listener may not be looking; do not say "as shown" or "in the picture".`;
+Figures: if figures are listed above and a segment teaches the appearance of exactly the condition or finding named in a figure's title and legend, set that segment's "figure" to that figure's number; otherwise null. Never attach a figure as a loose illustration of a related condition, and use each figure once. In a segment that has a figure, say in the spoken text what the picture shows (where on the body, the colour, shape and surface, and the feature that makes the diagnosis), in words taken from its legend, because a listener may not be looking; do not say "as shown" or "in the picture". A listed table or figure from a guideline may be attached the same way to the one segment that teaches exactly what it sets out (a recommendation table, a classification, an algorithm): the spoken text must still state its content in full sentences, and must agree with it.`;
   let r=null;const segs=[];let outline=[],short='';
   for(let k=0;k<N;k++){const lastP=k===N-1;if(N>1&&label){S.busy=label.replace(/…$/,'')+' (part '+(k+1)+' of '+N+')…';render()}
     const task=N===1?`\n\nReply with JSON only: {"title":"","segments":[${SEG}],${TAIL}}\nUse 4 to 7 segments.`
@@ -719,12 +893,13 @@ Figures: if figures are listed above and a segment teaches the appearance of exa
   /* A figure is kept only if the AI chose it, its title words are actually in that segment, no other segment uses it, and the review agrees. */
   const used=new Set();r.segments.forEach(sg=>{const i=typeof sg.figure==='number'?sg.figure:parseInt(sg.figure,10),f=figs[i];sg.fig=f&&!used.has(i)&&figFits(f,sg)?(used.add(i),f):null});
   const id=uid(),rv=await auditLesson(t,r,ref);
-  r.segments.forEach(sg=>{if(sg.fig&&(st.prefs.audit?!(rv.done&&sg.figOk===true):false))sg.fig=null;if(sg.fig&&!figFits(sg.fig,sg))sg.fig=null});rv.figs=r.segments.filter(sg=>sg.fig).length;
-  const les={id,tid:t.id,len,min:L.min,rev:rv,parent:X.from||'',deeper:X.from?1:0,focus:focus||'',title:String(r.title||t.name),segs:r.segments.map(s=>({h:String(s.heading||''),x:String(s.text||''),f:String(s.flag||'').trim(),fx:String(s.fixed||''),tb:cleanTable(s.table),fig:s.fig?{fid:ref.fid,title:s.fig.title,legend:s.fig.legend}:null})),pts:A(r.keyPoints).map(String),pit:A(r.pitfalls).map(String),src:A(r.sources).map(String),unc:A(r.uncertain).map(String).filter(x=>x&&!/^(none|n\/a|nothing|empty)\b/i.test(x.trim())),qids:[],ref:ref?ref.title:'',t:Date.now()};
+  r.segments.forEach(sg=>{if(sg.fig&&(st.prefs.audit?!(rv.done&&sg.figOk===true):false))sg.fig=null;if(sg.fig&&!figFits(sg.fig,sg))sg.fig=null});
+  if(st.prefs.audit)for(const sg of r.segments){if(sg.fig&&sg.fig.pdf&&(await figLooks(sg.fig))===false)sg.fig=null}rv.figs=r.segments.filter(sg=>sg.fig).length;
+  const les={id,tid:t.id,len,min:L.min,rev:rv,parent:X.from||'',deeper:X.from?1:0,focus:focus||'',title:String(r.title||t.name),segs:r.segments.map(s=>({h:String(s.heading||''),x:String(s.text||''),f:String(s.flag||'').trim(),fx:String(s.fixed||''),tb:cleanTable(s.table),fig:s.fig?figRef(s.fig):null})),pts:A(r.keyPoints).map(String),pit:A(r.pitfalls).map(String),src:A(r.sources).map(String),unc:A(r.uncertain).map(String).filter(x=>x&&!/^(none|n\/a|nothing|empty)\b/i.test(x.trim())),qids:[],ref:ref?ref.title:'',t:Date.now()};
   if(short)les.unc.unshift(short);
   /* Two check questions and a few cards, each from its own request against the reviewed lesson. A failure here never costs the lesson. */
   if(label){S.busy=label.replace(/…$/,'')+' (check questions and cards)…';render()}
-  const [qr]=await Promise.all([genQuestions(t,2,focus,null,{basis:basisQ(les),les:id,quiet:1}).catch(()=>null),genCards(t,4,focus,basisC(les)).catch(()=>null)]);
+  const [qr]=await Promise.all([genQuestions(t,2,focus,null,{basis:basisQ(les),les:id,quiet:1}).catch(()=>null),genCards(t,4,focus,basisC(les),les.segs.map(x=>x.fig).filter(Boolean)).catch(()=>null)]);
   if(qr)les.qids=qr.qs.map(q=>q.id);if(label)S.busy=label;
   put('les_'+id,les);st.lessons.push({id,tid:t.id,title:les.title,len,min:L.min,t:les.t,deeper:X.from?1:0});while(st.lessons.length>80){del('les_'+st.lessons.shift().id)}
   const s=tS(t.id);s.les++;s.last=Date.now();day().les++;saveState();return les}
@@ -742,19 +917,19 @@ const inScope=(t,sc)=>!!t&&(sc==='all'||sc==='tr:'+t.sec.track.id||sc==='sec:'+t
 const cardsIn=sc=>allCards().filter(c=>inScope(TOP[c.tid],sc));
 const dueCards=sc=>cardsIn(sc||'all').filter(c=>c.n&&c.due<=Date.now());
 const scopeName=sc=>sc==='all'?'Everything':sc.startsWith('tr:')?TRACKS.find(t=>t.id===sc.slice(3)).name:sc.startsWith('sec:')?SEC[sc.slice(4)].name:TOP[sc.slice(4)].name;
-function addCards(t,list,ref){const d=deck(t.sec.id),have=new Set(d.cards.map(c=>slug(c.f))),out=[];
-  (Array.isArray(list)?list:[]).forEach(x=>{const f=String((x&&x.front)||'').trim(),b=String((x&&x.back)||'').trim();if(!f||!b||have.has(slug(f)))return;have.add(slug(f));const c={id:uid(),tid:t.id,f,b,src:String((x&&x.source)||''),cav:String((x&&x.caveat)||'').trim(),ref:ref||'',t:Date.now(),v:0,n:0,conf:0,due:0,ivl:0};d.cards.push(c);out.push(c)});
+function addCards(t,list,ref,figs){const d=deck(t.sec.id),have=new Set(d.cards.map(c=>slug(c.f))),out=[];
+  (Array.isArray(list)?list:[]).forEach(x=>{const f=String((x&&x.front)||'').trim(),b=String((x&&x.back)||'').trim();if(!f||!b||have.has(slug(f)))return;have.add(slug(f));const c={id:uid(),tid:t.id,f,b,src:String((x&&x.source)||''),cav:String((x&&x.caveat)||'').trim(),ref:ref||'',t:Date.now(),v:0,n:0,conf:0,due:0,ivl:0};const fg=figs&&x.figure!=null&&x.figure!==''?figs[Number(x.figure)]:null;if(fg&&figFits(fg,{heading:f,text:b}))c.fig=fg;d.cards.push(c);out.push(c)});
   if(out.length)saveDeck(t.sec.id);return out}
 function rateCard(c,r){const iv=c.ivl||0;c.conf=r;c.n=(c.n||0)+1;c.last=Date.now();CS=null;
   c.ivl=r===1?0:r===2?1:r===3?Math.max(2,Math.round(iv*1.3)):r===4?Math.max(4,Math.round(iv*2.2)):Math.max(7,Math.round(iv*3.2));
   /* A card on a topic the record shows as weak comes back sooner: up to half the usual gap. */
   const k=1-.5*need(c.tid);c.due=Date.now()+(r===1?6e5:Math.max(1,c.ivl*k)*864e5);c.k=Math.round(k*100)/100;saveDeck(TOP[c.tid].sec.id)}
 function pullCards(tid,days){const lim=Date.now()+days*864e5;let n=0;deck(TOP[tid].sec.id).cards.forEach(c=>{if(c.tid===tid&&c.n&&c.due>lim){c.due=lim;n++}});if(n)saveDeck(TOP[tid].sec.id);return n}
-async function genCards(t,n,focus,basis){const ref=await libRef(t,focus),seen=deck(t.sec.id).cards.filter(c=>c.tid===t.id).slice(-30).map(c=>c.f);
-  const r=await ask(`${rules(t)}${refBlock(ref)}\n\nTASK: Write ${n} flashcards on this topic${focus?`, concentrating on: "${focus}"`:''}. ${CSPEC}${basis?'\n'+basis+'\n':''} Cover different facts across the topic, favoring what is tested on the ABIM examination and what changes management in clinic.${seen.length?'\nAlready in the deck, so write different cards: '+seen.join(' | '):''}\n\nReply with JSON only: {"cards":[{"front":"","back":"","source":"Organization and year, if a guideline backs it","caveat":"empty unless the answer is uncertain, disputed or recently changed; then one sentence"}]}`);
+async function genCards(t,n,focus,basis,figs){figs=A(figs);const ref=await libRef(t,focus),seen=deck(t.sec.id).cards.filter(c=>c.tid===t.id).slice(-30).map(c=>c.f);
+  const r=await ask(`${rules(t)}${refBlock(ref)}\n\nTASK: Write ${n} flashcards on this topic${focus?`, concentrating on: "${focus}"`:''}. ${CSPEC}${basis?'\n'+basis+'\n':''}${figs.length?'\nTABLES AND FIGURES shown in that lesson: '+figs.map((f,i)=>i+'. '+(f.label?f.label+': ':'')+f.title).join(' | ')+'. When what a card asks is answered by exactly one of these, set that card\'s "figure" to its number so it is shown with the answer; otherwise leave it null.\n':''} Cover different facts across the topic, favoring what is tested on the ABIM examination and what changes management in clinic.${seen.length?'\nAlready in the deck, so write different cards: '+seen.join(' | '):''}\n\nReply with JSON only: {"cards":[{"front":"","back":"","source":"Organization and year, if a guideline backs it","caveat":"empty unless the answer is uncertain, disputed or recently changed; then one sentence"${figs.length?',"figure":null':''}}]}`);
   let list=A(r.cards).filter(x=>x&&x.front&&x.back);if(!list.length)throw{code:'invalid_json'};
   if(st.prefs.audit){try{const a=await ask(`${rules(t)}${refBlock(ref)}\n\nYou are checking flashcards for accuracy against current guidelines${ref?' and the reference text':''}. Reject any card whose answer is wrong, outdated, or only sometimes true. Be strict.\n\nCARDS:\n${JSON.stringify(list.map((c,i)=>({i,front:c.front,back:c.back})))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject"}]}`);const bad=new Set(A(a.reviews).filter(x=>x.verdict==='reject').map(x=>x.i));list=list.filter((c,i)=>!bad.has(i))}catch(e){}}
-  return addCards(t,list,ref?ref.title:'')}
+  return addCards(t,list,ref?ref.title:'',figs)}
 function startDeck(cards,title){if(!cards.length)return toast('No cards here yet. Write some new ones.');P.stop();S.deck={ids:cards.map(c=>c.id),i:0,flip:false,title,seen:0};S.clist=false;beginAct('cards',new Set(cards.map(c=>c.tid)).size===1?cards[0].tid:'',title);render();scrollTo(0,0)}
 const findC=id=>allCards().find(c=>c.id===id);
 const shuffle=a=>a.map(x=>[Math.random(),x]).sort((p,q)=>p[0]-q[0]).map(x=>x[1]);
@@ -773,6 +948,7 @@ function vCard(){const D=S.deck;if(D.i>=D.ids.length)return `<div class="card"><
   const c=findC(D.ids[D.i]),t=TOP[c.tid];
   return `<div class="row between"><button class="btn link" data-act="cexit">← End</button><span class="chip num">${D.i+1} / ${D.ids.length}</span></div>
   <button class="flash" data-act="cflip" aria-label="${D.flip?'Card, answer showing':'Card, tap to show the answer'}"><span class="eyebrow">${esc(t.sec.name)} · ${esc(t.name)}</span><span>${esc(c.f)}</span>${D.flip?`<span class="a">${esc(c.b)}</span>${c.cav?`<span class="caveat"><b>Uncertain.</b> ${esc(c.cav)}</span>`:''}${c.src||c.ref?`<span class="tiny muted" style="font-family:var(--ui)">${esc([c.src,c.ref].filter(Boolean).join(' · '))}</span>`:''}`:'<span class="small muted" style="font-family:var(--ui);margin-top:auto">Tap to show the answer</span>'}</button>
+  ${D.flip&&c.fig?figHTML(c.fig,c.ref):''}
   ${D.flip?`<div class="plain"><span class="eyebrow">How confident were you?</span><div class="conf">${CONF.map(([v,l])=>`<button data-conf="${v}"><b>${v}</b>${l}</button>`).join('')}</div></div>`:''}
   <div class="row">${TTS?'<button class="btn sm" data-act="csay">Listen</button>':''}<button class="btn sm" data-act="cskip">Skip</button><button class="btn sm danger" data-act="cdel">Remove this card</button></div>
   <div class="meter"><i style="width:${pct(D.i,D.ids.length)}%"></i></div>`}
@@ -979,7 +1155,7 @@ function vLesson(){const L=S.lesson,t=TOP[L.tid],ss=S.session,qs=L.qids.map(find
   return `<div class="row between"><button class="btn link" data-act="closelesson">← ${ss?'End session':'Back'}</button>${ss?`<span class="chip">Lesson ${ss.i+1} of ${ss.plan.length}${ss.next?' · next is ready':ss.i+1<ss.plan.length?' · writing the next one':''}</span>`:''}</div>
   <div class="plain"><span class="eyebrow">${esc(t?t.sec.name+' · '+t.name:'')}</span><h1>${esc(L.title)}</h1>
    <div class="row"><button class="btn pri" data-act="listen">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} ${P.on?'Restart audio':'Listen'}</button><span class="small muted">${L.rev?`<span class="chip ${L.rev.done?'good':'off'}" style="margin-right:6px">${L.rev.done?(L.rev.fixed?L.rev.fixed+' correction'+(L.rev.fixed>1?'s':'')+' made at review':'Passed accuracy review'):'Not reviewed'}</span>`:''}${LEN[L.len].name} · about ${L.min||LEN[L.len].min} min${L.ref?' · grounded in your library: '+esc(L.ref):''}</span></div></div>
-  <div class="lesson">${L.segs.map((x,i)=>`<section data-seg="${i}">${x.h?`<h3>${esc(x.h)}</h3>`:''}${x.x.split(/\n+/).map(p=>`<p>${esc(p)}</p>`).join('')}${x.fig?`<figure class="fig" data-fid="${esc(x.fig.fid)}" data-title="${esc(x.fig.title)}" data-legend="${esc(x.fig.legend)}"><div class="figimg"><span class="small muted">Loading the picture…</span></div><figcaption><b>${esc(x.fig.title)}.</b> ${esc(x.fig.legend)}<span class="tiny muted"> From your reference text${L.ref?': '+esc(L.ref):''}.</span></figcaption></figure>`:''}${tableHTML(x.tb)}${x.fx?`<p class="tiny muted" style="font-family:var(--ui)">Corrected at review: ${esc(x.fx)}</p>`:''}${x.f?`<p class="caveat"><b>Uncertain.</b> ${esc(x.f)}${x.f.length===400&&!/[.!?…]$/.test(x.f)?'…':''}</p>`:''}</section>`).join('')}</div>
+  <div class="lesson">${L.segs.map((x,i)=>`<section data-seg="${i}">${x.h?`<h3>${esc(x.h)}</h3>`:''}${x.x.split(/\n+/).map(p=>`<p>${esc(p)}</p>`).join('')}${figHTML(x.fig,L.ref)}${tableHTML(x.tb)}${x.fx?`<p class="tiny muted" style="font-family:var(--ui)">Corrected at review: ${esc(x.fx)}</p>`:''}${x.f?`<p class="caveat"><b>Uncertain.</b> ${esc(x.f)}${x.f.length===400&&!/[.!?…]$/.test(x.f)?'…':''}</p>`:''}</section>`).join('')}</div>
   ${L.pts.length?`<div class="card" data-seg="pts"><h3>Key points</h3><ul class="pts">${L.pts.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>${L.pit.length?`<h3>Pitfalls</h3><ul class="pts">${L.pit.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>`:''}</div>`:''}
   ${L.unc.length?`<div class="note" data-seg="unc"><b>Verify before relying on it.</b><ul class="pts">${L.unc.map(p=>`<li>${esc(p)}</li>`).join('')}</ul></div>`:''}
   ${qs.map((q,n)=>`<div class="card" data-seg="q${n}"><span class="eyebrow">Check question ${n+1}</span>${qBody(q,S.lq&&S.lq[q.id])}</div>`).join('')}
@@ -1102,7 +1278,7 @@ function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h
     ${libList().map((L,i)=>`<div class="row" style="align-items:flex-end;border-top:1px solid var(--line);padding-top:10px"><label class="f" style="flex:2;min-width:170px">Drive folder name<input type="text" data-libf="name" data-i="${i}" id="lib-name-${i}" value="${esc(L.name)}"></label><label class="f" style="min-width:130px">Kind<select data-libf="role" data-i="${i}" id="lib-role-${i}"><option value="syllabus" ${L.role!=='textbook'?'selected':''}>Board syllabus</option><option value="textbook" ${L.role==='textbook'?'selected':''}>Textbooks</option></select></label><label class="f" style="min-width:96px;max-width:120px">Edition year<input type="text" inputmode="numeric" data-libf="year" data-i="${i}" id="lib-year-${i}" value="${esc(L.year||'')}" placeholder="e.g. 2024"></label>${libList().length>1?`<button class="btn sm" data-act="libdel" data-i="${i}">Remove</button>`:''}</div>`).join('')}
     <div class="row"><button class="btn" data-act="libadd">Add a folder</button><button class="btn pri" data-act="libcheck">${st.libx?'Rescan':'Connect and scan'}</button></div>
     ${st.libx?`<p class="small muted">${st.libx.roots.map(R=>esc(R.name)+': '+Object.keys(R.folders).length+' folder'+(Object.keys(R.folders).length>1?'s':'')).join(' · ')}${A(st.libx.missing).length?' · not found: '+st.libx.missing.map(esc).join(', '):''}</p>`:''}
-    <p class="small muted">The board syllabus is the first source for clinical topics; a textbook chapter is added as a second source for mechanism and background. Anything time-sensitive follows the most recent source, so give each folder its edition year. Works best with one document per chapter (a Google Doc or a PDF) inside subject folders: a whole book in one large file can only be read in part. Pictures come from Google Docs only.</p>`:''}</div>
+    <p class="small muted">The board syllabus is the first source for clinical topics; a textbook chapter is added as a second source for mechanism and background. Anything time-sensitive follows the most recent source, so give each folder its edition year. Works best with one document per chapter (a Google Doc or a PDF) inside subject folders: a whole book in one large file can only be read in part. A folder named Guidelines is read as published guidelines: each PDF is read by the app's own reader, which follows the columns, transcribes tables row by row, and can show a table or figure exactly as published beside the lesson that teaches it. Photographs come from Google Docs.</p>`:''}</div>
   <div class="card"><h3>How far to trust it</h3><p class="small">Lessons and questions are written by AI ${WEB&&WEBAI!=='claude'?'(Cloudflare Workers AI on this website; Claude inside the Claude app)':'(Claude)'} from its training and, where connected, your own reference text. It has no live access to journals or society websites from inside this app, so a guideline published recently may be missing. Each lesson names its sources and lists what to verify. Flag any question you find wrong and it leaves your statistics.</p></div>
   ${backupCard()}
    ${WEB?'<div class="card"><div class="row"><a class="btn sm" href="/account.html">Account</a></div></div>':''}`}
