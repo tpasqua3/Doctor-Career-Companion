@@ -3,9 +3,9 @@
 A continuing-education and career app for one physician, built to be listened to. It writes lessons and board-style questions with AI, reads them aloud, tracks what has been mastered and what is slipping, and decides what to study next.
 
 - **The app** (`app/companion.html`) is published as an artifact in Claude. Claude writes the lessons, questions, tutor answers and career plans.
-- **The server** (`src/worker.js`, a Cloudflare Worker with a D1 database) holds accounts and the study record. The app inside Claude reaches it through a connector at `/mcp/<token>`.
-- **The website** runs the same app at `/` (`public/index.html`, built from `app/companion.html` by `python3 tools/build.py`). Its AI is `/api/ai`: Cloudflare Workers AI through the `AI` binding (reasoning models first), or Claude if an `ANTHROPIC_API_KEY` secret is set. `AI_DAILY` caps requests per account per day (default 200). With the key set, `AI_MODEL` and `AI_MODEL_QUICK` pick the Claude models (defaults `claude-sonnet-5-5` and `claude-haiku-4-5-20251001`).
-- **The account page** (`public/account.html`): sign up, reset a password, make the connector link, download a backup.
+- **The server** (`src/worker.js`, a Cloudflare Worker with a D1 database) holds accounts and the working copy of every study record, and copies each record into that account's own folder in Google Drive. The app inside Claude reaches it through a connector at `/mcp/<token>`.
+- **The website** runs the same app at `/` (`public/index.html`, built from `app/companion.html` by `python3 tools/build.py`). Its AI is `/api/ai`, which can use three services: Gemini (`GEMINI_API_KEY`), Claude (`ANTHROPIC_API_KEY`) and Cloudflare Workers AI (the `AI` binding). The user picks one in the Ask panel or under Settings; when it is over its limit the next in `AI_ORDER` (default gemini, claude, llama) answers and the app says so. `AI_DAILY` caps requests per account per service per day (default 200; `AI_DAILY_GEMINI` and so on for one service). Models: `GEMINI_MODEL`, `GEMINI_MODEL_QUICK`, `AI_MODEL`, `AI_MODEL_QUICK`, `LLAMA_MODEL`. Inside Claude the app uses Claude and can send requests to the other services through the connector (`ask_ai`).
+- **The account page** (`public/account.html`): sign up, reset a password, make the connector link, download a backup, see what is copied to Drive. The owner connects Google Drive and sees every account's status there.
 
 After changing `app/companion.html`, run `python3 tools/build.py` before committing.
 
@@ -36,14 +36,17 @@ Content is generated, not hand-written. The prompts require named guidelines, fo
 
 Cloudflare dashboard → Workers & Pages → Create → Import a repository → this repo. Every push to `main` deploys. The D1 database is created on the first deploy. Optional: a `SIGNUP_CODE` secret limits sign-up to people who are given that code (without it, anyone with the address can create an account and use the site's AI allowance). Optional: a `RESEND_API_KEY` secret (and `MAIL_FROM`) turns on password reset by email.
 
-### Reference library on the website (optional)
+### Google Drive: the knowledge folder and the account folders
 
-Inside Claude the app reads the user's Google Drive through Claude's connector. The website reads Drive through a Google service account instead, and only the folders shared with it:
+The server touches two Drive folders, set by id in `wrangler.jsonc`:
 
-1. In Google Cloud, create a project, enable the Google Drive API, create a service account and download a JSON key for it.
-2. In Cloudflare, add two secrets to this Worker: `GOOGLE_SERVICE_ACCOUNT` (the whole contents of the key file) and `LIBRARY_EMAILS` (the account emails allowed to use the library, comma separated; `*` for everyone).
-3. In Google Drive, share each library folder with the service account's email address as a Viewer.
+- `DRIVE_KNOWLEDGE_FOLDER`: the reference library. Read only. Every file asked for is checked to sit inside this folder before it is read. `LIBRARY_EMAILS` (a secret) lists the account emails that may read it, or `*` for every account.
+- `DRIVE_ACCOUNTS_FOLDER`: one subfolder per account, made when the account is created: `account.json`, `records/` (one file per record) and `backups/` (one dated file per day of activity, newest 14 kept). D1 stays the copy the app reads; each save is copied to Drive after the reply, and a five-minute timer copies whatever is waiting.
 
-Google Docs are read as text and their figures shown; PDFs and other files are converted with Workers AI. Text is read when needed and never written to the database.
+Accounts are kept apart by the server, not by the AI: the account comes from the login or connector link, its folder comes from its own row in D1, and no request names a folder. AI services hold no Google credential. When Gemini is allowed to look things up (the Ask companion), the server runs each lookup against the caller's rows only.
+
+Setup: in Google Cloud create an OAuth client (type Web application) with the redirect address `https://<your site>/api/google/callback`, enable the Drive API, and add the secrets `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` and `OWNER_EMAIL`. Then log in as the owner and press Connect Google Drive on the account page. The token is kept encrypted in D1. A `GOOGLE_SERVICE_ACCOUNT` key still works for reading the library, but Google does not let a service account keep files in a personal Drive, so it cannot write account folders.
+
+Google Docs are read as text and their figures shown; PDFs and other files are converted with Workers AI. Library text is read when needed and never written to the database.
 
 Then, on the site's account page, make a connector link and add it in Claude as a custom connector named **Doctor Career Companion**.

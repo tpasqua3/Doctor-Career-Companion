@@ -9,8 +9,22 @@
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*"] },
   // No database_id: wrangler creates the database on the first deploy and reuses it afterwards.
   "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }],
-  // The app on the website asks Cloudflare Workers AI (reasoning models first). Set an ANTHROPIC_API_KEY secret to use Claude instead.
-  "ai": { "binding": "AI" }
-  // The reference library on the website: add a GOOGLE_SERVICE_ACCOUNT secret (the whole JSON key of a Google service account that the
-  // library folders in Drive are shared with) and a LIBRARY_EMAILS secret (the account emails allowed to use it, comma separated).
+  // The website's AI. Three services, each on when its setting is there: Gemini (GEMINI_API_KEY secret), Claude (ANTHROPIC_API_KEY
+  // secret) and Cloudflare Workers AI (this binding). The app picks one; the others take over when it is over its limit.
+  "ai": { "binding": "AI" },
+  // Every five minutes: copy any record still waiting into its account's folder in Google Drive, and write the day's backups.
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "vars": {
+    // The two Google Drive folders this server may touch, by folder id (the last part of the folder's address in Drive).
+    // "Medical Knowledge Database": read only, shared by every account the library is turned on for.
+    "DRIVE_KNOWLEDGE_FOLDER": "1-ZjgpyMvbZ3xT1LtjJd_UjfM3ZOXWVCy",
+    // "Doctor Companion App Account-level Data": one subfolder per account, written by this server.
+    "DRIVE_ACCOUNTS_FOLDER": "166xPHCup9T4mRoVU8efczTQ5pZgGlhYg"
+  }
+  // Secrets, added in the Cloudflare dashboard as type Secret:
+  //   GEMINI_API_KEY                the Gemini key from Google AI Studio
+  //   OWNER_EMAIL                   the account email of the site owner, the only one who may connect Google Drive
+  //   GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET   the Google sign-in the owner uses once to let this server write to Drive
+  //   LIBRARY_EMAILS                the account emails that may read the knowledge folder (comma separated, or * for every account)
+  //   GOOGLE_SERVICE_ACCOUNT        optional: a service account key, enough to read the library but not to write account folders
 }
