@@ -31,6 +31,17 @@ const LANG_OK = /^[a-z]{2,3}$/;
 const PATH_OK = /^[a-z]{2,3}\/[A-Za-z0-9_\-.~:@+]{1,120}$/;
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const str = (v, max) => typeof v === 'string' ? v.trim().slice(0, max) : '';
+/* The security question: asked after "Forgot password", and a right answer lets the password be changed with no email.
+   Only a hash of the answer is kept. Capitals, spaces and punctuation in the answer do not matter. */
+const SQ_COLS = ['sq TEXT', 'sq_salt TEXT', 'sq_hash TEXT', 'sq_fails INTEGER NOT NULL DEFAULT 0', 'sq_locked INTEGER NOT NULL DEFAULT 0'];
+const answerKey = v => (typeof v === 'string' ? v : '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '').slice(0, 200);
+function securityFields(b) {
+  const question = str(b.question, 200), answer = answerKey(b.answer);
+  return question.length < 5 ? { error: 'Enter a security question.' } : answer.length < 2 ? { error: 'Enter an answer to your security question (2 characters or more).' } : { question, answer };
+}
+const addSqCols = env => env.DB.prepare('SELECT sq FROM users LIMIT 1').first().catch(async () => {   // these columns were added later
+  for (const c of SQ_COLS) await env.DB.prepare('ALTER TABLE users ADD COLUMN ' + c).run().catch(() => { });
+});
 
 let schema;
 function init(env) {
@@ -50,6 +61,7 @@ function init(env) {
     /* Which Drive file holds each record, and the version of the record that file holds. */
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS drive_docs (user_id TEXT NOT NULL, path TEXT NOT NULL, file_id TEXT NOT NULL, synced TEXT NOT NULL, PRIMARY KEY (user_id, path))`),
   ]).then(() => env.DB.prepare('ALTER TABLE drive_accounts ADD COLUMN v INTEGER NOT NULL DEFAULT 0').run().catch(() => { }))   // added later; fails harmlessly once it is there
+    .then(() => addSqCols(env))
     .catch(e => { schema = null; throw e; });
   return schema;
 }
@@ -728,7 +740,7 @@ ${pageBody(p.text)}
 </div></body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' } });
 }
 
-const profile = u => ({ id: u.id, email: u.email, firstName: u.first || '', lastName: u.last || '' });
+const profile = u => ({ id: u.id, email: u.email, firstName: u.first || '', lastName: u.last || '', question: u.sq || '' });
 
 /* What each area holds, for the account page: how many documents and when they were last saved. */
 async function summary(env, uid) {
@@ -759,12 +771,14 @@ async function api(request, env, url, ctx) {
     if (!first) return fail(400, 'Enter your first name.');
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter a valid recovery email address.');
     if (password.length < 8 || password.length > 200) return fail(400, 'Choose a password of at least 8 characters.');
+    const sec = securityFields(body);
+    if (sec.error) return fail(400, sec.error);
     if (await env.DB.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first()) return fail(409, 'An account with that email already exists. Log in instead.');
-    const id = rand(16), salt = rand(16);
-    await env.DB.prepare('INSERT INTO users (id, email, salt, hash, first, last, created) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .bind(id, email, salt, await hashPassword(password, salt), first, last, new Date().toISOString()).run();
+    const id = rand(16), salt = rand(16), sqSalt = rand(16);
+    await env.DB.prepare('INSERT INTO users (id, email, salt, hash, first, last, created, sq, sq_salt, sq_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(id, email, salt, await hashPassword(password, salt), first, last, new Date().toISOString(), sec.question, sqSalt, await hashPassword(sec.answer, sqSalt)).run();
     syncSoon(env, ctx, id);   // the account's own folder in Drive is made now, before anything is saved in it
-    return json(profile({ id, email, first, last }), 200, { 'Set-Cookie': await startSession(env, id) });
+    return json(profile({ id, email, first, last, sq: sec.question }), 200, { 'Set-Cookie': await startSession(env, id) });
   }
   if (route === 'POST /api/login') {
     const email = str(body.email, 200).toLowerCase(), password = typeof body.password === 'string' ? body.password : '';
@@ -782,7 +796,31 @@ async function api(request, env, url, ctx) {
     return json(profile(u), 200, { 'Set-Cookie': await startSession(env, u.id) });
   }
 
-  /* Forgot password: a one-hour, single-use link to the recovery email, sent through Resend (RESEND_API_KEY secret; MAIL_FROM sets the sender). */
+  /* Forgot password, with no email involved: give the account's email, get its security question, then send the answer with a new password. */
+  if (route === 'POST /api/forgot/question' || route === 'POST /api/forgot/reset') {
+    const email = str(body.email, 200).toLowerCase();
+    if (!EMAIL_OK.test(email)) return fail(400, 'Enter the email address on your account.');
+    const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
+    if (!u) return fail(404, 'No account uses that email address.');
+    if (!u.sq || !u.sq_hash) return fail(409, 'This account has no security question yet, so its password cannot be reset here. One is set on the account page while logged in.');
+    if (route === 'POST /api/forgot/question') return json({ question: u.sq });
+    const password = typeof body.password === 'string' ? body.password : '';
+    if (u.sq_locked > Date.now()) return fail(429, 'Too many wrong answers. Try again in a few minutes.');
+    if (!same(await hashPassword(answerKey(body.answer), u.sq_salt), u.sq_hash)) {
+      const fails = u.sq_fails + 1;
+      await env.DB.prepare('UPDATE users SET sq_fails = ?, sq_locked = ? WHERE id = ?').bind(fails >= 5 ? 0 : fails, fails >= 5 ? Date.now() + 15 * 60000 : 0, u.id).run();
+      return fail(403, 'That answer is not right.');
+    }
+    if (password.length < 8 || password.length > 200) return fail(400, 'Choose a password of at least 8 characters.');
+    const salt = rand(16);
+    await env.DB.batch([
+      env.DB.prepare('UPDATE users SET salt = ?, hash = ?, fails = 0, locked_until = 0, sq_fails = 0, sq_locked = 0 WHERE id = ?').bind(salt, await hashPassword(password, salt), u.id),
+      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(u.id),   // anyone logged in with the old password is logged out
+      env.DB.prepare('DELETE FROM resets WHERE user_id = ?').bind(u.id),
+    ]);
+    return json({ ok: true });
+  }
+  /* Forgot password by email: a one-hour, single-use link to the recovery email, sent through Resend (RESEND_API_KEY secret; MAIL_FROM sets the sender). */
   if (route === 'POST /api/forgot') {
     const email = str(body.email, 200).toLowerCase();
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter your recovery email address.');
@@ -824,6 +862,25 @@ async function api(request, env, url, ctx) {
   }
   if (!user) return fail(401, 'Log in to continue.');
 
+  if (route === 'PUT /api/password') {
+    const cur = typeof body.current === 'string' ? body.current : '', next = typeof body.next === 'string' ? body.next : '';
+    if (!same(await hashPassword(cur, user.salt), user.hash)) return fail(403, 'Your current password is not right.');
+    if (next.length < 8 || next.length > 200) return fail(400, 'Choose a password of at least 8 characters.');
+    const salt = rand(16);
+    await env.DB.batch([
+      env.DB.prepare('UPDATE users SET salt = ?, hash = ? WHERE id = ?').bind(salt, await hashPassword(next, salt), user.id),
+      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),   // other devices are logged out; this one gets a fresh session
+    ]);
+    return json({ ok: true }, 200, { 'Set-Cookie': await startSession(env, user.id) });
+  }
+  if (route === 'PUT /api/security') {   // set or change the security question; the current password is needed, as for a password change
+    if (!same(await hashPassword(typeof body.current === 'string' ? body.current : '', user.salt), user.hash)) return fail(403, 'Your current password is not right.');
+    const sec = securityFields(body);
+    if (sec.error) return fail(400, sec.error);
+    const sqSalt = rand(16);
+    await env.DB.prepare('UPDATE users SET sq = ?, sq_salt = ?, sq_hash = ?, sq_fails = 0, sq_locked = 0 WHERE id = ?').bind(sec.question, sqSalt, await hashPassword(sec.answer, sqSalt), user.id).run();
+    return json({ ok: true, question: sec.question });
+  }
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
     const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user);
