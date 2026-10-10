@@ -49,4 +49,4 @@ Setup: in Google Cloud create an OAuth client (type Web application) with the re
 
 Google Docs are read as text and their figures shown; PDFs and other files are converted with Workers AI. Library text is read when needed and never written to the database.
 
-Then, on the site's account page, make a connector link and add it in Claude as a custom connector named **Doctor Career Companion**.
+Then, on the site's account page, make a connector link and add it in Claude as a custom connector named **Doctor Companion App**.
