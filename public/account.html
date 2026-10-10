@@ -23,6 +23,8 @@ p{margin:0}
 label{display:flex;flex-direction:column;gap:4px;font-size:.85rem;font-weight:600}
 input{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:10px 12px}
 input:focus-visible,.btn:focus-visible,a:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
+.stack{display:flex;flex-direction:column;gap:10px;margin:10px 0 4px}
+details>summary{cursor:pointer;font-size:.9rem;font-weight:600;color:var(--cobalt);padding:4px 0}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .btn{font:inherit;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:9px 15px;border-radius:9px;cursor:pointer;text-decoration:none;display:inline-block}
 .btn.pri{background:var(--cobalt);border-color:var(--cobalt);color:var(--cobalt-ink)}
@@ -53,7 +55,8 @@ textarea{font:inherit;font-size:.88rem;line-height:1.5;color:var(--ink);backgrou
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LANGS={med:'Study and career record'};
-let me=null,mode='login',newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
+const SQLIST='<datalist id="sqList">'+['What was the name of your first pet?','What street did you grow up on?','What was the make of your first car?','What was the name of your elementary school?','What is your oldest cousin’s first name?'].map(q=>`<option value="${q}">`).join('')+'</datalist>';
+let fgQ=null,me=null,mode='login',newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
 const driveMsg=new URLSearchParams(location.search).get('drive')||'';
 const when=t=>t?new Date(t).toLocaleString():'never';
 const nextUrl=new URLSearchParams(location.search).has('next');
@@ -62,15 +65,20 @@ async function api(method,path,body){const r=await fetch(path,{method,headers:bo
 function auth(){
   if(resetTok)return `<h1>Choose a new password</h1><div class="card"><label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label>${msg}<div class="row"><button class="btn pri" data-act="reset">Save password</button></div></div>`;
   const su=mode==='signup',fg=mode==='forgot';
+  if(fg&&fgQ)return `<div><h1>Doctor Career Companion</h1></div><div class="card"><h2>Reset your password</h2><p class="small muted">Answer your security question, then choose a new password.</p>
+   <label>${esc(fgQ.question)}<input id="ans" autocomplete="off" maxlength="200"></label>
+   <label>New password (8 characters or more)<input id="pw" type="password" autocomplete="new-password"></label><label>New password again<input id="pw2" type="password" autocomplete="new-password"></label>
+   ${msg}<div class="row"><button class="btn pri" data-act="fgreset">Change password</button></div><div class="row small"><button class="btn link" data-mode="login">Back to log in</button></div></div>`;
   return `<div><h1>Doctor Career Companion</h1><p class="muted">Your account keeps your study record (question history, mastery by topic, lessons, career plans) whether you use the app here or inside Claude.</p></div>
   <div class="card"><h2>${su?'Create your account':fg?'Reset your password':'Log in'}</h2>
    ${su?`<div class="row"><label style="flex:1">First name<input id="first" autocomplete="given-name"></label><label style="flex:1">Last name<input id="last" autocomplete="family-name"></label></div>`:''}
    <label>${su||fg?'Recovery email':'Email'}<input id="email" type="email" autocomplete="email"></label>
-   ${su?'<span class="small muted">Used only to send you a password reset link.</span><span class="small muted">By creating an account you agree to the <a href="/terms.html">terms of service</a> and <a href="/privacy.html">privacy policy</a>.</span>':''}
+   ${su?'<span class="small muted">This is what you log in with.</span><span class="small muted">By creating an account you agree to the <a href="/terms.html">terms of service</a> and <a href="/privacy.html">privacy policy</a>.</span>':''}
    ${su?'<label>Invitation code<input id="code" autocomplete="off" placeholder="Only if you were given one"></label>':''}
-   ${fg?'':`<label>Password<input id="pw" type="password" autocomplete="${su?'new-password':'current-password'}"></label>`}
+   ${fg?'<span class="small muted">Enter the email on your account to see your security question.</span>':`<label>Password<input id="pw" type="password" autocomplete="${su?'new-password':'current-password'}"></label>`}
+   ${su?`<label>Security question<input id="sq" list="sqList" maxlength="200" autocomplete="off" placeholder="Pick one or write your own"></label><label>Answer<input id="sa" autocomplete="off" maxlength="200"></label>${SQLIST}<span class="small muted">This is what lets you set a new password if you forget this one. Capitals, spaces and punctuation in the answer do not matter.</span>`:''}
    ${msg}
-   <div class="row"><button class="btn pri" data-act="${su?'signup':fg?'forgot':'login'}">${su?'Create account':fg?'Email me a reset link':'Log in'}</button></div>
+   <div class="row"><button class="btn pri" data-act="${su?'signup':fg?'forgot':'login'}">${su?'Create account':fg?'Continue':'Log in'}</button></div>
    <div class="row small">${su?'<button class="btn link" data-mode="login">I already have an account</button>':`<button class="btn link" data-mode="signup">Create an account</button>${fg?'<button class="btn link" data-mode="login">Back to log in</button>':'<button class="btn link" data-mode="forgot">Forgot password?</button>'}`}</div></div>`}
 function home(){
   const langs=me.areas||[];
@@ -86,6 +94,9 @@ function home(){
   ${store()}${ais()}${me.owner?owner()+labour()+legal():''}
   ${msg}
   <div class="card"><h2>Account</h2><p class="small muted">${esc(me.email)} · recovery email</p>
+   <details data-box="pw"><summary>Change password</summary><div class="stack"><label>Current password<input id="cpw" type="password" autocomplete="current-password"></label><label>New password (8 characters or more)<input id="npw" type="password" autocomplete="new-password"></label><div class="row"><button class="btn" data-act="chpw">Change password</button></div></div></details>
+   <details data-box="sq"${me.question?'':' open'}><summary>Security question</summary><div class="stack"><p class="small muted">${me.question?'If you forget your password, the log-in screen asks: <b>'+esc(me.question)+'</b> A right answer lets you choose a new password. Change the question or its answer here.':'<b>No security question is set yet.</b> Without one a forgotten password cannot be reset, so set it now.'}</p>
+    <label>Security question<input id="sq" list="sqList" maxlength="200" autocomplete="off" value="${esc(me.question||'')}" placeholder="Pick one or write your own"></label><label>Answer<input id="sa" autocomplete="off" maxlength="200"></label><label>Current password<input id="sqpw" type="password" autocomplete="current-password"></label>${SQLIST}<div class="row"><button class="btn" data-act="sqsave">Save security question</button></div></div></details>
    <div class="row">${confirmDel?'<button class="btn danger" data-act="delacct">Yes, delete my account and everything saved</button><button class="btn" data-act="nodel">Keep it</button>':'<button class="btn danger" data-act="askdel">Delete account</button>'}</div></div>`}
 /* This account's own folder in Google Drive: how much of the record is there, and its dated backups. */
 function store(){const s=me.storage||{};if(!s.on)return me.owner?'':`<div class="card"><h2>Central storage</h2><p class="small muted">Your record is saved in this site's database. The copy in Google Drive is not switched on yet.</p></div>`;
@@ -124,16 +135,21 @@ function legal(){return `<div class="card"><h2>Owner: privacy policy and terms</
     <p class="small muted">Start a section with <b>## Heading</b>. Start a bullet with <b>- </b>. Leave a blank line between paragraphs. <b>**bold**</b> makes bold; <b>[words](https://address)</b> makes a link.</p>
     <div class="row"><button class="btn pri" data-act="docsave">Save and publish</button><a class="btn" href="/${doc.name}.html" target="_blank" rel="noopener">View the page</a>${doc.custom?'<button class="btn" data-act="docreset">Back to the built-in wording</button>':''}<button class="btn link" data-act="docclose">Close</button></div>`:''}</div>`}
 async function syncAll(){if(syncing)return;syncing=true;draw();try{for(let i=0;i<40;i++){const s=await api('POST','/api/storage/sync');me.storage=s;draw();if(!s.waiting||s.error)break}}catch(e){}syncing=false;draw()}
-function draw(){$('#app').innerHTML=(me?home():auth())+'<p class="small muted" style="text-align:center"><a href="/privacy.html" style="color:inherit">Privacy policy</a> · <a href="/terms.html" style="color:inherit">Terms of service</a></p>'}
+function draw(){const keep=[...document.querySelectorAll('details[data-box]')].map(d=>[d.dataset.box,d.open,[...d.querySelectorAll('input')].map(i=>i.value)]);$('#app').innerHTML=(me?home():auth())+'<p class="small muted" style="text-align:center"><a href="/privacy.html" style="color:inherit">Privacy policy</a> · <a href="/terms.html" style="color:inherit">Terms of service</a></p>';
+  keep.forEach(([k,open,vals])=>{const d=document.querySelector('details[data-box="'+k+'"]');if(!d)return;d.open=open||d.open;if(msg.includes('class="err"'))d.querySelectorAll('input').forEach((el,n)=>{el.value=vals[n]||''})})}
 const v=id=>($('#'+id)||{}).value||'';
 const show=(t,ok)=>{msg=`<div class="${ok?'ok':'err'}">${esc(t)}</div>`;draw()};
 document.addEventListener('click',async e=>{
-  const m=e.target.closest('[data-mode]');if(m){mode=m.dataset.mode;msg='';draw();return}
+  const m=e.target.closest('[data-mode]');if(m){const em=v('email');mode=m.dataset.mode;fgQ=null;msg='';draw();if(em&&$('#email')&&mode!=='signup')$('#email').value=em;return}
   const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;msg='';
   try{
     if(a==='login'){await api('POST','/api/login',{email:v('email'),password:v('pw')});if(nextUrl)return location.replace('/');return load()}
-    if(a==='signup'){await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw'),code:v('code')});if(nextUrl)return location.replace('/');return load()}
-    if(a==='forgot'){await api('POST','/api/forgot',{email:v('email')});return show('Check your email for a reset link. It works for one hour.',true)}
+    if(a==='signup'){await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw'),question:v('sq'),answer:v('sa'),code:v('code')});if(nextUrl)return location.replace('/');return load()}
+    if(a==='forgot'){const email=v('email').trim();fgQ={email,question:(await api('POST','/api/forgot/question',{email})).question};return draw()}
+    if(a==='fgreset'){const pw=v('pw');if(pw!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/forgot/reset',{email:fgQ.email,answer:v('ans'),password:pw});
+      await api('POST','/api/login',{email:fgQ.email,password:pw});fgQ=null;mode='login';if(nextUrl)return location.replace('/');await load();return show('Password changed. You are logged in.',true)}
+    if(a==='chpw'){await api('PUT','/api/password',{current:v('cpw'),next:v('npw')});return show('Password changed. Other devices have been logged out.',true)}
+    if(a==='sqsave'){me.question=(await api('PUT','/api/security',{question:v('sq'),answer:v('sa'),current:v('sqpw')})).question;return show('Security question saved.',true)}
     if(a==='reset'){await api('POST','/api/reset',{token:resetTok,password:v('pw')});location.replace('/account.html?next=1');return}
     if(a==='logout'){await api('POST','/api/logout');me=null;mode='login';draw();return}
     if(a==='mklink'){const r=await api('POST','/api/connector');newLink=r.url;return load()}
@@ -154,7 +170,7 @@ document.addEventListener('click',async e=>{
     if(a==='delacct'){await api('DELETE','/api/account');me=null;confirmDel=false;mode='login';draw();return}
   }catch(x){show(x.message)}
 });
-document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.tagName==='INPUT'){const p=document.querySelector('.btn.pri');if(p)p.click()}});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.tagName==='INPUT'){const box=e.target.closest('[data-box]'),p=(box||document).querySelector(box?'[data-act]':'.btn.pri');if(p)p.click()}});
 async function load(){try{me=await api('GET','/api/me')}catch(e){me=null}draw();if(me&&me.storage&&me.storage.on&&me.storage.waiting&&!me.storage.error)syncAll()}
 load();
 </script>
