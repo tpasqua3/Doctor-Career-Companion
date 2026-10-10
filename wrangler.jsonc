@@ -23,6 +23,8 @@
     "DRIVE_ACCOUNTS_FOLDER": "166xPHCup9T4mRoVU8efczTQ5pZgGlhYg"
   }
   // Secrets, added in the Cloudflare dashboard as type Secret:
+  //   RESEND_API_KEY                optional: turns on password reset by emailed link (MAIL_FROM sets the sender). Until it is set,
+  //                                 "Forgot password?" changes the password directly against the account's email and name.
   //   GEMINI_API_KEY                the Gemini key from Google AI Studio
   //   DEEPSEEK_API_KEY              optional: a DeepSeek key; DeepSeek then appears in the Ask chat drop-down
   //   OWNER_EMAIL                   the account email of the site owner, the only one who may connect Google Drive
