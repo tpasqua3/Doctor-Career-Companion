@@ -84,6 +84,11 @@ async function aiReply(env, messages, tier) {
    account). The three tools mirror the ones the app already uses inside Claude, so the app's library code is the same in both places.
    Text is read when a lesson needs it and held in memory for a few minutes; it is never written to the database. */
 const libraryOn = (env, user) => { if (!env.GOOGLE_SERVICE_ACCOUNT) return false; const list = String(env.LIBRARY_EMAILS || '').toLowerCase().split(/[\s,;]+/).filter(Boolean); return list.includes('*') || list.includes(String(user.email).toLowerCase()); };
+/* Why the library is off for an account, in words the owner can act on. Nothing secret is given away: only whether each setting is there. */
+const libraryWhy = (env, user) => { if (libraryOn(env, user)) return '';
+  if (!env.GOOGLE_SERVICE_ACCOUNT) return 'The GOOGLE_SERVICE_ACCOUNT secret is not set on the server' + (env.LIBRARY_EMAILS ? '.' : ', and neither is LIBRARY_EMAILS.') + ' Add it under Variables and Secrets as type Secret, then deploy.';
+  if (!env.LIBRARY_EMAILS) return 'The LIBRARY_EMAILS secret is not set on the server. Add it as type Secret with the value ' + user.email + ', then deploy.';
+  return 'LIBRARY_EMAILS is set, but it does not list this account (' + user.email + '). Set its value to exactly that address.'; };
 const libraryEmail = env => { try { return String(JSON.parse(env.GOOGLE_SERVICE_ACCOUNT).client_email || ''); } catch { return ''; } };
 class LibError extends Error { constructor(message, status = 502) { super(message); this.status = status; } }
 const b64u = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -276,7 +281,7 @@ async function api(request, env, url) {
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
     return json({ ...profile(user), ai: env.ANTHROPIC_API_KEY ? 'claude' : env.AI ? 'workers' : 'none', connector: link ? link.created : null, areas: await summary(env, user.id),
-      library: libraryOn(env, user), libraryEmail: libraryOn(env, user) ? libraryEmail(env) : '' });
+      library: libraryOn(env, user), libraryEmail: libraryOn(env, user) ? libraryEmail(env) : '', libraryWhy: libraryWhy(env, user) });
   }
   /* Connector link: a private address, one per account, that lets the app inside Claude read and save this account's record. */
   if (route === 'POST /api/connector') {
@@ -404,7 +409,7 @@ async function mcpServer(request, env, token) {
     }
     if (name === 'library_status' || name === 'library_file') {
       const u = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first(), on = !!u && libraryOn(env, u);
-      if (name === 'library_status') return out({ library: on });
+      if (name === 'library_status') return out({ library: on, why: u ? libraryWhy(env, u) : '', serviceAccount: on ? libraryEmail(env) : '' });
       if (!on) return bad('The reference library is not turned on for this account.');
       try { return out(await driveSlice(env, fileId(a.fileId), a.offset)); } catch (e) { if (e instanceof LibError) return bad(e.message); throw e; }
     }
