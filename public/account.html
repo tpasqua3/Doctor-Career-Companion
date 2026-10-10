@@ -43,6 +43,7 @@ select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid va
 .tier{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.tier b{min-width:104px;font-size:.85rem}
 td{vertical-align:top}
 .jobs{display:flex;flex-direction:column}.job{display:flex;flex-direction:column;gap:3px;padding:10px 0;border-top:1px solid var(--line)}
+textarea{font:inherit;font-size:.88rem;line-height:1.5;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:10px 12px;min-height:340px;width:100%;resize:vertical}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -82,7 +83,7 @@ function home(){
      <div class="row"><button class="btn pri" data-act="mklink">${me.connector?'Make a new link':'Make my connector link'}</button>${me.connector?'<button class="btn" data-act="offlink">Turn off</button>':''}</div>`}</div>
   <div class="card"><h2>Your record</h2>${langs.length?`<table><thead><tr><th>Area</th><th>Saved items</th><th>Last saved</th></tr></thead><tbody>${langs.map(l=>`<tr><td>${esc(LANGS[l.lang]||l.lang)}</td><td>${l.n}</td><td>${esc(new Date(l.updated).toLocaleString())}</td></tr>`).join('')}</tbody></table>`:'<p class="small muted">Nothing saved yet. Your record appears here after your first session.</p>'}
    <div class="row"><a class="btn" href="/api/backup">Download a backup</a></div></div>
-  ${store()}${ais()}${me.owner?owner()+labour():''}
+  ${store()}${ais()}${me.owner?owner()+labour()+legal():''}
   ${msg}
   <div class="card"><h2>Account</h2><p class="small muted">${esc(me.email)} · recovery email</p>
    <div class="row">${confirmDel?'<button class="btn danger" data-act="delacct">Yes, delete my account and everything saved</button><button class="btn" data-act="nodel">Keep it</button>':'<button class="btn danger" data-act="askdel">Delete account</button>'}</div></div>`}
@@ -115,6 +116,13 @@ function labour(){const h=me.hierarchy;if(!h)return '';const sel=(kind,id,cur)=>
      <span class="small">${j.order.length?'Done by '+esc(j.order.join(', then ')):'<span style="color:var(--bad)">Nobody can do this: add a key or lower the tier</span>'}${j.differ?'. Never the one that wrote it, when another is available':''}${j.pick&&j.id!=='chat'?'. The user\'s "Teaching by" choice goes first':''}.</span></div>`).join('')}</div>
    <div class="row"><button class="btn" data-act="hreset">Back to the built-in defaults</button></div></div>`}
 document.addEventListener('change',async e=>{const d=e.target.dataset||{};if(!d.h)return;try{me.hierarchy=await api('PUT','/api/admin/hierarchy',{[d.h]:{[d.id]:e.target.value}});msg='';draw()}catch(x){show(x.message)}});
+/* The owner rewrites the privacy policy and the terms of service here. */
+let doc=null;
+function legal(){return `<div class="card"><h2>Owner: privacy policy and terms</h2><p class="small muted">Both pages are plain text you can rewrite. A saved change is live within a few minutes and stamps the page with today's date.</p>
+   <div class="row"><button class="btn" data-act="doc" data-name="privacy">Edit privacy policy</button><button class="btn" data-act="doc" data-name="terms">Edit terms of service</button></div>
+   ${doc?`<label>${esc(doc.title)} ${doc.custom?'(your edited version, '+esc(doc.date)+')':'(built-in wording)'}<textarea id="doctext" spellcheck="true">${esc(doc.text)}</textarea></label>
+    <p class="small muted">Start a section with <b>## Heading</b>. Start a bullet with <b>- </b>. Leave a blank line between paragraphs. <b>**bold**</b> makes bold; <b>[words](https://address)</b> makes a link.</p>
+    <div class="row"><button class="btn pri" data-act="docsave">Save and publish</button><a class="btn" href="/${doc.name}.html" target="_blank" rel="noopener">View the page</a>${doc.custom?'<button class="btn" data-act="docreset">Back to the built-in wording</button>':''}<button class="btn link" data-act="docclose">Close</button></div>`:''}</div>`}
 async function syncAll(){if(syncing)return;syncing=true;draw();try{for(let i=0;i<40;i++){const s=await api('POST','/api/storage/sync');me.storage=s;draw();if(!s.waiting||s.error)break}}catch(e){}syncing=false;draw()}
 function draw(){$('#app').innerHTML=(me?home():auth())+'<p class="small muted" style="text-align:center"><a href="/privacy.html" style="color:inherit">Privacy policy</a> · <a href="/terms.html" style="color:inherit">Terms of service</a></p>'}
 const v=id=>($('#'+id)||{}).value||'';
@@ -136,6 +144,10 @@ document.addEventListener('click',async e=>{
     if(a==='gtest'){b.textContent='Testing…';test=await api('POST','/api/google/test',{});return load()}
     if(a==='goff'){await api('DELETE','/api/google/connect');test=null;return load()}
     if(a==='accts'){accounts=(await api('GET','/api/admin/accounts')).accounts;return draw()}
+    if(a==='doc'){doc=await api('GET','/api/admin/page?name='+b.dataset.name);return draw()}
+    if(a==='docsave'){doc=await api('PUT','/api/admin/page',{name:doc.name,text:v('doctext')});return show('Saved. The page now shows your version.',true)}
+    if(a==='docreset'){doc=await api('DELETE','/api/admin/page?name='+doc.name);return show('Back to the built-in wording.',true)}
+    if(a==='docclose'){doc=null;return draw()}
     if(a==='hreset'){me.hierarchy=await api('DELETE','/api/admin/hierarchy');return draw()}
     if(a==='askdel'){confirmDel=true;draw();return}
     if(a==='nodel'){confirmDel=false;draw();return}

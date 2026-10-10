@@ -1,12 +1,13 @@
 {
   // Doctor Career Companion server: accounts and each physician's study record in a D1 database, reached by the app inside Claude through a connector.
-  // ./public holds the website (the app at / and the account page). /api/* and /mcp/* run src/worker.js.
+  // ./public holds the website (the app at / and the account page). /api/* and /mcp/* run src/worker.js, which also writes the
+  // privacy policy and terms of service pages from text the owner can edit.
   "name": "doctor-career-companion",
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
   // Variables added in the Cloudflare dashboard are kept when a push from GitHub deploys, instead of being wiped.
   "keep_vars": true,
-  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*"] },
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*", "/privacy.html", "/terms.html", "/privacy", "/terms"] },
   // No database_id: wrangler creates the database on the first deploy and reuses it afterwards.
   "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }],
   // The website's AI. Three services, each on when its setting is there: Gemini (GEMINI_API_KEY secret), Claude (ANTHROPIC_API_KEY

@@ -578,6 +578,138 @@ async function sweep(env) {
   for (const id of ids) { if (B.n <= 6) break; await syncUser(env, id, B); }
 }
 
+/* ---------- The privacy policy and terms of service ----------
+   Both pages are plain text that the owner can rewrite on the account page. The words below are the starting versions; an edited
+   version is kept in D1 (settings, page_privacy and page_terms) and shown instead. The text uses a few simple marks:
+     ## Heading        starts a new section          - item        a bullet
+     **bold**          bold words                    [words](https://address)   a link
+   A blank line starts a new paragraph. Everything else is shown exactly as typed; HTML is not interpreted. */
+const PAGE_DATE = 'October 10, 2026';
+const PAGES = {
+  privacy: { title: 'Privacy policy', text: `## What this is
+Doctor Career Companion is a study and career development app for physicians. It is an independent personal project, offered by invitation to colleagues. This page says what the app keeps about you, where it goes, and how to remove it.
+
+The app is for study. Do not enter patient information into it.
+
+## Where lesson content comes from
+Lessons, questions and flashcards draw on a central reference library of published clinical practice guidelines from professional societies and board study resources. The library is updated regularly so that content is informed by current, authoritative sources. Each lesson names the sources it used and flags anything that should be verified.
+
+## What the app keeps
+- **Your account:** first name, last name, the email address you sign up with, and your password. The password is stored only as a salted hash and cannot be read back.
+- **Your study record:** the lessons, questions, flashcards and plans written for you, your answers and ratings, time spent, the questions you ask the study companion, your settings, and any exam report or blueprint you upload.
+- **Usage counts:** how many AI requests your account has made each day, to apply the daily allowance.
+
+The app sets one cookie, which keeps you logged in. It has no advertising and no analytics or tracking tools.
+
+## Where it is kept
+- **Cloudflare.** The site runs on Cloudflare, and your account and study record are stored in its database.
+- **Google Drive.** A copy of your study record, with dated backups, is kept in private Google Drive storage that the app uses. Your password and login tokens are never copied there. The person who runs the app can access this storage; other users cannot reach it.
+- **Your browser.** The app keeps a copy of your record and a few preferences on your device so it opens quickly and works briefly offline.
+
+## AI services
+Lessons, questions, reviews and chat answers are written by outside AI services. When you ask for one, the text of that request is sent to the service that answers it. A request can include the topic, reference text, a summary of your progress, your question and, in the Ask panel, parts of your own study record. Your password is never sent.
+
+The services in use are Google Gemini, DeepSeek, Cloudflare Workers AI and, when enabled, Anthropic Claude. DeepSeek is operated from China. Each service handles what it receives under its own terms and privacy policy. The app never gives an AI service access to another user's record.
+
+## How Google account data is used
+The app uses a single Google account, set up by the person who runs it, for its Google Drive storage. Users of the app are not asked to sign in with Google, and the app does not access any user's Google account.
+
+With that one connection the app does two things only: it reads the reference library in a single Drive folder to ground lessons, and it creates and updates each account's own folder of study records in a second Drive folder. It does not read, change or delete anything else in the connected Drive.
+
+The app's use of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements. Data obtained through Google Drive is not sold, not used for advertising, and not used to train general-purpose AI models. Reference text is passed to an AI service only to write the lesson or answer that a user asked for.
+
+## Sharing
+Your information is not sold or shared for marketing. It goes only to the services named above, to run the app, and would be disclosed otherwise only if the law required it.
+
+## Your choices
+- **Download:** the account page and the History tab give you a backup file of your whole record.
+- **Delete:** "Delete account" on the account page removes your account and study record from the database at once and moves your folder in Drive to the trash, where Google removes it after about 30 days.
+- **Ask:** write to the contact below to see, correct or remove anything held about you.
+
+## Security, age and changes
+The site is served over HTTPS, passwords are hashed, and the Google connection is stored encrypted. No system is perfectly secure, so keep your own backup of anything you would not want to lose.
+
+The app is intended for adult medical professionals and trainees, not for children.
+
+If this policy changes, the date at the top changes with it.
+
+## Contact
+Questions or requests: [tpasqua3@gmail.com](mailto:tpasqua3@gmail.com)` },
+  terms: { title: 'Terms of service', text: `## The short version
+Doctor Career Companion is a study aid for physicians, run as an independent personal project and offered by invitation. Its lessons and questions are written by AI and can be wrong. It is not medical advice and must not be used to make decisions about a patient. By creating an account you agree to these terms.
+
+## For education only
+- The app is for study, board preparation and career planning. It does not give medical advice, and nothing in it replaces current guidelines, the primary literature, your institution's policies or your own clinical judgment.
+- Content draws on a central reference library of published clinical practice guidelines and board study resources that is updated regularly. It is written by AI services and checked by a second AI pass, which reduces errors but does not remove them. Thresholds, doses, recommendations and citations can be wrong or out of date. Verify anything you intend to rely on.
+- The app is not affiliated with or endorsed by the American Board of Internal Medicine, the American College of Physicians or any professional society. Using it does not guarantee any exam result.
+- Do not enter patient information or anything that could identify a patient.
+
+## Your account
+- Accounts are for the adult medical professionals and trainees who were invited. Use your own account and keep your password and connector link private.
+- You are responsible for what is done through your account.
+- Each account has a daily allowance of AI requests, which may change.
+
+## Acceptable use
+Do not try to reach another account's data, get around the app's limits, overload or probe the service, use automated tools to extract its content, or use it for anything unlawful.
+
+## Content
+- Your study record is yours. You can download it or delete it at any time from the account page.
+- Some lessons draw on reference material that is licensed to the person who runs the app or published by professional societies. That material stays the property of its owners. Lessons, questions and cards are for your personal study: do not republish, sell or redistribute them.
+- If you upload a file, such as an exam report or a blueprint, you confirm you are allowed to use it this way.
+
+## Availability
+This is a personal project, provided free of charge. It may change, pause or stop at any time, features may be added or removed, and an account that breaks these terms may be closed. Keep your own backup of anything you would not want to lose.
+
+## No warranty, limited liability
+The app is provided "as is" and "as available", without warranties of any kind, including accuracy, fitness for a particular purpose and uninterrupted service. To the fullest extent the law allows, the person who runs the app is not liable for any loss or harm arising from use of the app or reliance on its content, including clinical decisions, exam results or lost data.
+
+## Privacy, changes and law
+How your information is handled is set out in the [privacy policy](/privacy.html).
+
+If these terms change, the date at the top changes with them, and continuing to use the app means you accept the new terms.
+
+These terms are governed by the laws of the State of Georgia, United States.
+
+## Contact
+Questions or requests: [tpasqua3@gmail.com](mailto:tpasqua3@gmail.com)` },
+};
+const escH = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/* Bold and links inside one line of already-escaped text. Only web, mail and same-site addresses become links. */
+const inlineH = t => escH(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:|\/)[^\s)]+)\)/g, '<a href="$2" rel="noopener">$1</a>');
+function pageBody(text) {
+  const out = []; let card = null, list = null, para = [];
+  const flushP = () => { if (para.length) { card.push('<p>' + para.join(' ') + '</p>'); para = []; } }, flushL = () => { if (list) { card.push('<ul>' + list.join('') + '</ul>'); list = null; } };
+  const open = h => { if (card) { flushP(); flushL(); out.push('<div class="card">' + card.join('') + '</div>'); } card = h == null ? null : [h ? '<h2>' + inlineH(h) + '</h2>' : '']; };
+  for (const raw of String(text).replace(/\r/g, '').split('\n')) {
+    const l = raw.trim(); let m;
+    if ((m = /^#{1,3}\s+(.*)$/.exec(l))) { open(m[1]); continue; }
+    if (!card) { if (!l) continue; open(''); }
+    if ((m = /^[-*•]\s+(.*)$/.exec(l))) { flushP(); (list = list || []).push('<li>' + inlineH(m[1]) + '</li>'); continue; }
+    if (!l) { flushP(); flushL(); continue; }
+    flushL(); para.push(inlineH(l));
+  }
+  open(null); return out.join('\n');
+}
+async function pageText(env, name) { const r = await setting(env, 'page_' + name).catch(() => null); let j = null; try { j = r ? JSON.parse(r) : null; } catch { } return j && j.text ? { text: j.text, date: j.date || PAGE_DATE, custom: true } : { text: PAGES[name].text, date: PAGE_DATE, custom: false }; }
+async function pageResponse(env, name) {
+  await init(env); const p = await pageText(env, name), title = PAGES[name].title;
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>${title} · Doctor Career Companion</title>
+<link rel="manifest" href="/manifest.json"><link rel="apple-touch-icon" href="/icon-192.png"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>:root{--paper:#f2f5f4;--card:#fff;--ink:#12242b;--muted:#55686f;--line:#d5dedc;--cobalt:#0d6e6a;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--paper:#0c1517;--card:#142023;--ink:#e3ecea;--muted:#93a6a6;--line:#24363a;--cobalt:#5fc9bf;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.6 "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;padding-top:env(safe-area-inset-top,0px)}
+.wrap{max-width:680px;margin:0 auto;padding-inline:16px;padding-block:28px 64px;display:flex;flex-direction:column;gap:16px}
+h1,h2{font-family:"IBM Plex Serif",Georgia,serif;margin:0;line-height:1.2}h1{font-size:1.7rem}h2{font-size:1.2rem}p{margin:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:12px;overflow-wrap:anywhere}
+.card ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}.muted{color:var(--muted)}a{color:var(--cobalt)}
+.nav{display:flex;gap:16px;flex-wrap:wrap;font-size:.9rem}</style></head><body><div class="wrap">
+<div><h1>${title}</h1><p class="muted">Doctor Career Companion · last updated ${escH(p.date)}</p></div>
+${pageBody(p.text)}
+<div class="nav"><a href="/account.html">Back to the app</a><a href="/privacy.html">Privacy policy</a><a href="/terms.html">Terms of service</a></div>
+</div></body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' } });
+}
+
 const profile = u => ({ id: u.id, email: u.email, firstName: u.first || '', lastName: u.last || '' });
 
 /* What each area holds, for the account page: how many documents and when they were last saved. */
@@ -595,7 +727,7 @@ async function api(request, env, url, ctx) {
   let body = {};
   if (request.method === 'POST' || request.method === 'PUT') {
     const text = await request.text();
-    if (text.length > (url.pathname === '/api/doc' || url.pathname === '/api/ai' || url.pathname === '/api/restore' ? MAX_DOC + 200000 : 20000)) return fail(413, 'That is too large.');
+    if (text.length > (url.pathname === '/api/doc' || url.pathname === '/api/ai' || url.pathname === '/api/restore' ? MAX_DOC + 200000 : url.pathname === '/api/admin/page' ? 70000 : 20000)) return fail(413, 'That is too large.');
     try { body = text ? JSON.parse(text) : {}; } catch { return fail(400, 'Bad request.'); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'Bad request.');
   }
@@ -731,6 +863,18 @@ async function api(request, env, url, ctx) {
       await setSetting(env, 'ai_hierarchy', JSON.stringify({ tiers, jobs }));
     }
     return json(chart(env, await hierarchy(env, true)));
+  }
+  /* The owner reads and rewrites the privacy policy and the terms of service. DELETE goes back to the built-in wording. */
+  if (url.pathname === '/api/admin/page') {
+    if (!isOwner(env, user)) return fail(403, 'Only the site owner can do that.');
+    const name = str(request.method === 'GET' || request.method === 'DELETE' ? url.searchParams.get('name') : body.name, 20);
+    if (!PAGES[name]) return fail(400, 'No such page.');
+    if (request.method === 'PUT') {
+      const text = typeof body.text === 'string' ? body.text.trim() : ''; if (text.length < 200) return fail(400, 'That is too short to be the whole page. Nothing was saved.'); if (text.length > 60000) return fail(413, 'That is too long.');
+      await setSetting(env, 'page_' + name, JSON.stringify({ text, date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/New_York' }) }));
+    } else if (request.method === 'DELETE') await setSetting(env, 'page_' + name, null);
+    else if (request.method !== 'GET') return fail(405, 'Not allowed.');
+    return json({ name, title: PAGES[name].title, ...(await pageText(env, name)) });
   }
   /* Every account and how much of it is in Drive, for the owner. Counts and folder links only: no record is read here. */
   if (route === 'GET /api/admin/accounts') {
@@ -920,6 +1064,8 @@ export default {
       try { return await mcpServer(request, env, url.pathname.slice(5).replace(/\/+$/, ''), ctx); }
       catch (e) { console.error(e); return json({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Server error' } }, 500); }
     }
+    const page = /^\/(privacy|terms)(?:\.html)?\/?$/.exec(url.pathname);
+    if (page && request.method === 'GET') { try { return await pageResponse(env, page[1]); } catch (e) { console.error(e); return new Response('This page could not be shown just now. Try again.', { status: 500 }); } }
     if (url.pathname.startsWith('/api/')) {
       try { return await api(request, env, url, ctx); }
       catch (e) { console.error(e); return fail(500, 'Something went wrong on the server. Try again.'); }
