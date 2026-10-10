@@ -65,7 +65,7 @@ function auth(){
   <div class="card"><h2>${su?'Create your account':fg?'Reset your password':'Log in'}</h2>
    ${su?`<div class="row"><label style="flex:1">First name<input id="first" autocomplete="given-name"></label><label style="flex:1">Last name<input id="last" autocomplete="family-name"></label></div>`:''}
    <label>${su||fg?'Recovery email':'Email'}<input id="email" type="email" autocomplete="email"></label>
-   ${su?'<span class="small muted">Used only to send you a password reset link.</span>':''}
+   ${su?'<span class="small muted">Used only to send you a password reset link.</span><span class="small muted">By creating an account you agree to the <a href="/terms.html">terms of service</a> and <a href="/privacy.html">privacy policy</a>.</span>':''}
    ${su?'<label>Invitation code<input id="code" autocomplete="off" placeholder="Only if you were given one"></label>':''}
    ${fg?'':`<label>Password<input id="pw" type="password" autocomplete="${su?'new-password':'current-password'}"></label>`}
    ${msg}
@@ -116,7 +116,7 @@ function labour(){const h=me.hierarchy;if(!h)return '';const sel=(kind,id,cur)=>
    <div class="row"><button class="btn" data-act="hreset">Back to the built-in defaults</button></div></div>`}
 document.addEventListener('change',async e=>{const d=e.target.dataset||{};if(!d.h)return;try{me.hierarchy=await api('PUT','/api/admin/hierarchy',{[d.h]:{[d.id]:e.target.value}});msg='';draw()}catch(x){show(x.message)}});
 async function syncAll(){if(syncing)return;syncing=true;draw();try{for(let i=0;i<40;i++){const s=await api('POST','/api/storage/sync');me.storage=s;draw();if(!s.waiting||s.error)break}}catch(e){}syncing=false;draw()}
-function draw(){$('#app').innerHTML=(me?home():auth())+'<p class="small muted" style="text-align:center"><a href="/privacy.html" style="color:inherit">Privacy policy</a></p>'}
+function draw(){$('#app').innerHTML=(me?home():auth())+'<p class="small muted" style="text-align:center"><a href="/privacy.html" style="color:inherit">Privacy policy</a> · <a href="/terms.html" style="color:inherit">Terms of service</a></p>'}
 const v=id=>($('#'+id)||{}).value||'';
 const show=(t,ok)=>{msg=`<div class="${ok?'ok':'err'}">${esc(t)}</div>`;draw()};
 document.addEventListener('click',async e=>{
