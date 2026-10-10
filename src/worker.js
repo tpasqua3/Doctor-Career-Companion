@@ -23,7 +23,9 @@ async function hashPassword(password, saltHex) {
 const json = (o, status = 200, headers = {}) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers } });
 const fail = (status, error) => json({ error }, status);
 
-const SESSION_DAYS = 30, MAX_DOC = 250000;
+/* One record can be up to about 900,000 characters: room for an hour-long lesson with its tables, or a question bank fed by sets of 30.
+   D1 holds at most 2 MB in a row. */
+const SESSION_DAYS = 30, MAX_DOC = 900000;
 const cookie = (token, age) => `dcc_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
 const LANG_OK = /^[a-z]{2,3}$/;
 const PATH_OK = /^[a-z]{2,3}\/[A-Za-z0-9_\-.~:@+]{1,120}$/;
@@ -491,7 +493,7 @@ async function api(request, env, url, ctx) {
   let body = {};
   if (request.method === 'POST' || request.method === 'PUT') {
     const text = await request.text();
-    if (text.length > (url.pathname === '/api/doc' || url.pathname === '/api/ai' || url.pathname === '/api/restore' ? 2 * MAX_DOC : 20000)) return fail(413, 'That is too large.');
+    if (text.length > (url.pathname === '/api/doc' || url.pathname === '/api/ai' || url.pathname === '/api/restore' ? MAX_DOC + 200000 : 20000)) return fail(413, 'That is too large.');
     try { body = text ? JSON.parse(text) : {}; } catch { return fail(400, 'Bad request.'); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'Bad request.');
   }
@@ -742,7 +744,7 @@ async function mcpServer(request, env, token, ctx) {
   const link = /^[a-f0-9]{64}$/.test(token) ? await env.DB.prepare('SELECT user_id FROM links WHERE token_hash = ?').bind(await sha(token)).first() : null;
   if (!link) return json({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'This connector link is not valid. Make a new one on the Doctor Career Companion account page.' } }, 401);
   const text = await request.text();
-  if (text.length > 2 * MAX_DOC) return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Request too large.' } }, 413);
+  if (text.length > MAX_DOC + 200000) return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Request too large.' } }, 413);
   let msg; try { msg = JSON.parse(text); } catch { return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, 400); }
   const uid = link.user_id;
   const one = async m => {
