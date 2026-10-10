@@ -23,6 +23,7 @@
   }
   // Secrets, added in the Cloudflare dashboard as type Secret:
   //   GEMINI_API_KEY                the Gemini key from Google AI Studio
+  //   DEEPSEEK_API_KEY              optional: a DeepSeek key; DeepSeek then appears in the Ask chat drop-down
   //   OWNER_EMAIL                   the account email of the site owner, the only one who may connect Google Drive
   //   GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET   the Google sign-in the owner uses once to let this server write to Drive
   //   LIBRARY_EMAILS                the account emails that may read the knowledge folder (comma separated, or * for every account)

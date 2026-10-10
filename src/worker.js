@@ -68,6 +68,7 @@ async function startSession(env, userId) {
    Three services can answer, each switched on by its own setting:
      gemini   Google Gemini, with a GEMINI_API_KEY secret (GEMINI_MODEL and GEMINI_MODEL_QUICK choose the models)
      claude   Anthropic Claude, with an ANTHROPIC_API_KEY secret (AI_MODEL and AI_MODEL_QUICK choose the models)
+     deepseek DeepSeek, with a DEEPSEEK_API_KEY secret (DEEPSEEK_MODEL and DEEPSEEK_MODEL_QUICK choose the models)
      llama    Cloudflare Workers AI, through the AI binding (always there)
    The app says which one it wants, or "auto". If that one has used its daily allowance for the account, is over its own limit or
    does not answer, the next one in AI_ORDER (default gemini, claude, llama) answers instead and the reply says so. Each account
@@ -83,10 +84,14 @@ async function startSession(env, userId) {
 const SERVICES = [
   { id: 'gemini', name: 'Gemini', teach: true, on: env => !!geminiKey(env), run: (env, messages, tier, tools) => gemini(env, messages, tier, tools) },
   { id: 'claude', name: 'Claude', teach: true, on: env => !!env.ANTHROPIC_API_KEY, run: (env, messages, tier) => claude(env, messages, tier) },
+  /* DeepSeek: chat only until it is cleared for teaching (set teach to true here). */
+  { id: 'deepseek', name: 'DeepSeek', teach: false, on: env => !!deepseekKey(env), run: (env, messages, tier, tools) => chatStyle(env, { name: 'deepseek', url: 'https://api.deepseek.com/chat/completions', key: deepseekKey(env),
+      models: [tier === 'quick' ? env.DEEPSEEK_MODEL_QUICK : env.DEEPSEEK_MODEL, ...(tier === 'quick' ? ['deepseek-flash', 'deepseek-v4-pro'] : ['deepseek-v4-pro', 'deepseek-flash'])] }, messages, tools) },
   { id: 'llama', name: 'Llama', teach: false, on: env => !!env.AI, run: (env, messages, tier) => llama(env, messages, tier) },
 ];
 const PROVIDERS = SERVICES.map(s => [s.id, s.name]), PNAME = Object.fromEntries(PROVIDERS), SERVICE = Object.fromEntries(SERVICES.map(s => [s.id, s]));
 /* The Gemini key, under the name it is usually saved as or one of the other common ones. */
+const deepseekKey = env => env.DEEPSEEK_API_KEY || env.DEEPSEEK_KEY || env.DEEPSEEK || '';
 const geminiKey = env => env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.GEMINI_KEY || env.GOOGLE_GEMINI_API_KEY || env.GOOGLE_AI_API_KEY || '';
 const TEACHERS = SERVICES.filter(s => s.teach).map(s => s.id);
 const hasProvider = (env, id) => !!SERVICE[id] && SERVICE[id].on(env);
@@ -171,6 +176,42 @@ async function gemini(env, messages, tier, tools) {
   }
   throw limited ? busy('gemini ' + last) : new Error('gemini ' + last);
 }
+/* Any service that speaks the widely used chat-completions format (DeepSeek today; OpenAI and others later use the same function
+   with their own address, key and model names). Account lookups work the same way as for Gemini: the model names a record or a
+   search phrase, this server runs it for the caller's account, and the answer goes back. If a service rejects the lookup tools,
+   the request is sent again without them. */
+async function chatStyle(env, svc, messages, tools) {
+  const models = svc.models.filter((m, i, a) => m && a.indexOf(m) === i);
+  let last = '', limited = false;
+  for (const model of models) {
+    for (const withTools of tools ? [true, false] : [false]) {
+      const turn = [{ role: 'system', content: AI_SYSTEM + (withTools ? TOOL_NOTE : '') }, ...messages]; let again = false;
+      for (let round = 0; round < 7; round++) {
+        const r = await fetch(svc.url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + svc.key },
+          body: JSON.stringify({ model, messages: turn, ...(withTools && round < 6 ? { tools: tools.list.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters || { type: 'object', properties: {} } } })) } : {}) }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          last = model + ': ' + r.status + ' ' + String((j.error && (j.error.message || j.error)) || '').slice(0, 200);
+          if (r.status === 401 || r.status === 403) throw new Error(svc.name + ' refused the key (' + last + ')');
+          if (r.status === 402) throw busy(svc.name + ' has no credit left (' + last + ')');
+          if (r.status === 429) limited = true;
+          again = withTools && r.status === 400; break;
+        }
+        const msg = j.choices && j.choices[0] && j.choices[0].message, calls = (msg && Array.isArray(msg.tool_calls) && msg.tool_calls) || [];
+        if (calls.length && withTools && round < 6) {
+          turn.push(msg);   // handed back exactly as it came
+          for (const c of calls) { let a = {}; try { a = JSON.parse((c.function && c.function.arguments) || '{}'); } catch { } turn.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(await tools.run(c.function && c.function.name, a)) }); }
+          continue;
+        }
+        const text = aiText(j);
+        if (text) return { text, model };
+        last = model + ': empty reply'; break;
+      }
+      if (!again) break;
+    }
+  }
+  throw limited ? busy(svc.name + ' ' + last) : new Error(svc.name + ' ' + last);
+}
 async function claude(env, messages, tier) {
   const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({ model: tier === 'quick' ? (env.AI_MODEL_QUICK || 'claude-haiku-4-5-20251001') : (env.AI_MODEL || 'claude-sonnet-5-5'), max_tokens: 16000, system: AI_SYSTEM, messages }) });
@@ -186,7 +227,7 @@ async function llama(env, messages, tier) {
   return { text: '', model: '' };
 }
 /* One request from the app, for one account. `provider` is the service the user picked ("auto" for the site's order);
-   `account` lets the model look up this account's record and the library while it answers (Gemini only). */
+   `account` lets the model look up this account's record and the library while it answers (Gemini and DeepSeek). */
 async function runAI(env, user, { input, tier, provider, account, chat }) {
   tier = tier === 'quick' ? 'quick' : 'default';
   let messages = typeof input === 'string' ? [{ role: 'user', content: input }] : Array.isArray(input) ? input : [];
