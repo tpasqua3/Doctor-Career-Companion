@@ -38,6 +38,11 @@ th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
 th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .chip{display:inline-block;font-size:.75rem;font-weight:700;padding:3px 9px;border-radius:99px;background:var(--cobalt-soft);color:var(--cobalt)}
 .chip.on{background:var(--good-soft);color:var(--good)}
+select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:7px 9px;max-width:100%}
+.tiers{display:flex;flex-direction:column;gap:6px;border-left:3px solid var(--cobalt);padding-left:12px}
+.tier{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.tier b{min-width:104px;font-size:.85rem}
+td{vertical-align:top}
+.jobs{display:flex;flex-direction:column}.job{display:flex;flex-direction:column;gap:3px;padding:10px 0;border-top:1px solid var(--line)}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -77,7 +82,7 @@ function home(){
      <div class="row"><button class="btn pri" data-act="mklink">${me.connector?'Make a new link':'Make my connector link'}</button>${me.connector?'<button class="btn" data-act="offlink">Turn off</button>':''}</div>`}</div>
   <div class="card"><h2>Your record</h2>${langs.length?`<table><thead><tr><th>Area</th><th>Saved items</th><th>Last saved</th></tr></thead><tbody>${langs.map(l=>`<tr><td>${esc(LANGS[l.lang]||l.lang)}</td><td>${l.n}</td><td>${esc(new Date(l.updated).toLocaleString())}</td></tr>`).join('')}</tbody></table>`:'<p class="small muted">Nothing saved yet. Your record appears here after your first session.</p>'}
    <div class="row"><a class="btn" href="/api/backup">Download a backup</a></div></div>
-  ${store()}${ais()}${me.owner?owner():''}
+  ${store()}${ais()}${me.owner?owner()+labour():''}
   ${msg}
   <div class="card"><h2>Account</h2><p class="small muted">${esc(me.email)} · recovery email</p>
    <div class="row">${confirmDel?'<button class="btn danger" data-act="delacct">Yes, delete my account and everything saved</button><button class="btn" data-act="nodel">Keep it</button>':'<button class="btn danger" data-act="askdel">Delete account</button>'}</div></div>`}
@@ -100,6 +105,16 @@ function owner(){const d=me.drive||{};const line=(n,o)=>`<tr><td>${n}</td><td>${
    <div class="row">${d.canConnect?`<a class="btn pri" href="/api/google/connect">${d.mode==='oauth'?'Reconnect Google Drive':'Connect Google Drive'}</a>`:''}${d.mode?'<button class="btn" data-act="gtest">Test</button>':''}${d.mode==='oauth'?'<button class="btn" data-act="goff">Disconnect</button>':''}<button class="btn" data-act="accts">${accounts?'Refresh accounts':'Show accounts'}</button></div>
    ${test?`<table><tbody>${line('Knowledge folder',test.knowledge)}${line('Accounts folder',test.accounts)}</tbody></table>`:''}
    ${accounts?`<div style="overflow-x:auto"><table><thead><tr><th>Account</th><th>In Drive</th><th>Last copied</th><th></th></tr></thead><tbody>${accounts.map(a=>`<tr><td>${esc([a.first,a.last].filter(Boolean).join(' '))}<br><span class="small muted">${esc(a.email)}</span></td><td>${a.inDrive} of ${a.records}${a.error?'<br><span class="small" style="color:var(--bad)">'+esc(a.error)+'</span>':''}</td><td>${esc(when(a.synced))}</td><td>${a.folder?`<a href="${esc(a.folder)}" target="_blank" rel="noopener">Folder</a>`:''}</td></tr>`).join('')}</tbody></table></div>`:''}</div>`}
+/* The owner's picture of the division of labour, and the two things that can be changed: a service's tier, and the lowest tier a job allows. */
+const TN={lead:'Lead teacher',assistant:'Assistant',chat:'Chat only'};
+function labour(){const h=me.hierarchy;if(!h)return '';const sel=(kind,id,cur)=>`<select data-h="${kind}" data-id="${esc(id)}" aria-label="Tier">${h.tiers.map(t=>`<option value="${t.id}" ${t.id===cur?'selected':''}>${esc(t.name)}</option>`).join('')}</select>`;
+  return `<div class="card"><h2>Owner: who does what</h2><p class="small muted">Each AI service sits in a tier, and each job names the lowest tier allowed to do it. A service can do any job at or below its own tier. Changes apply to every account at once.</p>
+   <div class="tiers">${h.tiers.map(t=>{const l=h.services.filter(s=>s.tier===t.id);return `<div class="tier"><b>${esc(t.name)}</b><span>${l.length?l.map(s=>`<span class="chip ${s.on?'on':''}" title="${s.on?'Key is set':'No key set'}">${esc(s.name)}${s.on?'':' · no key'}</span>`).join(' '):'<span class="small muted">nobody</span>'}</span></div>`}).join('')}</div>
+   <table><thead><tr><th>Service</th><th>Tier</th></tr></thead><tbody>${h.services.map(s=>`<tr><td>${esc(s.name)}${s.on?'':' <span class="small muted">(no key set)</span>'}</td><td>${sel('tiers',s.id,s.tier)}</td></tr>`).join('')}</tbody></table>
+   <div class="jobs">${h.jobs.map(j=>`<div class="job"><div class="row" style="justify-content:space-between"><b>${esc(j.name)}</b>${sel('jobs',j.id,j.need)}</div><span class="small muted">${esc(j.what)}</span>
+     <span class="small">${j.order.length?'Done by '+esc(j.order.join(', then ')):'<span style="color:var(--bad)">Nobody can do this: add a key or lower the tier</span>'}${j.differ?'. Never the one that wrote it, when another is available':''}${j.pick&&j.id!=='chat'?'. The user\'s "Teaching by" choice goes first':''}.</span></div>`).join('')}</div>
+   <div class="row"><button class="btn" data-act="hreset">Back to the built-in defaults</button></div></div>`}
+document.addEventListener('change',async e=>{const d=e.target.dataset||{};if(!d.h)return;try{me.hierarchy=await api('PUT','/api/admin/hierarchy',{[d.h]:{[d.id]:e.target.value}});msg='';draw()}catch(x){show(x.message)}});
 async function syncAll(){if(syncing)return;syncing=true;draw();try{for(let i=0;i<40;i++){const s=await api('POST','/api/storage/sync');me.storage=s;draw();if(!s.waiting||s.error)break}}catch(e){}syncing=false;draw()}
 function draw(){$('#app').innerHTML=me?home():auth()}
 const v=id=>($('#'+id)||{}).value||'';
@@ -121,6 +136,7 @@ document.addEventListener('click',async e=>{
     if(a==='gtest'){b.textContent='Testing…';test=await api('POST','/api/google/test',{});return load()}
     if(a==='goff'){await api('DELETE','/api/google/connect');test=null;return load()}
     if(a==='accts'){accounts=(await api('GET','/api/admin/accounts')).accounts;return draw()}
+    if(a==='hreset'){me.hierarchy=await api('DELETE','/api/admin/hierarchy');return draw()}
     if(a==='askdel'){confirmDel=true;draw();return}
     if(a==='nodel'){confirmDel=false;draw();return}
     if(a==='delacct'){await api('DELETE','/api/account');me=null;confirmDel=false;mode='login';draw();return}

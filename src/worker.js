@@ -74,32 +74,76 @@ async function startSession(env, userId) {
    does not answer, the next one in AI_ORDER (default gemini, claude, llama) answers instead and the reply says so. Each account
    has a daily allowance per service: AI_DAILY (default 200), or AI_DAILY_GEMINI, AI_DAILY_CLAUDE, AI_DAILY_LLAMA for one service.
    Inside Claude the app uses Claude itself by default and reaches the other services through the connector (ask_ai).
-   Teaching is held to a higher bar than chat: lessons, questions, cards, plans and every accuracy review are written only by the
-   services in TEACHERS (Gemini and Claude). Llama answers in the Ask chat and nowhere else, and only a request the app marks as
-   chat may reach it. */
+   Who does which job is set by the hierarchy further down (TIERS, JOBS and each service's tier). */
 /* Every AI service this site can call. A service is offered to users only while `on` is true, which means its key (or binding) is
-   set in Cloudflare. `teach` says whether it may write lessons, questions, cards, plans and reviews; a service without it answers
-   only in the Ask chat. To add a service later (OpenAI, say): write its function beside gemini() and claude(), add a row here with
-   the secret it needs, and decide its `teach` flag. The app's two drop-downs are built from this list, so nothing else changes. */
+   set in Cloudflare. `tier` is where it starts in the hierarchy below; the owner can move it on the account page. To add a service
+   later (OpenAI, say): add a row here with the secret it needs and the tier it starts in (chatStyle() already speaks the common
+   format). The app's drop-downs and the division of labour are built from this list, so nothing else changes. */
 const SERVICES = [
-  { id: 'gemini', name: 'Gemini', teach: true, on: env => !!geminiKey(env), run: (env, messages, tier, tools) => gemini(env, messages, tier, tools) },
-  { id: 'claude', name: 'Claude', teach: true, on: env => !!env.ANTHROPIC_API_KEY, run: (env, messages, tier) => claude(env, messages, tier) },
-  /* DeepSeek: chat only until it is cleared for teaching (set teach to true here). */
-  { id: 'deepseek', name: 'DeepSeek', teach: false, on: env => !!deepseekKey(env), run: (env, messages, tier, tools) => chatStyle(env, { name: 'deepseek', url: 'https://api.deepseek.com/chat/completions', key: deepseekKey(env),
+  { id: 'gemini', name: 'Gemini', tier: 'lead', on: env => !!geminiKey(env), run: (env, messages, tier, tools) => gemini(env, messages, tier, tools) },
+  { id: 'claude', name: 'Claude', tier: 'lead', on: env => !!env.ANTHROPIC_API_KEY, run: (env, messages, tier) => claude(env, messages, tier) },
+  { id: 'deepseek', name: 'DeepSeek', tier: 'assistant', on: env => !!deepseekKey(env), run: (env, messages, tier, tools) => chatStyle(env, { name: 'deepseek', url: 'https://api.deepseek.com/chat/completions', key: deepseekKey(env),
       models: [tier === 'quick' ? env.DEEPSEEK_MODEL_QUICK : env.DEEPSEEK_MODEL, ...(tier === 'quick' ? ['deepseek-flash', 'deepseek-v4-pro'] : ['deepseek-v4-pro', 'deepseek-flash'])] }, messages, tools) },
-  { id: 'llama', name: 'Llama', teach: false, on: env => !!env.AI, run: (env, messages, tier) => llama(env, messages, tier) },
+  { id: 'llama', name: 'Llama', tier: 'chat', on: env => !!env.AI, run: (env, messages, tier) => llama(env, messages, tier) },
 ];
 const PROVIDERS = SERVICES.map(s => [s.id, s.name]), PNAME = Object.fromEntries(PROVIDERS), SERVICE = Object.fromEntries(SERVICES.map(s => [s.id, s]));
 /* The Gemini key, under the name it is usually saved as or one of the other common ones. */
 const deepseekKey = env => env.DEEPSEEK_API_KEY || env.DEEPSEEK_KEY || env.DEEPSEEK || '';
 const geminiKey = env => env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.GEMINI_KEY || env.GOOGLE_GEMINI_API_KEY || env.GOOGLE_AI_API_KEY || '';
-const TEACHERS = SERVICES.filter(s => s.teach).map(s => s.id);
+/* ---------- The hierarchy: who may do which job ----------
+   Three tiers, lowest to highest. A service sits in one tier; a job names the lowest tier allowed to do it.
+     lead        writes lessons and board questions, runs the accuracy review, builds plans, reads exam reports
+     assistant   the lower-risk jobs, whose output a lead always reviews before it is shown
+     chat        answers in the Ask panel only
+   A service may do every job at or below its own tier. For each job the order is worked out the same way:
+     - jobs marked `own` go first to the services of exactly that tier (so assistants take the assistant jobs and leave the leads'
+       allowances for teaching), then to higher tiers as a fallback;
+     - jobs marked `pick` put the service the user chose first, when it is allowed to do the job;
+     - jobs marked `differ` are reviews: the service that wrote the thing goes last, so a different one checks it whenever one exists.
+   The defaults are here. The owner changes a service's tier or a job's lowest tier on the account page; the changes are kept in D1
+   (settings, ai_hierarchy) and laid over these defaults, so a job or service added here later shows up without losing them. */
+const TIERS = ['chat', 'assistant', 'lead'], TIER_NAME = { lead: 'Lead teacher', assistant: 'Assistant', chat: 'Chat only' };
+const JOBS = [
+  { id: 'lesson', name: 'Write lessons', what: 'The lesson text, part by part', need: 'lead', pick: true },
+  { id: 'questions', name: 'Write board questions', what: 'Board-style questions with their answer keys', need: 'lead', pick: true },
+  { id: 'review', name: 'Accuracy review', what: 'The second pass over every lesson, question and card', need: 'lead', differ: true },
+  { id: 'plan', name: 'Plans and mentoring', what: 'The learning plan, the mentor brief and career plans', need: 'lead', pick: true },
+  { id: 'report', name: 'Read exam reports', what: 'An in-training exam report into scores and missed objectives', need: 'lead', pick: true },
+  { id: 'cards', name: 'Draft flashcards', what: 'Cards for a topic or from a lesson; a lead reviews them before they are kept', need: 'assistant', own: true },
+  { id: 'notes', name: 'Housekeeping', what: 'The running note on what the physician is trying to learn', need: 'assistant', own: true },
+  { id: 'chat', name: 'Ask chat', what: 'Answers in the Ask panel', need: 'chat', pick: true },
+];
+const JOB = Object.fromEntries(JOBS.map(j => [j.id, j])), rank = t => TIERS.indexOf(t);
+let HIER = { t: 0, v: null };
+async function hierarchy(env, fresh) {
+  if (!fresh && HIER.v && Date.now() - HIER.t < 20000) return HIER.v;
+  let saved = {}; try { saved = JSON.parse(await setting(env, 'ai_hierarchy') || '{}') || {}; } catch { }
+  const tiers = {}, jobs = {};
+  SERVICES.forEach(s => { const t = saved.tiers && saved.tiers[s.id]; tiers[s.id] = TIERS.includes(t) ? t : s.tier; });
+  JOBS.forEach(j => { const n = saved.jobs && saved.jobs[j.id]; jobs[j.id] = TIERS.includes(n) ? n : j.need; });
+  HIER = { t: Date.now(), v: { tiers, jobs } }; return HIER.v;
+}
+/* The services that may do this job, in the order they are tried. */
+function route(env, H, job, pick, avoid) {
+  const J = JOB[job] || JOB.lesson, need = rank(H.jobs[J.id]);
+  let list = aiOrder(env).filter(id => rank(H.tiers[id]) >= need);
+  if (J.own) list = [...list.filter(id => rank(H.tiers[id]) === need), ...list.filter(id => rank(H.tiers[id]) !== need)];
+  if (J.pick && list.includes(pick)) list = [pick, ...list.filter(id => id !== pick)];
+  if (J.differ && avoid && list.length > 1 && list.includes(avoid)) list = [...list.filter(id => id !== avoid), avoid];
+  return list;
+}
+/* The whole picture, for drawing it: every service with its tier and whether its key is set, every job with who does it. */
+function chart(env, H) {
+  return { tiers: TIERS.slice().reverse().map(id => ({ id, name: TIER_NAME[id] })),
+    services: SERVICES.map(s => ({ id: s.id, name: s.name, tier: H.tiers[s.id], on: s.on(env) })),
+    jobs: JOBS.map(j => ({ id: j.id, name: j.name, what: j.what, need: H.jobs[j.id], differ: !!j.differ, pick: !!j.pick, order: route(env, H, j.id).map(id => PNAME[id]) })) };
+}
 const hasProvider = (env, id) => !!SERVICE[id] && SERVICE[id].on(env);
 const aiOrder = env => [...String(env.AI_ORDER || '').toLowerCase().split(/[\s,;]+/), ...PROVIDERS.map(p => p[0])].filter((x, i, a) => a.indexOf(x) === i && hasProvider(env, x));
 const aiCap = (env, id) => Number(env['AI_DAILY_' + id.toUpperCase()]) || Number(env.AI_DAILY) || 200;
 const today = () => new Date().toISOString().slice(0, 10);
 async function aiUsed(env, uid) { const { results } = await env.DB.prepare('SELECT provider, n FROM ai_usage WHERE user_id = ? AND day = ?').bind(uid, today()).all(); return Object.fromEntries(results.map(r => [r.provider, r.n])); }
-const aiList = (env, used) => aiOrder(env).map(id => ({ id, name: PNAME[id], teach: TEACHERS.includes(id), cap: aiCap(env, id), left: Math.max(0, aiCap(env, id) - (used[id] || 0)) }));
+const aiList = (env, used, H) => aiOrder(env).map(id => ({ id, name: PNAME[id], tier: H.tiers[id], teach: H.tiers[id] === 'lead', cap: aiCap(env, id), left: Math.max(0, aiCap(env, id) - (used[id] || 0)) }));
 const AI_MODELS = { quick: ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/openai/gpt-oss-120b', '@cf/meta/llama-4-scout-17b-16e-instruct', '@cf/meta/llama-3.1-8b-instruct-fp8'],
   default: ['@cf/openai/gpt-oss-120b', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-4-scout-17b-16e-instruct', '@cf/meta/llama-3.1-8b-instruct-fp8'] };
 const GEMINI_MODELS = { quick: ['gemini-3.5-flash-lite', 'gemini-3.6-flash'], default: ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'] };
@@ -226,18 +270,19 @@ async function llama(env, messages, tier) {
   }
   return { text: '', model: '' };
 }
-/* One request from the app, for one account. `provider` is the service the user picked ("auto" for the site's order);
-   `account` lets the model look up this account's record and the library while it answers (Gemini and DeepSeek). */
-async function runAI(env, user, { input, tier, provider, account, chat }) {
+/* One request from the app, for one account. `job` says what the request is for (see JOBS); `provider` is the service the user
+   picked ("auto" for none); `avoid` is the service that wrote the thing under review; `account` lets the model look up this
+   account's record and the library while it answers (Gemini and DeepSeek). */
+async function runAI(env, user, { input, tier, provider, account, chat, job, avoid }) {
   tier = tier === 'quick' ? 'quick' : 'default';
+  job = JOB[job] ? job : chat ? 'chat' : 'lesson';   // a request that does not say is held to the highest bar
   let messages = typeof input === 'string' ? [{ role: 'user', content: input }] : Array.isArray(input) ? input : [];
   messages = messages.slice(-40).map(m => ({ role: m && m.role === 'assistant' ? 'assistant' : 'user', content: typeof (m && m.content) === 'string' ? m.content.slice(0, 150000) : '' })).filter(m => m.content);
   if (!messages.length || messages[messages.length - 1].role !== 'user') return { status: 400, error: 'Nothing to answer.' };
-  const order = aiOrder(env).filter(id => chat || TEACHERS.includes(id));
-  if (!order.length) return { status: 503, error: chat ? 'No AI is set up on this site yet.' : 'Lessons, questions and reviews are written only by Gemini or Claude, and neither is set up on this site yet. The owner needs to add the key for one of them in Cloudflare.' };
-  /* A service that may not teach is never used for teaching, whatever the request names; the site's order applies instead. */
-  const want = order.includes(provider) ? provider : '', used = await aiUsed(env, user.id), notes = []; let capped = 0;
-  for (const id of want ? [want, ...order.filter(x => x !== want)] : order) {
+  const H = await hierarchy(env), order = route(env, H, job, provider, str(avoid, 20).toLowerCase()), who = TIER_NAME[H.jobs[job]].toLowerCase();
+  if (!order.length) return { status: 503, error: job === 'chat' ? 'No AI is set up on this site yet.' : `"${JOB[job].name}" needs a service in the ${who} tier or above, and none is set up on this site yet. The owner adds a key in Cloudflare or changes the tiers on the account page.` };
+  const want = JOB[job].pick && order.includes(provider) ? provider : '', used = await aiUsed(env, user.id), notes = []; let capped = 0;
+  for (const id of order) {
     const cap = aiCap(env, id);
     if ((used[id] || 0) >= cap) { capped++; notes.push(`${PNAME[id]} has used today's ${cap} requests for your account`); continue; }
     let out = { text: '', model: '' };
@@ -246,9 +291,10 @@ async function runAI(env, user, { input, tier, provider, account, chat }) {
     if (!out.text) { notes.push(PNAME[id] + ' did not answer'); continue; }
     await env.DB.prepare('INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, ?, 1) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + 1').bind(user.id, today(), id).run();
     used[id] = (used[id] || 0) + 1;
-    return { status: 200, text: out.text, model: out.model, provider: id, name: PNAME[id], asked: want || 'auto', fellBack: notes.length > 0, note: notes.join('; '), left: cap - used[id], providers: aiList(env, used) };
+    return { status: 200, text: out.text, model: out.model, provider: id, name: PNAME[id], job, asked: want || 'auto', fellBack: notes.length > 0, note: notes.join('; '), left: cap - used[id], providers: aiList(env, used, H) };
   }
-  return capped === notes.length ? { status: 429, error: notes.join('; ') + '. Allowances reset at midnight UTC' + (chat ? '.' : '. Lessons, questions and reviews are written only by Gemini or Claude' + (hasProvider(env, 'llama') ? '; Llama is kept for the Ask chat.' : '.')) } : { status: 502, error: 'The AI could not answer just now (' + notes.join('; ') + '). Try again in a moment.' };
+  const only = job === 'chat' ? '' : ` "${JOB[job].name}" is done only by: ${order.map(id => PNAME[id]).join(', ')}.`;
+  return capped === notes.length ? { status: 429, error: notes.join('; ') + '. Allowances reset at midnight UTC.' + only } : { status: 502, error: 'The AI could not answer just now (' + notes.join('; ') + ').' + only + ' Try again in a moment.' };
 }
 
 /* ---------- Google Drive ----------
@@ -630,8 +676,8 @@ async function api(request, env, url, ctx) {
 
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
-    const providers = aiList(env, await aiUsed(env, user.id)), owner = isOwner(env, user);
-    return json({ ...profile(user), ai: (providers[0] || {}).id || 'none', providers, connector: link ? link.created : null, areas: await summary(env, user.id),
+    const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user);
+    return json({ ...profile(user), ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), connector: link ? link.created : null, areas: await summary(env, user.id),
       library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: await storage(env, user), owner,
       drive: owner ? { mode: DRIVE.mode, account: DRIVE.email, canConnect: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET), redirect: url.origin + '/api/google/callback' } : undefined });
   }
@@ -672,6 +718,19 @@ async function api(request, env, url, ctx) {
     await look(KNOW(env), out.knowledge); await look(ACCTS(env), out.accounts);
     if (out.accounts.ok) { try { await trash(env, await gupload(env, { name: 'connection-test.json', parent: ACCTS(env), text: '{"test":true}' })); out.accounts.write = true; } catch (e) { if (!(e instanceof LibError)) throw e; out.accounts.error = e.message; } }
     return json(out);
+  }
+  /* The owner moves a service between tiers, or changes the lowest tier allowed to do a job. Only the differences from the
+     built-in defaults are kept. DELETE puts everything back. */
+  if (url.pathname === '/api/admin/hierarchy' && (request.method === 'PUT' || request.method === 'DELETE')) {
+    if (!isOwner(env, user)) return fail(403, 'Only the site owner can do that.');
+    if (request.method === 'DELETE') await setSetting(env, 'ai_hierarchy', null);
+    else {
+      const H = await hierarchy(env, true), tiers = {}, jobs = {};
+      SERVICES.forEach(s => { const t = body.tiers && TIERS.includes(body.tiers[s.id]) ? body.tiers[s.id] : H.tiers[s.id]; if (t !== s.tier) tiers[s.id] = t; });
+      JOBS.forEach(j => { const n = body.jobs && TIERS.includes(body.jobs[j.id]) ? body.jobs[j.id] : H.jobs[j.id]; if (n !== j.need) jobs[j.id] = n; });
+      await setSetting(env, 'ai_hierarchy', JSON.stringify({ tiers, jobs }));
+    }
+    return json(chart(env, await hierarchy(env, true)));
   }
   /* Every account and how much of it is in Drive, for the owner. Counts and folder links only: no record is read here. */
   if (route === 'GET /api/admin/accounts') {
@@ -728,7 +787,7 @@ async function api(request, env, url, ctx) {
     return json({ ok: true });
   }
   if (route === 'POST /api/ai') {
-    const out = await runAI(env, user, { input: body.input, tier: body.tier, provider: str(body.provider, 20).toLowerCase(), account: body.account === true, chat: body.chat === true });
+    const out = await runAI(env, user, { input: body.input, tier: body.tier, provider: str(body.provider, 20).toLowerCase(), account: body.account === true, chat: body.chat === true, job: str(body.job, 20), avoid: str(body.avoid, 20) });
     return out.status === 200 ? json({ ...out, status: undefined }) : fail(out.status, out.error);
   }
   if (route === 'GET /api/drive/file') {
@@ -785,8 +844,8 @@ const MCP_TOOLS = [
     inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }, annotations: { readOnlyHint: false, destructiveHint: true } },
   { name: 'ai_providers', description: "Which AI services this account can ask through the website's server (Gemini, Llama, Claude) and how many requests each has left today.",
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
-  { name: 'ask_ai', description: "Ask one of the website's AI services instead of Claude. `input` is the prompt, or a list of {role, content} messages. `provider` is gemini, llama, claude or auto. `tier` is quick or default. `account` true lets the service look up this account's own record and the reference library while it answers. `chat` true marks a conversational question; only those may be answered by llama.",
-    inputSchema: { type: 'object', properties: { input: {}, provider: { type: 'string' }, tier: { type: 'string' }, account: { type: 'boolean' }, chat: { type: 'boolean' } }, required: ['input'] }, annotations: { readOnlyHint: true } },
+  { name: 'ask_ai', description: "Ask one of the website's AI services instead of Claude. `input` is the prompt, or a list of {role, content} messages. `provider` is gemini, llama, claude or auto. `tier` is quick or default. `account` true lets the service look up this account's own record and the reference library while it answers. `job` says what the request is for (lesson, questions, review, plan, report, cards, notes or chat) and decides which services may answer; `avoid` names the service that wrote the thing under review.",
+    inputSchema: { type: 'object', properties: { input: {}, provider: { type: 'string' }, tier: { type: 'string' }, account: { type: 'boolean' }, chat: { type: 'boolean' }, job: { type: 'string' }, avoid: { type: 'string' } }, required: ['input'] }, annotations: { readOnlyHint: true } },
   { name: 'storage_status', description: "How much of this account's record has been copied to its own folder in Google Drive, and when.",
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
   { name: 'library_status', description: "Whether this account may read the reference library that is shared with the Doctor Career Companion website.",
@@ -827,8 +886,8 @@ async function mcpServer(request, env, token, ctx) {
     if (name === 'ai_providers' || name === 'ask_ai' || name === 'storage_status') {
       const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return bad('This account no longer exists.');
       if (name === 'storage_status') return out(await storage(env, u));
-      if (name === 'ai_providers') return out({ providers: aiList(env, await aiUsed(env, uid)) });
-      const r = await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true, chat: a.chat === true });
+      if (name === 'ai_providers') { const H = await hierarchy(env); return out({ providers: aiList(env, await aiUsed(env, uid), H), hierarchy: chart(env, H) }); }
+      const r = await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true, chat: a.chat === true, job: String(a.job || ''), avoid: String(a.avoid || '') });
       return r.status === 200 ? out({ ...r, status: undefined }) : out({ error: r.error, code: r.status === 429 ? 'rate_limited' : 'upstream_error' });
     }
     if (name === 'library_status' || name === 'library_file') {
