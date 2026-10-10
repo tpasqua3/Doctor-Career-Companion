@@ -53,7 +53,7 @@ textarea{font:inherit;font-size:.88rem;line-height:1.5;color:var(--ink);backgrou
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LANGS={med:'Study and career record'};
-let me=null,mode='login',newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
+let me=null,mode='login',resetMode='email',pwOpen=false,newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
 const driveMsg=new URLSearchParams(location.search).get('drive')||'';
 const when=t=>t?new Date(t).toLocaleString():'never';
 const nextUrl=new URLSearchParams(location.search).has('next');
@@ -62,6 +62,17 @@ async function api(method,path,body){const r=await fetch(path,{method,headers:bo
 function auth(){
   if(resetTok)return `<h1>Choose a new password</h1><div class="card"><label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label>${msg}<div class="row"><button class="btn pri" data-act="reset">Save password</button></div></div>`;
   const su=mode==='signup',fg=mode==='forgot';
+  /* No email on this site yet: the forgotten password is replaced on the spot, against the email and name the account was made under. */
+  if(fg&&resetMode==='direct')return `<div><h1>Doctor Career Companion</h1></div>
+  <div class="card"><h2>Choose a new password</h2><p class="small muted">Enter the email and the name your account was created with, then your new password.</p>
+   <label>Email<input id="email" type="email" autocomplete="email"></label>
+   <div class="row"><label style="flex:1">First name<input id="first" autocomplete="given-name"></label><label style="flex:1">Last name<input id="last" autocomplete="family-name"></label></div>
+   <label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label>
+   <label>New password again<input id="pw2" type="password" autocomplete="new-password" minlength="8"></label>
+   ${msg}
+   <div class="row"><button class="btn pri" data-act="direct">Change password</button></div>
+   <div class="row small"><button class="btn link" data-mode="login">Back to log in</button></div></div>`;
+  if(fg&&resetMode==='off')return `<div><h1>Doctor Career Companion</h1></div><div class="card"><h2>Reset your password</h2><p class="small muted">Password reset is switched off on this site. Ask the person who invited you to help.</p><div class="row small"><button class="btn link" data-mode="login">Back to log in</button></div></div>`;
   return `<div><h1>Doctor Career Companion</h1><p class="muted">Your account keeps your study record (question history, mastery by topic, lessons, career plans) whether you use the app here or inside Claude.</p></div>
   <div class="card"><h2>${su?'Create your account':fg?'Reset your password':'Log in'}</h2>
    ${su?`<div class="row"><label style="flex:1">First name<input id="first" autocomplete="given-name"></label><label style="flex:1">Last name<input id="last" autocomplete="family-name"></label></div>`:''}
@@ -86,6 +97,11 @@ function home(){
   ${store()}${ais()}${me.owner?owner()+labour()+legal():''}
   ${msg}
   <div class="card"><h2>Account</h2><p class="small muted">${esc(me.email)} · recovery email</p>
+   ${pwOpen?`<label>Current password<input id="cur" type="password" autocomplete="current-password"></label>
+    <label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label>
+    <label>New password again<input id="pw2" type="password" autocomplete="new-password" minlength="8"></label>
+    <span class="small muted">At least 8 characters. Other devices logged in to this account are logged out; this one stays in.</span>
+    <div class="row"><button class="btn pri" data-act="pwsave">Save new password</button><button class="btn" data-act="pwclose">Cancel</button></div>`:'<div class="row"><button class="btn" data-act="pwopen">Change password</button></div>'}
    <div class="row">${confirmDel?'<button class="btn danger" data-act="delacct">Yes, delete my account and everything saved</button><button class="btn" data-act="nodel">Keep it</button>':'<button class="btn danger" data-act="askdel">Delete account</button>'}</div></div>`}
 /* This account's own folder in Google Drive: how much of the record is there, and its dated backups. */
 function store(){const s=me.storage||{};if(!s.on)return me.owner?'':`<div class="card"><h2>Central storage</h2><p class="small muted">Your record is saved in this site's database. The copy in Google Drive is not switched on yet.</p></div>`;
@@ -134,6 +150,10 @@ document.addEventListener('click',async e=>{
     if(a==='login'){await api('POST','/api/login',{email:v('email'),password:v('pw')});if(nextUrl)return location.replace('/');return load()}
     if(a==='signup'){await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw'),code:v('code')});if(nextUrl)return location.replace('/');return load()}
     if(a==='forgot'){await api('POST','/api/forgot',{email:v('email')});return show('Check your email for a reset link. It works for one hour.',true)}
+    if(a==='direct'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/forgot/direct',{email:v('email'),firstName:v('first'),lastName:v('last'),password:v('pw')});mode='login';return show('Password changed. Log in with your new password.',true)}
+    if(a==='pwopen'){pwOpen=true;return draw()}
+    if(a==='pwclose'){pwOpen=false;return draw()}
+    if(a==='pwsave'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/password',{current:v('cur'),password:v('pw')});pwOpen=false;return show('Password changed.',true)}
     if(a==='reset'){await api('POST','/api/reset',{token:resetTok,password:v('pw')});location.replace('/account.html?next=1');return}
     if(a==='logout'){await api('POST','/api/logout');me=null;mode='login';draw();return}
     if(a==='mklink'){const r=await api('POST','/api/connector');newLink=r.url;return load()}
@@ -155,7 +175,7 @@ document.addEventListener('click',async e=>{
   }catch(x){show(x.message)}
 });
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.tagName==='INPUT'){const p=document.querySelector('.btn.pri');if(p)p.click()}});
-async function load(){try{me=await api('GET','/api/me')}catch(e){me=null}draw();if(me&&me.storage&&me.storage.on&&me.storage.waiting&&!me.storage.error)syncAll()}
+async function load(){try{me=await api('GET','/api/me')}catch(e){me=null}if(!me){try{resetMode=(await api('GET','/api/reset/mode')).mode}catch(e){}}draw();if(me&&me.storage&&me.storage.on&&me.storage.waiting&&!me.storage.error)syncAll()}
 load();
 </script>
 </body>
