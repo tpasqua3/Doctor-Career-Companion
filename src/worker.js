@@ -64,7 +64,7 @@ function aiText(r) {
 async function aiReply(env, messages, tier) {
   if (env.ANTHROPIC_API_KEY) {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: tier === 'quick' ? (env.AI_MODEL_QUICK || 'claude-haiku-4-5-20251001') : (env.AI_MODEL || 'claude-sonnet-5-5'), max_tokens: 8000, system: AI_SYSTEM, messages }) });
+      body: JSON.stringify({ model: tier === 'quick' ? (env.AI_MODEL_QUICK || 'claude-haiku-4-5-20251001') : (env.AI_MODEL || 'claude-sonnet-5-5'), max_tokens: 16000, system: AI_SYSTEM, messages }) });
     if (!r.ok) throw new Error('ai upstream ' + r.status);
     const j = await r.json();
     return { text: (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('').trim(), model: j.model || 'claude' };
@@ -288,7 +288,7 @@ async function api(request, env, url) {
   if (route === 'POST /api/ai') {
     const tier = body.tier === 'quick' ? 'quick' : 'default';
     let messages = typeof body.input === 'string' ? [{ role: 'user', content: body.input }] : Array.isArray(body.input) ? body.input : [];
-    messages = messages.slice(-40).map(m => ({ role: m && m.role === 'assistant' ? 'assistant' : 'user', content: typeof (m && m.content) === 'string' ? m.content.slice(0, 60000) : '' })).filter(m => m.content);
+    messages = messages.slice(-40).map(m => ({ role: m && m.role === 'assistant' ? 'assistant' : 'user', content: typeof (m && m.content) === 'string' ? m.content.slice(0, 150000) : '' })).filter(m => m.content);
     if (!messages.length || messages[messages.length - 1].role !== 'user') return fail(400, 'Nothing to answer.');
     const cap = Number(env.AI_DAILY) || 200, day = new Date().toISOString().slice(0, 10);
     const row = await env.DB.prepare('SELECT n FROM usage WHERE user_id = ? AND day = ?').bind(user.id, day).first();
