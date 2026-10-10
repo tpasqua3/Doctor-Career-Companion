@@ -4,6 +4,8 @@
   "name": "doctor-career-companion",
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
+  // Variables added in the Cloudflare dashboard are kept when a push from GitHub deploys, instead of being wiped.
+  "keep_vars": true,
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*"] },
   // No database_id: wrangler creates the database on the first deploy and reuses it afterwards.
   "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }],
