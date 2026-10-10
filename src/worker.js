@@ -72,7 +72,9 @@ async function startSession(env, userId) {
    has a daily allowance per service: AI_DAILY (default 200), or AI_DAILY_GEMINI, AI_DAILY_CLAUDE, AI_DAILY_LLAMA for one service.
    Inside Claude the app uses Claude itself by default and reaches the other services through the connector (ask_ai). */
 const PROVIDERS = [['gemini', 'Gemini'], ['claude', 'Claude'], ['llama', 'Llama']], PNAME = Object.fromEntries(PROVIDERS);
-const hasProvider = (env, id) => id === 'gemini' ? !!env.GEMINI_API_KEY : id === 'claude' ? !!env.ANTHROPIC_API_KEY : id === 'llama' ? !!env.AI : false;
+/* The Gemini key, under the name it is usually saved as or one of the other common ones. */
+const geminiKey = env => env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.GEMINI_KEY || env.GOOGLE_GEMINI_API_KEY || env.GOOGLE_AI_API_KEY || '';
+const hasProvider = (env, id) => id === 'gemini' ? !!geminiKey(env) : id === 'claude' ? !!env.ANTHROPIC_API_KEY : id === 'llama' ? !!env.AI : false;
 const aiOrder = env => [...String(env.AI_ORDER || '').toLowerCase().split(/[\s,;]+/), ...PROVIDERS.map(p => p[0])].filter((x, i, a) => a.indexOf(x) === i && hasProvider(env, x));
 const aiCap = (env, id) => Number(env['AI_DAILY_' + id.toUpperCase()]) || Number(env.AI_DAILY) || 200;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -131,7 +133,7 @@ async function gemini(env, messages, tier, tools) {
   for (const model of models) {
     const turn = contents.slice();
     for (let round = 0; round < 7; round++) {
-      const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+      const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey(env) },
         body: JSON.stringify({ systemInstruction: { parts: [{ text: AI_SYSTEM + (tools ? TOOL_NOTE : '') }] }, contents: turn, generationConfig: { maxOutputTokens: 32768 },
           ...(tools ? { tools: [{ functionDeclarations: tools.list }], toolConfig: { functionCallingConfig: { mode: round < 6 ? 'AUTO' : 'NONE' } } } : {}) }) });
       const j = await r.json().catch(() => ({}));
