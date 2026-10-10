@@ -35,4 +35,14 @@ Content is generated, not hand-written. The prompts require named guidelines, fo
 
 Cloudflare dashboard → Workers & Pages → Create → Import a repository → this repo. Every push to `main` deploys. The D1 database is created on the first deploy. Optional: a `SIGNUP_CODE` secret limits sign-up to people who are given that code (without it, anyone with the address can create an account and use the site's AI allowance). Optional: a `RESEND_API_KEY` secret (and `MAIL_FROM`) turns on password reset by email.
 
+### Reference library on the website (optional)
+
+Inside Claude the app reads the user's Google Drive through Claude's connector. The website reads Drive through a Google service account instead, and only the folders shared with it:
+
+1. In Google Cloud, create a project, enable the Google Drive API, create a service account and download a JSON key for it.
+2. In Cloudflare, add two secrets to this Worker: `GOOGLE_SERVICE_ACCOUNT` (the whole contents of the key file) and `LIBRARY_EMAILS` (the account emails allowed to use the library, comma separated; `*` for everyone).
+3. In Google Drive, share each library folder with the service account's email address as a Viewer.
+
+Google Docs are read as text and their figures shown; PDFs and other files are converted with Workers AI. Text is read when needed and never written to the database.
+
 Then, on the site's account page, make a connector link and add it in Claude as a custom connector named **Doctor Career Companion**.

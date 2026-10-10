@@ -77,6 +77,85 @@ async function aiReply(env, messages, tier) {
   return { text: '', model: '' };
 }
 
+/* ---------- The reference library on the website ----------
+   Inside Claude the app reads the physician's Google Drive through Claude's own connector. The website has no such connector, so the
+   owner shares the library folders with a Google service account and saves its key here as the GOOGLE_SERVICE_ACCOUNT secret. This
+   server then reads those folders, and only those, on behalf of the accounts named in LIBRARY_EMAILS (comma separated; * for every
+   account). The three tools mirror the ones the app already uses inside Claude, so the app's library code is the same in both places.
+   Text is read when a lesson needs it and held in memory for a few minutes; it is never written to the database. */
+const libraryOn = (env, user) => { if (!env.GOOGLE_SERVICE_ACCOUNT) return false; const list = String(env.LIBRARY_EMAILS || '').toLowerCase().split(/[\s,;]+/).filter(Boolean); return list.includes('*') || list.includes(String(user.email).toLowerCase()); };
+const libraryEmail = env => { try { return String(JSON.parse(env.GOOGLE_SERVICE_ACCOUNT).client_email || ''); } catch { return ''; } };
+class LibError extends Error { constructor(message, status = 502) { super(message); this.status = status; } }
+const b64u = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+let gToken = null;
+async function googleToken(env) {
+  if (gToken && gToken.exp > Date.now() + 60000) return gToken.token;
+  let key; try { key = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT); } catch { throw new LibError('The Google key saved in Cloudflare could not be read. Paste the whole contents of the key file as the GOOGLE_SERVICE_ACCOUNT secret.'); }
+  if (!key || !key.client_email || !key.private_key) throw new LibError('The Google key saved in Cloudflare is missing its email or private key. Paste the whole contents of the key file.');
+  const now = Math.floor(Date.now() / 1000);
+  const unsigned = b64u(enc.encode(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))) + '.' + b64u(enc.encode(JSON.stringify({ iss: key.client_email, scope: 'https://www.googleapis.com/auth/drive.readonly', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })));
+  let signer;
+  try { signer = await crypto.subtle.importKey('pkcs8', Uint8Array.from(atob(String(key.private_key).replace(/-----[^-]+-----/g, '').replace(/\s+/g, '')), c => c.charCodeAt(0)), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']); }
+  catch { throw new LibError('The private key in the Google key file could not be used. Make a new JSON key for the service account and save it again.'); }
+  const assertion = unsigned + '.' + b64u(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', signer, enc.encode(unsigned)));
+  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=' + encodeURIComponent('urn:ietf:params:oauth:grant-type:jwt-bearer') + '&assertion=' + assertion });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.access_token) throw new LibError('Google did not accept the service account key (' + (j.error_description || j.error || r.status) + ').');
+  gToken = { token: j.access_token, exp: Date.now() + (Number(j.expires_in) || 3600) * 1000 };
+  return gToken.token;
+}
+async function gfetch(env, path, params) {
+  const u = new URL('https://www.googleapis.com/drive/v3/' + path); Object.entries(params || {}).forEach(([k, v]) => { if (v != null && v !== '') u.searchParams.set(k, v); });
+  u.searchParams.set('supportsAllDrives', 'true');
+  const r = await fetch(u, { headers: { Authorization: 'Bearer ' + await googleToken(env) } });
+  if (r.ok) return r;
+  const j = await r.json().catch(() => ({})), why = (j.error && (j.error.message || j.error.status)) || r.status;
+  if (r.status === 404) throw new LibError('That file is not in the folders shared with this website.', 404);
+  if (r.status === 403 && /has not been used|is disabled|accessNotConfigured/i.test(String(why))) throw new LibError('The Google Drive API is not turned on for the Google Cloud project that owns the service account.');
+  const e = new LibError('Google Drive refused the request (' + why + ').'); e.google = r.status; e.reason = String(why); throw e;
+}
+/* The app writes its searches the way Claude's Drive connector takes them (title, parentId); Google's own API says name and parents. */
+const driveQuery = q => '(' + String(q).replace(/\btitle\s+(contains|=|!=)/g, 'name $1').replace(/\bparentId\s*=\s*'([^']+)'/g, "'$1' in parents") + ') and trashed = false';
+const GDOC = 'application/vnd.google-apps.document';
+const chapters = new Map();
+const tidyMarkdown = t => String(t).replace(/^\[[^\]\n]+\]:\s*<data:[^>\n]*>\s*$/gm, '').replace(/!\[[^\]\n]*\]\[[^\]\n]*\]/g, '').replace(/!\[[^\]\n]*\]\(data:[^)\n]*\)/g, '').replace(/\n{3,}/g, '\n\n');
+async function driveTool(env, tool, input) {
+  input = input && typeof input === 'object' ? input : {};
+  if (tool === 'search_files') {
+    const q = str(input.query, 600); if (!q) throw new LibError('Nothing to search for.', 400);
+    const j = await (await gfetch(env, 'files', { q: driveQuery(q), pageSize: Math.max(1, Math.min(100, Number(input.pageSize) || 20)), pageToken: str(input.pageToken, 2000), fields: 'nextPageToken,files(id,name,mimeType,parents)', includeItemsFromAllDrives: 'true' })).json();
+    return { files: (j.files || []).map(f => ({ id: f.id, title: f.name, mimeType: f.mimeType, parentId: (f.parents || [])[0] || '' })), nextPageToken: j.nextPageToken || undefined };
+  }
+  const id = str(input.fileId, 200); if (!/^[A-Za-z0-9_-]{10,200}$/.test(id)) throw new LibError('Bad file.', 400);
+  if (tool === 'read_file_content') {
+    const hit = chapters.get(id); if (hit && Date.now() - hit.t < 6e5) return hit.v;
+    const meta = await (await gfetch(env, 'files/' + id, { fields: 'id,name,mimeType,size' })).json();
+    let text = '';
+    if (meta.mimeType === GDOC) {
+      /* A chapter heavy with pictures can be over Google's export limit as markdown; plain text has no pictures and always fits. */
+      try { text = tidyMarkdown(await (await gfetch(env, 'files/' + id + '/export', { mimeType: 'text/markdown' })).text()); }
+      catch (e) { if (e.status === 404) throw e; text = await (await gfetch(env, 'files/' + id + '/export', { mimeType: 'text/plain' })).text(); }
+    } else if (/^text\//.test(meta.mimeType || '')) { text = await (await gfetch(env, 'files/' + id, { alt: 'media' })).text();
+    } else {
+      if (Number(meta.size) > 25e6) throw new LibError('That file is too large to read on the website. Split it into chapters, or keep it as Google Docs.', 413);
+      if (!env.AI || !env.AI.toMarkdown) throw new LibError('Only Google Docs and text files can be read on this website.', 415);
+      const blob = await (await gfetch(env, 'files/' + id, { alt: 'media' })).blob();
+      const out = await env.AI.toMarkdown([{ name: meta.name || 'file', blob: new Blob([blob], { type: meta.mimeType || 'application/octet-stream' }) }]);
+      const one = Array.isArray(out) ? out[0] : out; text = tidyMarkdown((one && one.data) || '');
+      if (!text.trim()) throw new LibError('That file could not be read as text on the website.', 415);
+    }
+    const v = { fileContent: text.slice(0, 1500000), title: meta.name || '' };
+    chapters.set(id, { t: Date.now(), v }); if (chapters.size > 40) chapters.delete(chapters.keys().next().value);
+    return v;
+  }
+  if (tool === 'download_file_content') {
+    const meta = await (await gfetch(env, 'files/' + id, { fields: 'id,name,mimeType' })).json();
+    if (meta.mimeType !== GDOC) return { html: '', title: meta.name || '' };
+    return { html: await (await gfetch(env, 'files/' + id + '/export', { mimeType: 'text/html' })).text(), title: meta.name || '' };
+  }
+  throw new LibError('Unknown library request.', 400);
+}
+
 const profile = u => ({ id: u.id, email: u.email, firstName: u.first || '', lastName: u.last || '' });
 
 /* What each area holds, for the account page: how many documents and when they were last saved. */
@@ -174,7 +253,8 @@ async function api(request, env, url) {
 
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
-    return json({ ...profile(user), ai: env.ANTHROPIC_API_KEY ? 'claude' : env.AI ? 'workers' : 'none', connector: link ? link.created : null, areas: await summary(env, user.id) });
+    return json({ ...profile(user), ai: env.ANTHROPIC_API_KEY ? 'claude' : env.AI ? 'workers' : 'none', connector: link ? link.created : null, areas: await summary(env, user.id),
+      library: libraryOn(env, user), libraryEmail: libraryOn(env, user) ? libraryEmail(env) : '' });
   }
   /* Connector link: a private address, one per account, that lets the app inside Claude read and save this account's record. */
   if (route === 'POST /api/connector') {
@@ -218,6 +298,12 @@ async function api(request, env, url) {
     try { out = await aiReply(env, messages, tier); } catch (e) { console.error(e); }
     if (!out.text) return fail(502, 'The AI could not answer just now. Try again in a moment.');
     return json({ text: out.text, model: out.model, left: cap - ((row && row.n) || 0) - 1 });
+  }
+  /* The reference library in Google Drive, for accounts it is turned on for. */
+  if (route === 'POST /api/drive') {
+    if (!libraryOn(env, user)) return fail(403, 'The reference library is not turned on for this account.');
+    try { return json(await driveTool(env, str(body.tool, 40), body.input)); }
+    catch (e) { if (e instanceof LibError) return fail(e.status, e.message); throw e; }
   }
   /* Everything this account holds, for a backup file. */
   if (route === 'GET /api/backup') {

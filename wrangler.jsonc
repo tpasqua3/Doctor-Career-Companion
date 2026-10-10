@@ -9,4 +9,6 @@
   "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }],
   // The app on the website asks Cloudflare Workers AI (reasoning models first). Set an ANTHROPIC_API_KEY secret to use Claude instead.
   "ai": { "binding": "AI" }
+  // The reference library on the website: add a GOOGLE_SERVICE_ACCOUNT secret (the whole JSON key of a Google service account that the
+  // library folders in Drive are shared with) and a LIBRARY_EMAILS secret (the account emails allowed to use it, comma separated).
 }

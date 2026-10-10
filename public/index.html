@@ -345,7 +345,7 @@ function applyLens(){const L=st.prefs.lens||{},C=st.prefs.sess||{};
    2. Claude's own storage for this page, kept as a second copy (and the only copy until the server is set up).
    3. A journal in this browser: every change is written here first and cleared only when the central copy accepts it. */
 const CONN='Doctor Career Companion',GD='Google Drive',AREA='med',JK='dcc:q:',LS='dcc:docs';
-let WEBAI='',WEB=false,OFFLINE=false,MCP=null,LINKED=false,DB=null,COLL='companion',docs={},SAMPLE=null,DL=null,pending=0,wait=4000,retryT=null,lastPull=0;
+let WEBAI='',WEB=false,WEBLIB=false,LIBMAIL='',OFFLINE=false,MCP=null,LINKED=false,DB=null,COLL='companion',docs={},SAMPLE=null,DL=null,pending=0,wait=4000,retryT=null,lastPull=0;
 const clone=o=>JSON.parse(JSON.stringify(o));
 const jget=n=>{try{return JSON.parse(localStorage.getItem(JK+n))}catch(e){return null}};
 const jkeys=()=>{const o=[];try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith(JK))o.push(k.slice(JK.length))}}catch(e){}return o};
@@ -552,7 +552,16 @@ function drawPlayer(){const el=$('#player');$('#fab').dataset.up=P.on?'1':'';if(
    topic the page finds the best chapter, pulls the sections that match, and hands them to the AI as the factual basis for the lesson.
    The text is used in the moment and never stored in this app. */
 const chapterCache=new Map();
-async function drive(tool,input){const r=await MCP.callTool(GD,tool,input,{cache:{staleTime:6e5}});let p=r.payload??r.structuredContent;
+/* Inside Claude the library is read through Claude's Google Drive connector. On the website the same three requests go to this
+   site's own server, which reads the folders the owner has shared with it. */
+const LIB=()=>!!MCP||WEBLIB;
+const webDrive=new Map();
+async function drive(tool,input){
+  if(!MCP&&WEBLIB){const k=tool+JSON.stringify(input),hit=webDrive.get(k);if(hit&&Date.now()-hit.t<6e5)return clone(hit.v);
+    const r=await fetch('/api/drive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool,input})});if(r.status===401){location.replace('/account.html?next=1');throw{code:'session_expired'}}
+    let j={};try{j=await r.json()}catch(e){}if(!r.ok)throw{code:'upstream_error',message:j.error||'The library could not be read just now.'};
+    if(tool!=='download_file_content'){webDrive.set(k,{t:Date.now(),v:j});if(webDrive.size>200)webDrive.delete(webDrive.keys().next().value)}return clone(j)}
+  const r=await MCP.callTool(GD,tool,input,{cache:{staleTime:6e5}});let p=r.payload??r.structuredContent;
   if(typeof p==='string'){try{p=JSON.parse(p)}catch(e){p={fileContent:p}}}else if(p&&typeof p==='object'){try{p=clone(p)}catch(e){}}
   if(!p&&r.content){const t=r.content.find(c=>c.type==='text');if(t){try{p=JSON.parse(t.text)}catch(e){p={fileContent:t.text}}}}return p||{}}
 const q1=s=>String(s).replace(/\\/g,'').replace(/'/g,"\\'");
@@ -560,7 +569,7 @@ const q1=s=>String(s).replace(/\\/g,'').replace(/'/g,"\\'");
    (to three levels) are indexed once and remembered. */
 const libList=()=>{const L=A(st.prefs.libs).filter(x=>x&&x.name);return L.length?L:[{name:st.prefs.libName||'MKSAP Database',role:'syllabus',year:''}]};
 const libSig=()=>JSON.stringify(libList().map(x=>[x.name,x.role,x.year||'']));
-async function libInit(force){if(!MCP||!st.prefs.lib)return null;if(st.libx&&st.libx.sig===libSig()&&!force)return st.libx;
+async function libInit(force){if(!LIB()||!st.prefs.lib)return null;if(st.libx&&st.libx.sig===libSig()&&!force)return st.libx;
   const roots=[],missing=[];
   for(const L of libList()){const f=await drive('search_files',{query:`title = '${q1(L.name)}' and mimeType = 'application/vnd.google-apps.folder'`,excludeContentSnippets:true,pageSize:5}),root=A(f.files)[0];if(!root){missing.push(L.name);continue}
     const folders={};folders[root.id]=L.name;let level=[root.id];
@@ -577,7 +586,7 @@ function excerpt(text,keys,max=12000){text=text.replace(/^Mark this topic comple
   const pick=new Set();let len=0;[...sc].sort((a,b)=>b.s-a.s).forEach(x=>{if(len+x.p.length<=max||!pick.size){pick.add(x.i);len+=Math.min(x.p.length,max)}});
   return sc.filter(x=>pick.has(x.i)).map(x=>x.p).join('\n').slice(0,max)}
 const yearOf=(...xs)=>{for(const x of xs){const m=/\b(19[89]\d|20[0-4]\d)\b/.exec(String(x||''));if(m)return m[1]}return ''};
-async function libRef(t,focus){if(!MCP||!st.prefs.lib)return null;
+async function libRef(t,focus){if(!LIB()||!st.prefs.lib)return null;
   try{const lib=await libInit();if(!lib)return null;const owner={};lib.roots.forEach(R=>Object.entries(R.folders).forEach(([id,title])=>{if(!/backend/i.test(title))owner[id]={R,title}}));
     /* A topic is not always filed where its discipline suggests (hypertension sits with the kidney chapters), so every folder of every
        library is searched. A chapter whose title names the topic wins; failing that, the few best candidates are opened and the one that
@@ -603,18 +612,18 @@ const figCache=new Map();
 function b64utf8(b){const bin=atob(b),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return new TextDecoder('utf-8').decode(u)}
 function parseFigures(html){const out=[],doc=new DOMParser().parseFromString(html,'text/html'),bl=[...doc.body.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li')],tx=e=>e.textContent.replace(/\s+/g,' ').trim();let head='';
   bl.forEach((e,i)=>{if(/^H\d$/.test(e.tagName)){head=tx(e);return}const img=e.tagName==='P'&&e.querySelector('img');if(!img||tx(e)||e.querySelectorAll('img').length!==1)return;
-    const src=img.getAttribute('src')||'';if(!/^data:image\/(jpeg|png|gif|webp);base64,/.test(src)||src.length<3000||src.length>1500000)return;
+    const src=img.getAttribute('src')||'',hosted=/^https:\/\/[a-z0-9-]+\.googleusercontent\.com\//.test(src)&&src.length<2000;if(!hosted&&(!/^data:image\/(jpeg|png|gif|webp);base64,/.test(src)||src.length<3000||src.length>1500000))return;
     const prev=bl[i-1],title=prev&&!prev.querySelector('img')&&!/^H\d$/.test(prev.tagName)?tx(prev):'';let legend='';
     for(let k=i+1;k<=Math.min(bl.length-1,i+2);k++){if(bl[k].querySelector('img')||/^H\d$/.test(bl[k].tagName))break;const x=tx(bl[k]);if(x&&!/^expand$/i.test(x)){legend=x;break}}
     if(!title||title.length>110||/[.!?:]$/.test(title)||/^expand$/i.test(title)||legend.length<15||out.some(f=>f.title===title))return;
     out.push({title,legend:legend.slice(0,400),head,src})});return out}
-async function libFigures(fid){if(figCache.has(fid))return figCache.get(fid);let out=[];if(!MCP)return out;
-  const job=(async()=>{try{const p=await drive('download_file_content',{fileId:fid,exportMimeType:'text/html'}),html=p&&typeof p.content==='string'?b64utf8(p.content):'';return html?parseFigures(html):[]}catch(e){return []}})();
+async function libFigures(fid){if(figCache.has(fid))return figCache.get(fid);let out=[];if(!LIB())return out;
+  const job=(async()=>{try{const p=await drive('download_file_content',{fileId:fid,exportMimeType:'text/html'}),html=p&&typeof p.html==='string'?p.html:p&&typeof p.content==='string'?b64utf8(p.content):'';return html?parseFigures(html):[]}catch(e){return []}})();
   figCache.set(fid,job);out=await job;figCache.set(fid,out);return out}
 const figWords=f=>{const w=words(f.title);return w.length?w:[f.title.toLowerCase()]};
 const figFits=(f,seg)=>{const low=((seg.heading||'')+' '+(seg.text||'')).toLowerCase();return figWords(f).every(w=>low.includes(w.slice(0,Math.max(5,w.length-2))))};
 function hydrateFigs(){document.querySelectorAll('figure[data-fid]').forEach(el=>{if(el.dataset.done)return;el.dataset.done='1';const box=el.querySelector('.figimg');
-  if(!MCP){box.innerHTML='<span class="small muted">The picture shows inside Claude, where your reference library is connected.</span>';return}
+  if(!LIB()){box.innerHTML='<span class="small muted">The picture shows where your reference library is connected.</span>';return}
   Promise.resolve(libFigures(el.dataset.fid)).then(list=>{const f=A(list).find(x=>x.title===el.dataset.title&&x.legend===el.dataset.legend);
     if(!f){box.innerHTML='<span class="small muted">The picture could not be loaded from your library just now.</span>';return}
     const img=new Image();img.alt=f.title;img.src=f.src;box.textContent='';box.appendChild(img)})})}
@@ -824,7 +833,7 @@ function redrawChat(){drawAsk();if(S.tab==='ask'&&!S.quiz&&!S.lesson&&!S.busy)re
 const chatLog=()=>S.chat.map((m,i)=>`<div class="msg ${m.role==='user'?'u':'a'}">${m.role==='user'?esc(m.content):md(m.content)+`<div class="row" style="margin-top:6px">${TTS?`<button class="btn sm" data-act="saytext" data-k="chat" data-i="${i}">Listen</button>`:''}${m.ref?`<span class="chip off">${esc(m.ref)}</span>`:''}</div>`}</div>`).join('')+(S.asking?thinking('Claude is thinking…'):'');
 function drawAsk(){const el=$('#askp'),fab=$('#fab');fab.hidden=!!S.askOpen||S.tab==='ask';if(!S.askOpen){el.hidden=true;return}const cx=ctxInfo(),draft=($('#askin')||{}).value||'';el.hidden=false;
   el.innerHTML=`<div class="hd"><div style="min-width:0"><b>Ask</b><div class="tiny muted">${cx.label?'About '+esc(cx.label):hasBP()?'Board-focused, grounded in your library':'Grounded in your library and record'}</div></div><div class="row">${S.chat.length?'<button class="btn sm" data-act="chatclear">New</button>':''}<button class="btn sm" data-act="askclose" aria-label="Close">Close</button></div></div>
-  <div class="log" id="asklog">${S.chat.length?chatLog():`<p class="small muted">Ask anything: explain a concept, compare two options, work a case, or ask what to study. Answers draw on what is on screen, your record${MCP&&st.prefs.lib?', your reference library':''}${hasBP()?' and the exam blueprint':''}.</p>`}</div>
+  <div class="log" id="asklog">${S.chat.length?chatLog():`<p class="small muted">Ask anything: explain a concept, compare two options, work a case, or ask what to study. Answers draw on what is on screen, your record${LIB()&&st.prefs.lib?', your reference library':''}${hasBP()?' and the exam blueprint':''}.</p>`}</div>
   <div class="ft"><div class="chips">${cx.label?`<button data-act="askchip" data-p="Explain this more deeply, and tell me what the boards test about it.">Explain ${esc(cx.label.length>22?'this':cx.label)}</button><button data-act="askchip" data-p="Ask me two rapid questions on this, one at a time, and wait for my answer to each.">Quiz me on this</button>`:''}<button data-act="askchip" data-p="Looking at my record, what should I study next and why?">What next?</button><button data-act="mkplan">Build my learning plan</button></div>
    <textarea id="askin" placeholder="Your question" aria-label="Your question"></textarea><div class="row"><button class="btn pri" data-act="asksend" ${S.asking||!SAMPLE?'disabled':''}>Ask</button>${SAMPLE?'':'<span class="tiny muted">The AI is not available in this view.</span>'}</div></div>`;
   $('#askin').value=draft;const lg=$('#asklog');lg.scrollTop=lg.scrollHeight}
@@ -931,7 +940,7 @@ function vTopic(t){const s=st.topics[t.id]||{n:0,c:0,les:0,rate:0},m=mastery(t.i
    <div class="figs"><div class="fig"><b>${s.n?pct(s.c,s.n)+'%':'—'}</b><span>correct on ${s.n} questions</span></div><div class="fig"><b>${s.les}</b><span>lessons</span></div><div class="fig"><b>${s.rate||'—'}</b><span>your rating, 1 to 5</span></div><div class="fig"><b>${s.last?new Date(s.last).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—'}</b><span>last studied</span></div></div>
    ${overconfident(t.id)?'<div class="note">You rate this topic higher than your answers support. Worth a set of questions.</div>':''}
    ${t.bp?(t.bp.r?`<p class="small"><b>Blueprint relevance.</b> ${TASKS.map((k,i)=>esc(k)+': '+RL[t.bp.r[i]]).join(' · ')}${t.bp.lf?' · low frequency':''}</p>`:`<p class="small"><b>Blueprint.</b> Listed under ${esc(t.bp.sub)}${t.bp.sp?', about '+t.bp.sp+'% of the exam':''}. The Certification blueprint does not rate topics by relevance.</p>`):''}
-   <p class="tiny muted">Sources for this section: ${esc(t.sec.src)}${MCP&&st.prefs.lib?' · grounded in your reference library':''}</p></div>
+   <p class="tiny muted">Sources for this section: ${esc(t.sec.src)}${LIB()&&st.prefs.lib?' · grounded in your reference library':''}</p></div>
   ${busy()}${S.busy?'':`<div class="card"><h3>Learn it</h3>${modeRow()}<label class="f">Focus (optional)<input type="text" id="focus" placeholder="A subtopic, a question, or leave blank for the core lesson" value="${esc(S.form.focus||'')}"></label>
    <div class="row">${Object.entries(LEN).map(([k,v])=>`<button class="btn ${k==='std'?'pri':''}" data-act="lesson" data-len="${k}">${v.name} · ${v.min} min</button>`).join('')}</div>
    <h3>Test it</h3><div class="row" style="align-items:flex-end">${qnField()}<button class="btn" data-act="quiz">Write new questions</button>${diffRow()}${nq?`<button class="btn" data-act="requiz">Redo from your ${nq} saved</button>`:''}<button class="btn" data-act="ctopic">Flashcards (${cardsIn('top:'+t.id).length})</button></div></div>`}
@@ -1066,8 +1075,9 @@ function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h
    <div class="plain"><span class="eyebrow">One lesson, in minutes</span><div class="row">${[['short','High-yield'],['std','Standard'],['deep','Deep dive']].map(([k,n])=>`<label class="f" style="min-width:90px">${n}<input type="number" min="2" max="25" inputmode="numeric" data-len="${k}" id="len-${k}" value="${LEN[k].min}" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px;width:100%"></label>`).join('')}</div></div>
    <div class="plain"><span class="eyebrow">One session, in minutes</span><div class="row">${Object.entries(COMMIT).map(([k,c])=>`<label class="f" style="min-width:90px">${c.name}<input type="number" min="5" max="180" inputmode="numeric" data-sess="${k}" id="sess-${k}" value="${c.min}" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px;width:100%"></label>`).join('')}</div><span class="small muted">${Object.values(COMMIT).map(c=>c.name+': '+c.lessons+' lesson'+(c.lessons>1?'s':'')).join(' · ')}</span></div></div>
   <div class="card"><h3>Questions</h3><div class="plain"><span class="eyebrow">Default set size</span>${segBtns('setSize',[[3,'3'],[5,'5'],[10,'10']],p.setSize)}</div><div class="plain"><span class="eyebrow">Accuracy review</span>${segBtns('audit',[[true,'Fact-check lessons, questions and cards with a second pass'],[false,'Off (faster)']],p.audit)}<span class="small muted">The review corrects what it is sure is wrong, flags what it is unsure of, and drops questions and cards it cannot stand behind. It roughly doubles the wait.</span></div></div>
-  <div class="card"><h3>Reference library</h3><p class="small muted">${WEB?'The website cannot reach your Google Drive. Open the app inside Claude to ground lessons in your own text.':MCP?'Clinical lessons and questions are grounded in the matching chapter of your own text in Google Drive. The text is read at the moment it is needed and is not stored here.':'Google Drive is not connected to this page.'}</p>
-   ${MCP?`${segBtns('lib',[[true,'Use my library'],[false,'Off']],p.lib)}
+  <div class="card"><h3>Reference library</h3><p class="small muted">${WEB&&!WEBLIB?'The reference library is not turned on for this account on the website. Lessons here are written from the AI\'s training and the guidelines it names. Inside Claude, the app can ground them in your own Google Drive.':LIB()?'Clinical lessons and questions are grounded in the matching chapter of the reference text in Google Drive. The text is read at the moment it is needed and is not stored here.':'Google Drive is not connected to this page.'}</p>
+   ${WEBLIB?`<p class="small muted">On the website this reads the Drive folders shared with <b style="overflow-wrap:anywhere">${esc(LIBMAIL||'the site\'s Google service account')}</b>. Share a folder with that address as a Viewer and it becomes readable here, new files included.</p>`:''}
+   ${LIB()?`${segBtns('lib',[[true,'Use my library'],[false,'Off']],p.lib)}
     ${libList().map((L,i)=>`<div class="row" style="align-items:flex-end;border-top:1px solid var(--line);padding-top:10px"><label class="f" style="flex:2;min-width:170px">Drive folder name<input type="text" data-libf="name" data-i="${i}" id="lib-name-${i}" value="${esc(L.name)}"></label><label class="f" style="min-width:130px">Kind<select data-libf="role" data-i="${i}" id="lib-role-${i}"><option value="syllabus" ${L.role!=='textbook'?'selected':''}>Board syllabus</option><option value="textbook" ${L.role==='textbook'?'selected':''}>Textbooks</option></select></label><label class="f" style="min-width:96px;max-width:120px">Edition year<input type="text" inputmode="numeric" data-libf="year" data-i="${i}" id="lib-year-${i}" value="${esc(L.year||'')}" placeholder="e.g. 2024"></label>${libList().length>1?`<button class="btn sm" data-act="libdel" data-i="${i}">Remove</button>`:''}</div>`).join('')}
     <div class="row"><button class="btn" data-act="libadd">Add a folder</button><button class="btn pri" data-act="libcheck">${st.libx?'Rescan':'Connect and scan'}</button></div>
     ${st.libx?`<p class="small muted">${st.libx.roots.map(R=>esc(R.name)+': '+Object.keys(R.folders).length+' folder'+(Object.keys(R.folders).length>1?'s':'')).join(' · ')}${A(st.libx.missing).length?' · not found: '+st.libx.missing.map(esc).join(', '):''}</p>`:''}
@@ -1227,7 +1237,7 @@ document.addEventListener('change',e=>{if(e.target.dataset&&e.target.dataset.lib
   if(!C){let r=null;try{r=await fetch('/api/me',{cache:'no-store'})}catch(e){}
     if(r&&r.status===401){location.replace('/account.html?next=1');return}
     let me=null;if(r&&r.ok){try{me=await r.json()}catch(e){}}
-    if(me&&me.id){WEB=true;WEBAI=me.ai||'workers';let d=null;try{d=await fetchServer()}catch(e){}
+    if(me&&me.id){WEB=true;WEBAI=me.ai||'workers';WEBLIB=!!me.library;LIBMAIL=String(me.libraryEmail||'');let d=null;try{d=await fetchServer()}catch(e){}
       if(d)docs=strip(d);else{try{const c=JSON.parse(localStorage.getItem('dcc:cache'));if(c){OFFLINE=true;docs=c}}catch(e){}}
       LINKED=true;SAMPLE=webSample();lastPull=Date.now();cacheDocs()}}
   else if(MCP){try{const r=await MCP.callTool(CONN,'load_progress',{area:AREA,since:0},{cache:false});const p=r&&r.payload;if(p&&p.docs&&typeof p.docs==='object')sdocs=strip(p.docs)}catch(e){}}
