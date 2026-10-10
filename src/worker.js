@@ -72,16 +72,20 @@ async function startSession(env, userId) {
    The app says which one it wants, or "auto". If that one has used its daily allowance for the account, is over its own limit or
    does not answer, the next one in AI_ORDER (default gemini, claude, llama) answers instead and the reply says so. Each account
    has a daily allowance per service: AI_DAILY (default 200), or AI_DAILY_GEMINI, AI_DAILY_CLAUDE, AI_DAILY_LLAMA for one service.
-   Inside Claude the app uses Claude itself by default and reaches the other services through the connector (ask_ai). */
+   Inside Claude the app uses Claude itself by default and reaches the other services through the connector (ask_ai).
+   Teaching is held to a higher bar than chat: lessons, questions, cards, plans and every accuracy review are written only by the
+   services in TEACHERS (Gemini and Claude). Llama answers in the Ask chat and nowhere else, and only a request the app marks as
+   chat may reach it. */
 const PROVIDERS = [['gemini', 'Gemini'], ['claude', 'Claude'], ['llama', 'Llama']], PNAME = Object.fromEntries(PROVIDERS);
 /* The Gemini key, under the name it is usually saved as or one of the other common ones. */
 const geminiKey = env => env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.GEMINI_KEY || env.GOOGLE_GEMINI_API_KEY || env.GOOGLE_AI_API_KEY || '';
+const TEACHERS = ['gemini', 'claude'];
 const hasProvider = (env, id) => id === 'gemini' ? !!geminiKey(env) : id === 'claude' ? !!env.ANTHROPIC_API_KEY : id === 'llama' ? !!env.AI : false;
 const aiOrder = env => [...String(env.AI_ORDER || '').toLowerCase().split(/[\s,;]+/), ...PROVIDERS.map(p => p[0])].filter((x, i, a) => a.indexOf(x) === i && hasProvider(env, x));
 const aiCap = (env, id) => Number(env['AI_DAILY_' + id.toUpperCase()]) || Number(env.AI_DAILY) || 200;
 const today = () => new Date().toISOString().slice(0, 10);
 async function aiUsed(env, uid) { const { results } = await env.DB.prepare('SELECT provider, n FROM ai_usage WHERE user_id = ? AND day = ?').bind(uid, today()).all(); return Object.fromEntries(results.map(r => [r.provider, r.n])); }
-const aiList = (env, used) => aiOrder(env).map(id => ({ id, name: PNAME[id], cap: aiCap(env, id), left: Math.max(0, aiCap(env, id) - (used[id] || 0)) }));
+const aiList = (env, used) => aiOrder(env).map(id => ({ id, name: PNAME[id], teach: TEACHERS.includes(id), cap: aiCap(env, id), left: Math.max(0, aiCap(env, id) - (used[id] || 0)) }));
 const AI_MODELS = { quick: ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/openai/gpt-oss-120b', '@cf/meta/llama-4-scout-17b-16e-instruct', '@cf/meta/llama-3.1-8b-instruct-fp8'],
   default: ['@cf/openai/gpt-oss-120b', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-4-scout-17b-16e-instruct', '@cf/meta/llama-3.1-8b-instruct-fp8'] };
 const GEMINI_MODELS = { quick: ['gemini-3.5-flash-lite', 'gemini-3.6-flash'], default: ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'] };
@@ -174,12 +178,13 @@ async function llama(env, messages, tier) {
 }
 /* One request from the app, for one account. `provider` is the service the user picked ("auto" for the site's order);
    `account` lets the model look up this account's record and the library while it answers (Gemini only). */
-async function runAI(env, user, { input, tier, provider, account }) {
+async function runAI(env, user, { input, tier, provider, account, chat }) {
   tier = tier === 'quick' ? 'quick' : 'default';
   let messages = typeof input === 'string' ? [{ role: 'user', content: input }] : Array.isArray(input) ? input : [];
   messages = messages.slice(-40).map(m => ({ role: m && m.role === 'assistant' ? 'assistant' : 'user', content: typeof (m && m.content) === 'string' ? m.content.slice(0, 150000) : '' })).filter(m => m.content);
   if (!messages.length || messages[messages.length - 1].role !== 'user') return { status: 400, error: 'Nothing to answer.' };
-  const order = aiOrder(env); if (!order.length) return { status: 503, error: 'No AI is set up on this site yet.' };
+  const order = aiOrder(env).filter(id => chat || TEACHERS.includes(id));
+  if (!order.length) return { status: 503, error: chat ? 'No AI is set up on this site yet.' : 'Lessons, questions and reviews are written only by Gemini or Claude, and neither is set up on this site yet. The owner needs to add a GEMINI_API_KEY secret.' };
   const want = order.includes(provider) ? provider : '', used = await aiUsed(env, user.id), notes = []; let capped = 0;
   for (const id of want ? [want, ...order.filter(x => x !== want)] : order) {
     const cap = aiCap(env, id);
@@ -192,7 +197,7 @@ async function runAI(env, user, { input, tier, provider, account }) {
     used[id] = (used[id] || 0) + 1;
     return { status: 200, text: out.text, model: out.model, provider: id, name: PNAME[id], asked: want || 'auto', fellBack: notes.length > 0, note: notes.join('; '), left: cap - used[id], providers: aiList(env, used) };
   }
-  return capped === notes.length ? { status: 429, error: notes.join('; ') + '. Allowances reset at midnight UTC' + (order.length > 1 ? '.' : ', or use the app inside Claude.') } : { status: 502, error: 'The AI could not answer just now (' + notes.join('; ') + '). Try again in a moment.' };
+  return capped === notes.length ? { status: 429, error: notes.join('; ') + '. Allowances reset at midnight UTC' + (chat ? '.' : '. Lessons, questions and reviews are written only by Gemini or Claude' + (hasProvider(env, 'llama') ? '; Llama is kept for the Ask chat.' : '.')) } : { status: 502, error: 'The AI could not answer just now (' + notes.join('; ') + '). Try again in a moment.' };
 }
 
 /* ---------- Google Drive ----------
@@ -672,7 +677,7 @@ async function api(request, env, url, ctx) {
     return json({ ok: true });
   }
   if (route === 'POST /api/ai') {
-    const out = await runAI(env, user, { input: body.input, tier: body.tier, provider: str(body.provider, 20).toLowerCase(), account: body.account === true });
+    const out = await runAI(env, user, { input: body.input, tier: body.tier, provider: str(body.provider, 20).toLowerCase(), account: body.account === true, chat: body.chat === true });
     return out.status === 200 ? json({ ...out, status: undefined }) : fail(out.status, out.error);
   }
   if (route === 'GET /api/drive/file') {
@@ -729,8 +734,8 @@ const MCP_TOOLS = [
     inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }, annotations: { readOnlyHint: false, destructiveHint: true } },
   { name: 'ai_providers', description: "Which AI services this account can ask through the website's server (Gemini, Llama, Claude) and how many requests each has left today.",
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
-  { name: 'ask_ai', description: "Ask one of the website's AI services instead of Claude. `input` is the prompt, or a list of {role, content} messages. `provider` is gemini, llama, claude or auto. `tier` is quick or default. `account` true lets the service look up this account's own record and the reference library while it answers.",
-    inputSchema: { type: 'object', properties: { input: {}, provider: { type: 'string' }, tier: { type: 'string' }, account: { type: 'boolean' } }, required: ['input'] }, annotations: { readOnlyHint: true } },
+  { name: 'ask_ai', description: "Ask one of the website's AI services instead of Claude. `input` is the prompt, or a list of {role, content} messages. `provider` is gemini, llama, claude or auto. `tier` is quick or default. `account` true lets the service look up this account's own record and the reference library while it answers. `chat` true marks a conversational question; only those may be answered by llama.",
+    inputSchema: { type: 'object', properties: { input: {}, provider: { type: 'string' }, tier: { type: 'string' }, account: { type: 'boolean' }, chat: { type: 'boolean' } }, required: ['input'] }, annotations: { readOnlyHint: true } },
   { name: 'storage_status', description: "How much of this account's record has been copied to its own folder in Google Drive, and when.",
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
   { name: 'library_status', description: "Whether this account may read the reference library that is shared with the Doctor Career Companion website.",
@@ -772,7 +777,7 @@ async function mcpServer(request, env, token, ctx) {
       const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return bad('This account no longer exists.');
       if (name === 'storage_status') return out(await storage(env, u));
       if (name === 'ai_providers') return out({ providers: aiList(env, await aiUsed(env, uid)) });
-      const r = await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true });
+      const r = await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true, chat: a.chat === true });
       return r.status === 200 ? out({ ...r, status: undefined }) : out({ error: r.error, code: r.status === 429 ? 'rate_limited' : 'upstream_error' });
     }
     if (name === 'library_status' || name === 'library_file') {
