@@ -70,7 +70,7 @@ async function startSession(env, userId) {
      gemini   Google Gemini, with a GEMINI_API_KEY secret (GEMINI_MODEL and GEMINI_MODEL_QUICK choose the models)
      claude   Anthropic Claude, with an ANTHROPIC_API_KEY secret (AI_MODEL and AI_MODEL_QUICK choose the models)
      deepseek DeepSeek, with a DEEPSEEK_API_KEY secret (DEEPSEEK_MODEL and DEEPSEEK_MODEL_QUICK choose the models)
-     llama    Cloudflare Workers AI, through the AI binding (always there)
+     llama    Cloudflare Workers AI, shown as "Cloudflare AI Stack": a list of open models tried in order, through the AI binding
    The app says which one it wants, or "auto". If that one has used its daily allowance for the account, is over its own limit or
    does not answer, the next one in AI_ORDER (default gemini, claude, llama) answers instead and the reply says so. Each account
    has a daily allowance per service: AI_DAILY (default 200), or AI_DAILY_GEMINI, AI_DAILY_CLAUDE, AI_DAILY_LLAMA for one service.
@@ -85,7 +85,7 @@ const SERVICES = [
   { id: 'claude', name: 'Claude', tier: 'lead', on: env => !!env.ANTHROPIC_API_KEY, run: (env, messages, tier) => claude(env, messages, tier) },
   { id: 'deepseek', name: 'DeepSeek', tier: 'assistant', on: env => !!deepseekKey(env), run: (env, messages, tier, tools) => chatStyle(env, { name: 'deepseek', url: 'https://api.deepseek.com/chat/completions', key: deepseekKey(env),
       models: [tier === 'quick' ? env.DEEPSEEK_MODEL_QUICK : env.DEEPSEEK_MODEL, ...(tier === 'quick' ? ['deepseek-flash', 'deepseek-v4-pro'] : ['deepseek-v4-pro', 'deepseek-flash'])] }, messages, tools) },
-  { id: 'llama', name: 'Llama', tier: 'chat', on: env => !!env.AI, run: (env, messages, tier) => llama(env, messages, tier) },
+  { id: 'llama', name: 'Cloudflare AI Stack', tier: 'chat', on: env => !!env.AI, run: (env, messages, tier) => llama(env, messages, tier) },
 ];
 const PROVIDERS = SERVICES.map(s => [s.id, s.name]), PNAME = Object.fromEntries(PROVIDERS), SERVICE = Object.fromEntries(SERVICES.map(s => [s.id, s]));
 /* The Gemini key, under the name it is usually saved as or one of the other common ones. */
@@ -106,6 +106,10 @@ const geminiKey = env => env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.GEMINI_
 const TIERS = ['chat', 'assistant', 'lead'], TIER_NAME = { lead: 'Lead teacher', assistant: 'Assistant', chat: 'Chat only' };
 const JOBS = [
   { id: 'lesson', name: 'Write lessons', what: 'The lesson text, part by part', need: 'lead', pick: true },
+  /* The teaching-assistant role: a lesson for which a chapter or guideline was found in the library, so the facts are on the page.
+     Leads still write these by default; an assistant writes one only when the user picks it under "Teaching by", and a lead
+     always reviews the result (the app runs the review even when the user has switched reviews off). */
+  { id: 'lesson_lib', name: 'Write lessons from the library', what: 'A lesson grounded in a library chapter or guideline; a lead always reviews it', need: 'assistant', pick: true },
   { id: 'questions', name: 'Write board questions', what: 'Board-style questions with their answer keys', need: 'lead', pick: true },
   { id: 'review', name: 'Accuracy review', what: 'The second pass over every lesson, question and card', need: 'lead', differ: true },
   { id: 'plan', name: 'Plans and mentoring', what: 'The learning plan, the mentor brief and career plans', need: 'lead', pick: true },
@@ -128,6 +132,8 @@ async function hierarchy(env, fresh) {
 function route(env, H, job, pick, avoid) {
   const J = JOB[job] || JOB.lesson, need = rank(H.jobs[J.id]);
   let list = aiOrder(env).filter(id => rank(H.tiers[id]) >= need);
+  /* Unless a job is the assistants' own, the higher tier goes first: an assistant does it only when picked, or when no lead can. */
+  if (!J.own && J.id !== 'chat') list = [...list].sort((a, b) => rank(H.tiers[b]) - rank(H.tiers[a]));
   if (J.own) list = [...list.filter(id => rank(H.tiers[id]) === need), ...list.filter(id => rank(H.tiers[id]) !== need)];
   if (J.pick && list.includes(pick)) list = [pick, ...list.filter(id => id !== pick)];
   if (J.differ && avoid && list.length > 1 && list.includes(avoid)) list = [...list.filter(id => id !== avoid), avoid];
@@ -137,7 +143,7 @@ function route(env, H, job, pick, avoid) {
 function chart(env, H) {
   return { tiers: TIERS.slice().reverse().map(id => ({ id, name: TIER_NAME[id] })),
     services: SERVICES.map(s => ({ id: s.id, name: s.name, tier: H.tiers[s.id], on: s.on(env) })),
-    jobs: JOBS.map(j => ({ id: j.id, name: j.name, what: j.what, need: H.jobs[j.id], differ: !!j.differ, pick: !!j.pick, order: route(env, H, j.id).map(id => PNAME[id]) })) };
+    jobs: JOBS.map(j => ({ id: j.id, name: j.name, what: j.what, need: H.jobs[j.id], differ: !!j.differ, pick: !!j.pick, own: !!j.own, order: route(env, H, j.id).map(id => PNAME[id]) })) };
 }
 const hasProvider = (env, id) => !!SERVICE[id] && SERVICE[id].on(env);
 const aiOrder = env => [...String(env.AI_ORDER || '').toLowerCase().split(/[\s,;]+/), ...PROVIDERS.map(p => p[0])].filter((x, i, a) => a.indexOf(x) === i && hasProvider(env, x));
@@ -1000,7 +1006,7 @@ const MCP_TOOLS = [
     inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }, annotations: { readOnlyHint: false, destructiveHint: true } },
   { name: 'ai_providers', description: "Which AI services this account can ask through the website's server (Gemini, Llama, Claude) and how many requests each has left today.",
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
-  { name: 'ask_ai', description: "Ask one of the website's AI services instead of Claude. `input` is the prompt, or a list of {role, content} messages. `provider` is gemini, llama, claude or auto. `tier` is quick or default. `account` true lets the service look up this account's own record and the reference library while it answers. `job` says what the request is for (lesson, questions, review, plan, report, cards, notes or chat) and decides which services may answer; `avoid` names the service that wrote the thing under review.",
+  { name: 'ask_ai', description: "Ask one of the website's AI services instead of Claude. `input` is the prompt, or a list of {role, content} messages. `provider` is gemini, llama, claude or auto. `tier` is quick or default. `account` true lets the service look up this account's own record and the reference library while it answers. `job` says what the request is for (lesson, lesson_lib, questions, review, plan, report, cards, notes or chat) and decides which services may answer; `avoid` names the service that wrote the thing under review.",
     inputSchema: { type: 'object', properties: { input: {}, provider: { type: 'string' }, tier: { type: 'string' }, account: { type: 'boolean' }, chat: { type: 'boolean' }, job: { type: 'string' }, avoid: { type: 'string' } }, required: ['input'] }, annotations: { readOnlyHint: true } },
   { name: 'storage_status', description: "How much of this account's record has been copied to its own folder in Google Drive, and when.",
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
