@@ -76,11 +76,20 @@ async function startSession(env, userId) {
    Teaching is held to a higher bar than chat: lessons, questions, cards, plans and every accuracy review are written only by the
    services in TEACHERS (Gemini and Claude). Llama answers in the Ask chat and nowhere else, and only a request the app marks as
    chat may reach it. */
-const PROVIDERS = [['gemini', 'Gemini'], ['claude', 'Claude'], ['llama', 'Llama']], PNAME = Object.fromEntries(PROVIDERS);
+/* Every AI service this site can call. A service is offered to users only while `on` is true, which means its key (or binding) is
+   set in Cloudflare. `teach` says whether it may write lessons, questions, cards, plans and reviews; a service without it answers
+   only in the Ask chat. To add a service later (OpenAI, say): write its function beside gemini() and claude(), add a row here with
+   the secret it needs, and decide its `teach` flag. The app's two drop-downs are built from this list, so nothing else changes. */
+const SERVICES = [
+  { id: 'gemini', name: 'Gemini', teach: true, on: env => !!geminiKey(env), run: (env, messages, tier, tools) => gemini(env, messages, tier, tools) },
+  { id: 'claude', name: 'Claude', teach: true, on: env => !!env.ANTHROPIC_API_KEY, run: (env, messages, tier) => claude(env, messages, tier) },
+  { id: 'llama', name: 'Llama', teach: false, on: env => !!env.AI, run: (env, messages, tier) => llama(env, messages, tier) },
+];
+const PROVIDERS = SERVICES.map(s => [s.id, s.name]), PNAME = Object.fromEntries(PROVIDERS), SERVICE = Object.fromEntries(SERVICES.map(s => [s.id, s]));
 /* The Gemini key, under the name it is usually saved as or one of the other common ones. */
 const geminiKey = env => env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.GEMINI_KEY || env.GOOGLE_GEMINI_API_KEY || env.GOOGLE_AI_API_KEY || '';
-const TEACHERS = ['gemini', 'claude'];
-const hasProvider = (env, id) => id === 'gemini' ? !!geminiKey(env) : id === 'claude' ? !!env.ANTHROPIC_API_KEY : id === 'llama' ? !!env.AI : false;
+const TEACHERS = SERVICES.filter(s => s.teach).map(s => s.id);
+const hasProvider = (env, id) => !!SERVICE[id] && SERVICE[id].on(env);
 const aiOrder = env => [...String(env.AI_ORDER || '').toLowerCase().split(/[\s,;]+/), ...PROVIDERS.map(p => p[0])].filter((x, i, a) => a.indexOf(x) === i && hasProvider(env, x));
 const aiCap = (env, id) => Number(env['AI_DAILY_' + id.toUpperCase()]) || Number(env.AI_DAILY) || 200;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -184,13 +193,14 @@ async function runAI(env, user, { input, tier, provider, account, chat }) {
   messages = messages.slice(-40).map(m => ({ role: m && m.role === 'assistant' ? 'assistant' : 'user', content: typeof (m && m.content) === 'string' ? m.content.slice(0, 150000) : '' })).filter(m => m.content);
   if (!messages.length || messages[messages.length - 1].role !== 'user') return { status: 400, error: 'Nothing to answer.' };
   const order = aiOrder(env).filter(id => chat || TEACHERS.includes(id));
-  if (!order.length) return { status: 503, error: chat ? 'No AI is set up on this site yet.' : 'Lessons, questions and reviews are written only by Gemini or Claude, and neither is set up on this site yet. The owner needs to add a GEMINI_API_KEY secret.' };
+  if (!order.length) return { status: 503, error: chat ? 'No AI is set up on this site yet.' : 'Lessons, questions and reviews are written only by Gemini or Claude, and neither is set up on this site yet. The owner needs to add the key for one of them in Cloudflare.' };
+  /* A service that may not teach is never used for teaching, whatever the request names; the site's order applies instead. */
   const want = order.includes(provider) ? provider : '', used = await aiUsed(env, user.id), notes = []; let capped = 0;
   for (const id of want ? [want, ...order.filter(x => x !== want)] : order) {
     const cap = aiCap(env, id);
     if ((used[id] || 0) >= cap) { capped++; notes.push(`${PNAME[id]} has used today's ${cap} requests for your account`); continue; }
     let out = { text: '', model: '' };
-    try { out = id === 'gemini' ? await gemini(env, messages, tier, account ? accountTools(env, user) : null) : id === 'claude' ? await claude(env, messages, tier) : await llama(env, messages, tier); }
+    try { out = await SERVICE[id].run(env, messages, tier, account ? accountTools(env, user) : null); }
     catch (e) { console.error(e); notes.push(PNAME[id] + (e.busy ? ' is over its limit right now' : ' did not answer')); continue; }
     if (!out.text) { notes.push(PNAME[id] + ' did not answer'); continue; }
     await env.DB.prepare('INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, ?, 1) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + 1').bind(user.id, today(), id).run();

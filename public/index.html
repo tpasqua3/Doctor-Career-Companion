@@ -121,7 +121,7 @@ ul.pts{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:5px}
 .askp .log{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px;min-height:0}
 .askp .ft{padding:10px 16px 12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
 .askp textarea{min-height:52px;max-height:120px}
-.aipick{display:flex;align-items:center;gap:6px;min-width:0}.aipick select{width:auto;max-width:190px;padding:6px 8px;font-size:.85rem}
+.aipick{display:flex;align-items:center;gap:6px;min-width:0}.aipick select{width:auto;max-width:190px;flex:none;padding:6px 8px;font-size:.85rem}
 .chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
 .chips button{flex:none;border:1px solid var(--line);background:var(--card);border-radius:99px;padding:5px 11px;font-size:.8rem;cursor:pointer;white-space:nowrap}
 .caveat{background:var(--amber-soft);border-radius:8px;padding:8px 11px;font:500 .86rem/1.45 var(--ui)}
@@ -161,7 +161,7 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(120px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:9px 14px;border-radius:9px;font-size:.88rem;z-index:20;max-width:calc(100% - 32px)}
 </style>
 <div class="wrap">
-  <div class="top"><span class="brand">Doctor Career Companion</span><span class="sync" id="sync"></span></div>
+  <div class="top"><span class="brand">Doctor Career Companion</span><span id="teachpick"></span><span class="sync" id="sync"></span></div>
   <div class="tabs" role="tablist" id="tabs"></div>
   <main id="app" class="stack"><p class="muted">Loading your record…</p></main>
 </div>
@@ -811,12 +811,19 @@ async function askText(input,tier,account){if(!SAMPLE)throw{code:'unavailable'};
 /* Which AI answers. On the website the server has up to three services (Gemini, Claude, Llama) and the choice is sent with every
    request; "Automatic" takes the site's order. Inside Claude the app uses Claude itself, and can send a request to the website's
    services through the connector instead. Either way, when the chosen one is over its limit another answers and a note says so. */
-let AIS=[],AIP='auto',NATIVE=null,fellT=0;try{AIP=localStorage.getItem('dcc:ai')||'auto'}catch(e){}
-const aiCur=()=>AIS.some(a=>a.id===AIP)?AIP:WEB?'auto':'claude';
-/* Teaching (lessons, questions, cards, plans, reviews) is written only by Gemini or Claude. Llama can be picked, but it answers only in the Ask chat. */
-const teaches=a=>a&&a.teach!==false&&a.id!=='llama',aiFor=chat=>{const c=aiCur(),a=AIS.find(x=>x.id===c);return chat||c==='auto'||teaches(a)?c:WEB?'auto':'claude'};
-const aiName=chat=>{const c=aiFor(chat),a=AIS.find(x=>x.id===c)||(WEB?AIS.find(x=>chat||teaches(x)):null);return a?a.name:WEB?'The AI':'Claude'};
-const aiPick=()=>AIS.length>1?`<label class="aipick"><span class="tiny muted">AI</span><select data-ai aria-label="Which AI answers">${WEB?`<option value="auto" ${aiCur()==='auto'?'selected':''}>Automatic</option>`:''}${AIS.map(a=>`<option value="${a.id}" ${aiCur()===a.id?'selected':''}>${esc(a.name)}${teaches(a)?'':' (chat only)'}${a.cap?' · '+a.left+' left':''}</option>`).join('')}</select></label>`:'';
+/* Which AI answers, chosen twice: once for teaching and once for the Ask chat. The services come from the server, which lists only
+   those whose key is set; each says whether it may teach. Teaching (lessons, questions, cards, plans, reviews) can be given only to a
+   service allowed to teach. On the website "Automatic" takes the site's order. Inside Claude the app uses Claude itself unless
+   another service is picked, and reaches that one through the connector. When the chosen one cannot answer, another that is allowed
+   to does, and a note says so. */
+let AIS=[],AIP='auto',TEACH='auto',NATIVE=null,fellT=0;try{AIP=localStorage.getItem('dcc:ai')||'auto';TEACH=localStorage.getItem('dcc:teach')||'auto'}catch(e){}
+const teaches=a=>!!a&&a.teach!==false&&a.id!=='llama',aiOpts=chat=>AIS.filter(a=>chat||teaches(a));
+const aiFor=chat=>{const want=chat?AIP:TEACH;return aiOpts(chat).some(a=>a.id===want)?want:WEB?'auto':'claude'};
+const aiCur=()=>aiFor(true);
+const aiName=chat=>{const c=aiFor(chat),a=AIS.find(x=>x.id===c)||(WEB?aiOpts(chat)[0]:null);return a?a.name:WEB?'The AI':'Claude'};
+/* One drop-down. kind "teach" lists the services allowed to teach; "chat" lists them all. */
+const aiPick=(kind,label)=>{const chat=kind!=='teach',o=aiOpts(chat),cur=aiFor(chat);if(!o.length||(chat&&o.length<2))return '';
+  return `<label class="aipick"><span class="tiny muted">${label}</span><select data-ai="${chat?'chat':'teach'}" aria-label="${chat?'Which AI answers in Ask':'Which AI writes lessons, questions and cards'}">${WEB?`<option value="auto" ${cur==='auto'?'selected':''}>Automatic</option>`:''}${o.map(a=>`<option value="${a.id}" ${cur===a.id?'selected':''}>${esc(a.name)}${a.cap?' · '+a.left+' left':''}</option>`).join('')}</select></label>`};
 function aiSeen(j){if(Array.isArray(j.providers))AIS=(NATIVE?[{id:'claude',name:'Claude'}]:[]).concat(j.providers.filter(p=>p&&(!NATIVE||p.id!=='claude')));
   if(j.fellBack&&j.note&&Date.now()-fellT>45000){fellT=Date.now();toast(j.note+'. '+(j.name||'Another AI')+' answered instead.',7000)}}
 const webSend=async b=>{const r=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
@@ -1056,7 +1063,7 @@ async function sendChat(text){text=String(text||'').trim();if(S.asking||!text)re
 function redrawChat(){drawAsk();if(S.tab==='ask'&&!S.quiz&&!S.lesson&&!S.busy)render()}
 const chatLog=()=>S.chat.map((m,i)=>`<div class="msg ${m.role==='user'?'u':'a'}">${m.role==='user'?esc(m.content):md(m.content)+`<div class="row" style="margin-top:6px">${TTS?`<button class="btn sm" data-act="saytext" data-k="chat" data-i="${i}">Listen</button>`:''}${m.ref?`<span class="chip off">${esc(m.ref)}</span>`:''}</div>`}</div>`).join('')+(S.asking?thinking(aiName(true)+' is thinking…'):'');
 function drawAsk(){const el=$('#askp'),fab=$('#fab');fab.hidden=!!S.askOpen||S.tab==='ask';if(!S.askOpen){el.hidden=true;return}const cx=ctxInfo(),draft=($('#askin')||{}).value||'';el.hidden=false;
-  el.innerHTML=`<div class="hd"><div style="min-width:0"><b>Ask</b><div class="tiny muted">${cx.label?'About '+esc(cx.label):hasBP()?'Board-focused, grounded in your library':'Grounded in your library and record'}</div></div><div class="row" style="flex-wrap:nowrap">${aiPick()}${S.chat.length?'<button class="btn sm" data-act="chatclear">New</button>':''}<button class="btn sm" data-act="askclose" aria-label="Close">Close</button></div></div>
+  el.innerHTML=`<div class="hd"><div style="min-width:0"><b>Ask</b><div class="tiny muted">${cx.label?'About '+esc(cx.label):hasBP()?'Board-focused, grounded in your library':'Grounded in your library and record'}</div></div><div class="row" style="flex-wrap:nowrap">${aiPick('chat','Chat')}${S.chat.length?'<button class="btn sm" data-act="chatclear">New</button>':''}<button class="btn sm" data-act="askclose" aria-label="Close">Close</button></div></div>
   <div class="log" id="asklog">${S.chat.length?chatLog():`<p class="small muted">Ask anything: explain a concept, compare two options, work a case, or ask what to study. Answers draw on what is on screen, your record${LIB()&&st.prefs.lib?', your reference library':''}${hasBP()?' and the exam blueprint':''}.</p>`}</div>
   <div class="ft"><div class="chips">${cx.label?`<button data-act="askchip" data-p="Explain this more deeply, and tell me what the boards test about it.">Explain ${esc(cx.label.length>22?'this':cx.label)}</button><button data-act="askchip" data-p="Ask me two rapid questions on this, one at a time, and wait for my answer to each.">Quiz me on this</button>`:''}<button data-act="askchip" data-p="Looking at my record, what should I study next and why?">What next?</button><button data-act="mkplan">Build my learning plan</button></div>
    <textarea id="askin" placeholder="Your question" aria-label="Your question"></textarea><div class="row"><button class="btn pri" data-act="asksend" ${S.asking||!SAMPLE?'disabled':''}>Ask</button>${SAMPLE?'':'<span class="tiny muted">The AI is not available in this view.</span>'}</div></div>`;
@@ -1065,7 +1072,9 @@ function drawAsk(){const el=$('#askp'),fab=$('#fab');fab.hidden=!!S.askOpen||S.t
 /* ---------- Screen state ---------- */
 const S={askOpen:false,asking:false,deck:null,clist:false,cscope:'all',tab:'today',busy:'',err:'',track:null,sec:null,topic:null,lesson:null,quiz:null,session:null,chat:[],goal:null,brief:null,form:{}};
 const TABS=[['today','Today'],['boards','Boards'],['history','History'],['learn','Curriculum'],['questions','Questions'],['cards','Cards'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
-function render(){ $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
+/* The teaching choice sits at the top of every screen, so it can be changed right where a lesson or question set is asked for. */
+function drawTeach(){const el=$('#teachpick');if(el)el.innerHTML=aiPick('teach','Teaching by')}
+function render(){drawTeach(); $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
   /* A screen that fails to draw says so, instead of leaving the last tab's content under the new tab's name. */
   let v;try{v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,history:vHistory,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])()}catch(e){console.error(e);v=`<div class="err">This screen could not be shown: ${esc(String((e&&e.message)||e).slice(0,160))}. Send this message to Claude.</div>`}
   $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();drawAsk();hydrateFigs();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1)}
@@ -1302,7 +1311,9 @@ function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h
    <div class="plain"><span class="eyebrow">One lesson, in minutes</span><div class="row">${[['short','High-yield'],['std','Standard'],['deep','Deep dive']].map(([k,n])=>`<label class="f" style="min-width:90px">${n}<input type="number" min="2" max="60" inputmode="numeric" data-len="${k}" id="len-${k}" value="${LEN[k].min}" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px;width:100%"></label>`).join('')}</div></div>
    <div class="plain"><span class="eyebrow">One session, in minutes</span><div class="row">${Object.entries(COMMIT).map(([k,c])=>`<label class="f" style="min-width:90px">${c.name}<input type="number" min="5" max="180" inputmode="numeric" data-sess="${k}" id="sess-${k}" value="${c.min}" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px;width:100%"></label>`).join('')}</div><span class="small muted">${Object.values(COMMIT).map(c=>c.name+': '+c.lessons+' lesson'+(c.lessons>1?'s':'')).join(' · ')}</span></div></div>
   <div class="card"><h3>Questions</h3><div class="plain"><span class="eyebrow">Default set size</span>${segBtns('setSize',[[3,'3'],[5,'5'],[10,'10'],[20,'20'],[30,'30']],p.setSize)}</div><div class="plain"><span class="eyebrow">Accuracy review</span>${segBtns('audit',[[true,'Fact-check lessons, questions and cards with a second pass'],[false,'Off (faster)']],p.audit)}<span class="small muted">The review corrects what it is sure is wrong, flags what it is unsure of, and drops questions and cards it cannot stand behind. It roughly doubles the wait.</span></div></div>
-  ${AIS.length?`<div class="card"><h3>AI model</h3><p class="small muted">${WEB?'Which service writes lessons, questions, cards and answers on this website. Automatic uses the site\'s order. Each has its own daily allowance for your account; when the one you picked runs out or is busy, the next one answers and a note says so. Lessons, questions, cards, plans and accuracy reviews are written only by Gemini or Claude. Llama answers only in the Ask chat, even when it is picked here.':'Inside Claude the app uses Claude. You can send requests to the website\'s services instead, through your connector; if one cannot answer, Claude does. Llama answers only in the Ask chat; lessons, questions, cards and reviews stay with Claude or Gemini. Pictures are always read by Claude.'}</p>${aiPick()||`<p class="small">${esc(AIS[0].name)} is the only AI set up here.</p>`}
+  ${AIS.length?`<div class="card"><h3>AI models</h3><p class="small muted">${WEB?'Only services with a key set on this site are listed. Automatic uses the site\'s order. Each has its own daily allowance for your account; when the one you picked runs out or is busy, another that is allowed to do the job answers and a note says so.':'Inside Claude the app uses Claude. You can hand work to the website\'s services instead, through your connector; if one cannot answer, Claude does. Pictures are always read by Claude.'}</p>
+   <div class="plain"><span class="eyebrow">Teaching</span>${aiPick('teach','Lessons, questions, cards, plans and reviews by')||'<p class="small">No service that is allowed to teach is set up here yet.</p>'}<span class="small muted">Only services cleared for teaching appear here${aiOpts(false).length?': '+aiOpts(false).map(a=>esc(a.name)).join(', '):''}. The same choice is at the top of every screen.</span></div>
+   <div class="plain"><span class="eyebrow">Ask chat</span>${aiPick('chat','Answers in Ask by')||`<p class="small">${esc(aiName(true))} answers in Ask.</p>`}</div>
    <p class="small muted">${AIS.filter(a=>a.cap).map(a=>esc(a.name)+': '+a.left+' of '+a.cap+' requests left today').join(' · ')}</p></div>`:''}
   <div class="card"><h3>Reference library</h3><p class="small muted">${WEB&&!WEBLIB?(LIBWHY?esc(LIBWHY)+' ':'')+'The reference library is not turned on for this account on the website. Lessons here are written from the AI\'s training and the guidelines it names. Inside Claude, the app can ground them in your own Google Drive.':LIB()?'Clinical lessons and questions are grounded in the matching chapter of the reference text in Google Drive. The text is read at the moment it is needed and is not stored here.':'Google Drive is not connected to this page.'}</p>
    ${WEBLIB?`<p class="small muted">On the website this reads the Drive folders shared with <b style="overflow-wrap:anywhere">${esc(LIBMAIL||'the site\'s Google service account')}</b>. Share a folder with that address as a Viewer and it becomes readable here, new files included.</p>`:''}
@@ -1445,7 +1456,7 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='restoreok'){const R=S.restore;if(!R||R.err)return;P.stop(true);endAct();clearTimeout(timers.state);timers.state=null;Object.entries(R.docs).forEach(([n,body])=>put(n,clone(body)));CS=null;S.restore=null;S.lesson=null;S.quiz=null;S.deck=null;S.session=null;loadState();render();toast('Restored '+R.n+' items.',5000);return}
 });
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&e.target.id==='askin'){e.preventDefault();const t=e.target.value;e.target.value='';sendChat(t)}if(e.key==='Escape'&&S.askOpen){S.askOpen=false;drawAsk()}});
-document.addEventListener('change',e=>{if(e.target.dataset&&'ai' in e.target.dataset){AIP=e.target.value;try{localStorage.setItem('dcc:ai',AIP)}catch(x){}drawAsk();if(S.tab==='settings'&&!S.busy)render();return}
+document.addEventListener('change',e=>{if(e.target.dataset&&'ai' in e.target.dataset){if(e.target.dataset.ai==='teach'){TEACH=e.target.value;try{localStorage.setItem('dcc:teach',TEACH)}catch(x){}}else{AIP=e.target.value;try{localStorage.setItem('dcc:ai',AIP)}catch(x){}}drawAsk();drawTeach();if(S.tab==='settings'&&!S.busy)render();return}
   if(e.target.dataset&&e.target.dataset.libf){const L=clone(libList()),x=L[Number(e.target.dataset.i)];if(x){x[e.target.dataset.libf]=e.target.value.trim();st.prefs.libs=L;saveState()}return}
   if(e.target.id==='hfilter'){S.hf=e.target.value;render();return}
   if(e.target.dataset&&e.target.dataset.hq){const v=e.target.value,id=e.target.dataset.hq;if(v==='c'){S.hq=id;render();const el=$('#hqn');if(el){el.focus();el.select()}}else if(v)hisQuestions(id,Number(v));return}
