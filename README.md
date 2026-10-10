@@ -43,7 +43,7 @@ Cloudflare dashboard → Workers & Pages → Create → Import a repository → 
 The server touches two Drive folders, set by id in `wrangler.jsonc`:
 
 - `DRIVE_KNOWLEDGE_FOLDER`: the reference library. Read only. Every file asked for is checked to sit inside this folder before it is read. `LIBRARY_EMAILS` (a secret) lists the account emails that may read it, or `*` for every account.
-- `DRIVE_ACCOUNTS_FOLDER`: one subfolder per account, made when the account is created: `account.json`, `records/` (one file per record) and `backups/` (one dated file per day of activity, newest 14 kept). D1 stays the copy the app reads; each save is copied to Drive after the reply, and a five-minute timer copies whatever is waiting.
+- `DRIVE_ACCOUNTS_FOLDER`: one subfolder per account, made when the account is created: named by a random code only (`acct-…`, no name or email in the folder or its files): `account.json`, `records/` (one file per record) and `backups/` (one dated file per day of activity, newest 14 kept). D1 stays the copy the app reads; each save is copied to Drive after the reply, and a five-minute timer copies whatever is waiting.
 
 Accounts are kept apart by the server, not by the AI: the account comes from the login or connector link, its folder comes from its own row in D1, and no request names a folder. AI services hold no Google credential. When Gemini is allowed to look things up (the Ask companion), the server runs each lookup against the caller's rows only.
 

@@ -49,7 +49,8 @@ function init(env) {
       lease INTEGER NOT NULL DEFAULT 0, synced TEXT, error TEXT)`),
     /* Which Drive file holds each record, and the version of the record that file holds. */
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS drive_docs (user_id TEXT NOT NULL, path TEXT NOT NULL, file_id TEXT NOT NULL, synced TEXT NOT NULL, PRIMARY KEY (user_id, path))`),
-  ]).catch(e => { schema = null; throw e; });
+  ]).then(() => env.DB.prepare('ALTER TABLE drive_accounts ADD COLUMN v INTEGER NOT NULL DEFAULT 0').run().catch(() => { }))   // added later; fails harmlessly once it is there
+    .catch(e => { schema = null; throw e; });
   return schema;
 }
 
@@ -472,16 +473,20 @@ async function driveSlice(env, id, offset) {
 
 /* ---------- Account folders in Google Drive ----------
    Inside DRIVE_ACCOUNTS_FOLDER every account gets one subfolder, made the moment the account is created:
-     <First Last> - <email> [<first 8 of the account id>]/
-       account.json          who the account belongs to (no password, no login tokens)
+     acct-<first 12 characters of the account's random id>/
+       account.json          the account's id and the day it was made: no name, no email, no password, no login tokens
        records/              one file per record, e.g. med__state.json for med/state: the same documents the app saves
        backups/              backup-YYYY-MM-DD.json, the whole record on each day something changed (the newest 14 are kept)
+   Nothing in a folder's name or its account.json says whose it is. Which person an id belongs to is known only to the database
+   (the owner's accounts list on the account page shows it). The records themselves are the study record, which can hold what
+   the user typed about themselves.
    D1 is the copy the app reads and writes, so it stays fast and works when Google is slow. Each save is copied to Drive straight
    after the reply is sent, and a timer every five minutes copies whatever is still waiting.
    Isolation: every function here takes the account id the server worked out for itself and looks the folder up in that account's
    own drive_accounts row. No request carries a folder or file id for this part of Drive, except a backup to download, and that one
    is checked to sit in the caller's own backups folder first. */
-const FOLDER = 'application/vnd.google-apps.folder', LEASE = 90000, KEEP_BACKUPS = 14;
+const FOLDER = 'application/vnd.google-apps.folder', LEASE = 90000, KEEP_BACKUPS = 14, LAYOUT = 2;
+const folderName = id => 'acct-' + id.slice(0, 12);
 function gfail(r, j) {
   const why = String((j && j.error && (j.error.message || j.error.status)) || r.status);
   if (/storage quota|storageQuotaExceeded/i.test(why + JSON.stringify((j && j.error && j.error.errors) || ''))) return new LibError('Google does not let a service account keep files in a personal Drive. The owner needs to connect their own Google account on the account page.', 507);
@@ -527,8 +532,15 @@ async function syncUser(env, uid, B) {
     const u = await env.DB.prepare('SELECT id, email, first, last, created FROM users WHERE id = ?').bind(uid).first();
     if (!u) return { on: true };
     const set = async (col, val) => { await env.DB.prepare(`UPDATE drive_accounts SET ${col} = ? WHERE user_id = ?`).bind(val, uid).run(); row[col] = val; };
-    const about = () => JSON.stringify({ app: 'doctor-career-companion', accountId: u.id, email: u.email, firstName: u.first || '', lastName: u.last || '', created: u.created, written: new Date().toISOString() }, null, 1);
-    if (!row.folder) { B.n--; await set('folder', await mkdir(env, `${[u.first, u.last].filter(Boolean).join(' ') || 'Account'} - ${u.email} [${u.id.slice(0, 8)}]`.replace(/[\\/]/g, ' ').slice(0, 200), ACCTS(env), { dccAccount: u.id })); }
+    const about = () => JSON.stringify({ app: 'doctor-career-companion', accountId: u.id, created: String(u.created).slice(0, 10), written: new Date().toISOString() }, null, 1);
+    if (!row.folder) { B.n--; await set('folder', await mkdir(env, folderName(u.id), ACCTS(env), { dccAccount: u.id })); await set('v', LAYOUT); }
+    /* A folder made before names were taken out: rename it, rewrite its account file, and replace its backups, which carried the email. */
+    if (row.folder && (row.v || 0) < LAYOUT && row.records && row.backups && row.profile) {
+      B.n -= 3; await gsend(env, 'PATCH', 'files/' + row.folder, { name: folderName(u.id) }); await gupload(env, { id: row.profile, text: about() });
+      const old = (await (await gfetch(env, 'files', { q: `'${row.backups}' in parents and trashed = false`, pageSize: 100, fields: 'files(id)' })).json()).files || [];
+      for (const f of old) { B.n--; await trash(env, f.id); }
+      await set('backup_day', null); await set('v', LAYOUT);
+    }
     if (!row.records) { B.n--; await set('records', await mkdir(env, 'records', row.folder)); }
     if (!row.backups) { B.n--; await set('backups', await mkdir(env, 'backups', row.folder)); }
     if (!row.profile) { B.n--; await set('profile', await gupload(env, { name: 'account.json', parent: row.folder, text: about() })); }
@@ -548,7 +560,7 @@ async function syncUser(env, uid, B) {
     const last = await env.DB.prepare('SELECT MAX(updated) AS t, COUNT(*) AS n FROM docs WHERE user_id = ?').bind(uid).first(), day = String((last && last.t) || '').slice(0, 10);
     if (B.n > 4 && last && last.n && day && day !== row.backup_day) {
       const { results } = await env.DB.prepare('SELECT path, body FROM docs WHERE user_id = ?').bind(uid).all();
-      const text = '{"app":"doctor-career-companion","account":' + JSON.stringify(u.email) + ',"saved":' + JSON.stringify(new Date().toISOString()) + ',"docs":{' + results.map(r => JSON.stringify(r.path) + ':' + r.body).join(',') + '}}';
+      const text = '{"app":"doctor-career-companion","accountId":' + JSON.stringify(u.id) + ',"saved":' + JSON.stringify(new Date().toISOString()) + ',"docs":{' + results.map(r => JSON.stringify(r.path) + ':' + r.body).join(',') + '}}';
       B.n -= 3; await gupload(env, { name: 'backup-' + day + '.json', parent: row.backups, text, props: { dccAccount: u.id } });
       await gupload(env, { id: row.profile, text: about() }).catch(() => { });
       await set('backup_day', day);
@@ -603,7 +615,7 @@ The app sets one cookie, which keeps you logged in. It has no advertising and no
 
 ## Where it is kept
 - **Cloudflare.** The site runs on Cloudflare, and your account and study record are stored in its database.
-- **Google Drive.** A copy of your study record, with dated backups, is kept in private Google Drive storage that the app uses. Your password and login tokens are never copied there. The person who runs the app can access this storage; other users cannot reach it.
+- **Google Drive.** A copy of your study record, with dated backups, is kept in private Google Drive storage that the app uses. Each account has its own folder there, labelled only with a random account code: the folder and its files do not carry your name or email address, and your password and login tokens are never copied there. The study record inside is what you see in the app, so it includes anything you typed about yourself. The person who runs the app can access this storage; other users cannot reach it.
 - **Your browser.** The app keeps a copy of your record and a few preferences on your device so it opens quickly and works briefly offline.
 
 ## AI services
