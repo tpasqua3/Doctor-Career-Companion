@@ -89,7 +89,7 @@ function home(){
 /* This account's own folder in Google Drive: how much of the record is there, and its dated backups. */
 function store(){const s=me.storage||{};if(!s.on)return me.owner?'':`<div class="card"><h2>Central storage</h2><p class="small muted">Your record is saved in this site's database. The copy in Google Drive is not switched on yet.</p></div>`;
   return `<div class="card"><div class="row" style="justify-content:space-between"><h2>Central storage</h2><span class="chip ${s.waiting||s.error?'':'on'}">${s.error?'Problem':s.waiting?s.waiting+' waiting':'Up to date'}</span></div>
-   <p class="small muted">Every record is also kept in a private folder for your account in the site owner's Google Drive, with a dated backup for each day you study. Only your account can read or change it through this site.</p>
+   <p class="small muted">Every record is also kept in a private folder for your account in the app's Google Drive storage, with a dated backup for each day you study. Only your account can read or change it through this site.</p>
    <table><tbody><tr><td>Records in Drive</td><td>${s.records-s.waiting} of ${s.records}</td></tr><tr><td>Last copied</td><td>${esc(when(s.synced))}</td></tr><tr><td>Latest backup</td><td>${esc(s.backupDay||'none yet')}</td></tr></tbody></table>
    ${s.error?`<div class="err">${esc(s.error)}</div>`:''}
    <div class="row"><button class="btn" data-act="sync" ${syncing?'disabled':''}>${syncing?'Copying…':'Copy to Drive now'}</button><button class="btn" data-act="backups">${backups?'Refresh backups':'Show backups'}</button>${s.url?`<a class="btn" href="${esc(s.url)}" target="_blank" rel="noopener">Open my folder</a>`:''}</div>
