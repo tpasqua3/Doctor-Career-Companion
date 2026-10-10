@@ -615,7 +615,7 @@ The app sets one cookie, which keeps you logged in. It has no advertising and no
 
 ## Where it is kept
 - **Cloudflare.** The site runs on Cloudflare, and your account and study record are stored in its database.
-- **Google Drive.** A copy of your study record, with dated backups, is kept in private Google Drive storage that the app uses. Each account has its own folder there, labelled only with a random account code: the folder and its files do not carry your name or email address, and your password and login tokens are never copied there. The study record inside is what you see in the app, so it includes anything you typed about yourself. The person who runs the app can access this storage; other users cannot reach it.
+- **Google Drive.** A copy of your study record, with dated backups, is kept in private Google Drive storage that the app uses. Each account's data is stored in its own folder under a de-identified naming convention: the folder is labelled with a randomly generated account code, and neither the folder nor its files are labelled with your name or email address. Your password and login tokens are never copied there. The study record inside is the same one you see in the app, so it includes anything you typed about yourself. The person who runs the app can access this storage; other users cannot reach it.
 - **Your browser.** The app keeps a copy of your record and a few preferences on your device so it opens quickly and works briefly offline.
 
 ## AI services
