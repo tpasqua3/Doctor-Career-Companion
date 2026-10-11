@@ -89,6 +89,8 @@ td.n,th.n{text-align:right;font-family:var(--num);font-variant-numeric:tabular-n
 .lesson{font-family:var(--read);font-size:1.06rem;line-height:1.7;max-width:66ch}
 .lesson section{padding:10px 12px;margin-inline:-12px;border-radius:8px;display:flex;flex-direction:column;gap:6px}
 .lesson section[data-now="1"]{background:var(--teal-soft)}
+/* While a lesson is being read, its text can be tapped to move the voice there. */
+body[data-reading="1"] [data-seg]{cursor:pointer}
 ::highlight(now){background-color:var(--teal);color:var(--teal-ink)}
 .lesson h3{font-size:1.02rem}
 ul.pts{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:5px}
@@ -751,6 +753,17 @@ function pieceRange(seg,text){const el=document.querySelector('[data-seg="'+Stri
   let needle=String(text).replace(/\s+/g,' ').trim(),i=find(needle);if(i<0){needle=needle.replace(/[.!?]+$/,'');i=find(needle)}if(i<0)return null;
   let a=i,b=i+needle.length-1;while(a<b&&!at[a])a++;while(b>a&&!at[b])b--;if(!at[a]||!at[b])return null;
   pieceAt={seg,pos:i+needle.length};const r=document.createRange();r.setStart(at[a][0],at[a][1]);r.setEnd(at[b][0],at[b][1]+1);return r}
+/* Tap the lesson text to move the voice there. While something is being read, a tap on a section finds the sentence under the
+   finger (the browser says which character was tapped; the section's pieces are located in its text the same way the highlight
+   finds them) and reading restarts from that piece. A tap on a button, link, table or picture, or the end of selecting text, is
+   left alone, and so is everything when the player is not loaded. */
+function seekTap(el,e){const seg=el.dataset.seg,ks=[];P.q.forEach((q,k)=>{if(q.say&&String(q.seg)===seg)ks.push(k)});if(!ks.length)return false;
+  let node=null,off=0;try{if(document.caretPositionFromPoint){const c=document.caretPositionFromPoint(e.clientX,e.clientY);if(c){node=c.offsetNode;off=c.offset}}else if(document.caretRangeFromPoint){const c=document.caretRangeFromPoint(e.clientX,e.clientY);if(c){node=c.startContainer;off=c.startOffset}}}catch(x){}
+  const w=document.createTreeWalker(el,NodeFilter.SHOW_TEXT);let flat='',n,hit=-1;
+  while((n=w.nextNode())){const s=n.nodeValue;if(flat&&!flat.endsWith(' '))flat+=' ';if(n===node)hit=flat.length;
+    for(let i=0;i<s.length;i++){if(n===node&&i===off)hit=flat.length;if(/\s/.test(s[i])){if(!flat.endsWith(' '))flat+=' '}else flat+=s[i]}}
+  let k=ks[0];if(hit>=0){let from=0;for(const j of ks){let x=String(P.q[j].say).replace(/\s+/g,' ').trim(),i=flat.indexOf(x,from);if(i<0){x=x.replace(/[.!?]+$/,'');i=flat.indexOf(x,from)}if(i<0)continue;if(i>hit)break;k=j;from=i+x.length}}
+  P.i=k;P.tok++;clearTimeout(P.timer);hush();kokTrim(P.q[k].say);pieceAt={seg:null,pos:0};P.paused=false;prime();P.run();return true}
 function mark(seg,text){const hl=typeof CSS!=='undefined'&&CSS.highlights&&typeof Highlight!=='undefined';let r=null;
   try{if(hl)CSS.highlights.delete('now');if(P.on&&text&&seg!=null&&seg!==-1)r=pieceRange(seg,text);if(r&&hl)CSS.highlights.set('now',new Highlight(r))}catch(e){r=null}
   if(seg===-1||seg==null)pieceAt={seg:null,pos:0};
@@ -758,7 +771,7 @@ function mark(seg,text){const hl=typeof CSS!=='undefined'&&CSS.highlights&&typeo
   document.querySelectorAll('[data-seg]').forEach(el=>{const on=String(seg)===el.dataset.seg;if(on&&el.dataset.now!=='1'&&P.on&&!r)el.scrollIntoView({block:el.offsetHeight>innerHeight*.6?'start':'center',behavior:calm});el.dataset.now=on?'1':''});
   if(r&&Date.now()-handScroll>6000){try{const b=r.getBoundingClientRect(),top=innerHeight*.16,bot=innerHeight*.58;if(b.height&&(b.top<top||b.bottom>bot))scrollBy({top:b.top-innerHeight*.3,behavior:calm})}catch(e){}}}
 const IC={spk:'<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zm11.5 3A4.5 4.5 0 0 0 13 8v8a4.5 4.5 0 0 0 2.5-4z"/></svg>',flag:'<svg viewBox="0 0 24 24"><path d="M9.2 16.6 4.9 12.3l-1.5 1.5 5.8 5.8L21 7.8l-1.5-1.5z"/></svg>',play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
-function drawPlayer(){const el=$('#player');if(!P.on&&P.flag){P.flag=null}if(!P.flag&&!$('#flagpop').hidden)drawFlag();$('#fab').dataset.up=P.on?'1':'';if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
+function drawPlayer(){const el=$('#player');document.body.dataset.reading=P.on?'1':'';if(!P.on&&P.flag){P.flag=null}if(!P.flag&&!$('#flagpop').hidden)drawFlag();$('#fab').dataset.up=P.on?'1':'';if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
   el.innerHTML=`<div class="in"><div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><div class="t">${esc(P.title)}</div><div class="tiny muted">${esc(P.sub)}${P.q[P.i]&&P.q[P.i].wait?' · thinking time':''}${P.by&&ENGINE[P.by]?' · '+ENGINE[P.by]:''}</div></div><span class="tiny num muted">${p}%</span></div>
   <div class="meter"><i style="width:${p}%"></i></div>
   <div class="ctl"><button data-act="pprev" aria-label="Back one section">${IC.prev}</button><button class="big" data-act="ptoggle" aria-label="${P.paused?'Play':'Pause'}">${P.paused?IC.play:IC.pause}</button><button data-act="pnext" aria-label="Skip one section">${IC.next}</button>
@@ -1614,6 +1627,7 @@ function readBackup(text){let j;try{j=JSON.parse(text)}catch(e){return {err:'Tha
   const n=Object.keys(out).length;return n?{n,saved:j.saved||'',state:!!(out.state&&out.state.v),docs:out}:{err:'That backup is empty.'}}
 
 document.addEventListener('click',async e=>{unlock();
+  {const sg=P.on&&!P.flag&&e.target.closest?e.target.closest('[data-seg]'):null;if(sg&&!e.target.closest('button,a,input,select,textarea,label,summary,figure,table,img,[data-act],[data-pick],[data-rate]')&&!String(window.getSelection?getSelection():'').trim()&&seekTap(sg,e))return}
   const tab=e.target.closest('[data-tab]');if(tab){if(S.quiz)endQuiz();if(!P.on)endAct(S.deck?{n:S.deck.seen}:null);S.tab=tab.dataset.tab;S.lesson=null;S.deck=null;S.clist=false;S.err='';if(S.session&&!P.on)S.session=null;render();scrollTo(0,0);return}
   const dk=e.target.closest('[data-deck]');if(dk){S.tab='cards';S.cscope='top:'+dk.dataset.deck;S.deck=null;S.clist=false;render();scrollTo(0,0);return}
   const pp=e.target.closest('[data-pp]');if(pp){if(pp.disabled)return;S.pp=Number(pp.dataset.pp);render();const c=$('#plancard');if(c)c.scrollIntoView({block:'nearest'});return}
