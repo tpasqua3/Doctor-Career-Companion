@@ -424,7 +424,12 @@ const SAYS0=[['apixaban','uh pix uh ban'],['rivaroxaban','riv uh rox uh ban'],['
 /* SITE: what the server says about the central list (see siteSays in src/worker.js). The owner's own list is the central one. */
 let SITE={owner:false,list:[]};const siteSeen=j=>{if(j&&j.says&&Array.isArray(j.says.list))SITE={owner:!!j.says.owner,list:j.says.list}};
 const sayClean=v=>String(v||'').replace(/\s+/g,' ').trim();
-const saysChanged=()=>{saveState();clips.forEach(p=>p.then(u=>URL.revokeObjectURL(u),()=>{}));clips.clear()};
+/* A change to the list. Passages already prepared as sound are kept, except those that contain one of the changed words (`words`;
+   none given means the whole list changed). Throwing them all away made the app ask the voice for several passages at once after
+   every edit, which is what tipped it into the device voice. The clip in the player right now is never pulled from under it. */
+const clipDrop=words=>{const ws=(words||[]).map(w=>sayClean(w).toLowerCase()).filter(Boolean);if(words&&!ws.length)return;
+  [...clips.keys()].forEach(k=>{const key=String(k).toLowerCase();if(words&&!ws.some(w=>key.includes(w)))return;const pr=clips.get(k);clips.delete(k);pr.then(u=>{if(!AUD||AUD.src!==u)URL.revokeObjectURL(u)},()=>{})})};
+const saysChanged=words=>{saveState();clipDrop(words)};
 function saysHtml(){const L=st.says||[],todo=L.filter(x=>!sayClean(x.s)).length,on=L.filter(x=>x.on!==false&&sayClean(x.s)).length;
   return `<div class="card" id="sayscard"><h3>Pronunciations</h3><p class="small muted">The Cloudflare voice gets some words wrong, drug names most of all. List a word here with a spelling that makes the voice say it right, and that voice will use your spelling from then on. The text on screen and the Google voices are not changed.</p>
    ${SITE.owner?'<p class="note">You are the site owner, so this is the central list: what you set here is used for every account.</p>':SITE.list.length?`<p class="note">The site already corrects ${SITE.list.length} word${SITE.list.length>1?'s':''} for everyone. What you add here applies to your account only, and your spelling wins where both list the same word.</p><details><summary class="small" style="cursor:pointer;font-weight:600">See the site's list</summary><div class="small" style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 12px;padding-top:8px">${SITE.list.map(x=>`<span>${esc(x.w)}</span><span class="muted">${esc(x.s)}</span>`).join('')}</div></details>`:'<p class="small muted">What you add here applies to your account only.</p>'}
@@ -583,7 +588,11 @@ let cloudOff=0,cloudFails=0,primed=false;const clips=new Map();
 /* A phone only lets a page start sound from a tap, so the first tap plays a moment of silence on the player that the clips will use. */
 function prime(){if(primed||!AUD||!AUD.paused)return;primed=true;try{AUD.src=SIL;const p=AUD.play();if(p&&p.catch)p.catch(e=>{if(e&&e.name==='NotAllowedError')primed=false})}catch(e){primed=false}}
 const cloudOn=()=>!!AUD&&st.prefs.voice!=='device'&&Date.now()>cloudOff&&(WEB||(LINKED&&!!MCP));
-const cloudBad=()=>{if(++cloudFails>=2){cloudOff=Date.now()+10*60e3;cloudFails=0}};
+/* When the natural voice fails: a passage is asked for a second time before it counts as a failure; two failures in a row rest
+   that voice for two minutes, and only a real daily limit (the server's 429) rests it for thirty. Either way a note says so,
+   so a switch to the device's voice is never a mystery. */
+const cloudRest=(min,why)=>{cloudOff=Date.now()+min*60e3;cloudFails=0;toast(why+' Reading with this device\'s voice for '+min+' minutes, then the natural voice is tried again.',7000)};
+const cloudBad=()=>{if(++cloudFails>=2)cloudRest(2,'The natural voice is not answering.')};
 const keep=(key,p)=>{clips.set(key,p);if(clips.size>40){const k=clips.keys().next().value,old=clips.get(k);clips.delete(k);old.then(u=>URL.revokeObjectURL(u),()=>{})}return p};
 /* The offline voice (website only): the Kokoro voice model, downloaded once to this device at the person's request and run here
    by public/voice/worker.js, so it uses no data afterwards and has no daily limit. KOK.have is which size this device holds
@@ -634,9 +643,9 @@ function kokHtml(){if(!kokCan())return'';kokFind();const sz=x=>x==='fp32'?'Full 
   return h+`<p class="small muted">The offline voice is the most natural one. It is downloaded once and then runs on this device: no data used, no daily limit. Use Wi-Fi for the download. Standard suits most phones; Full quality sounds a little better and needs a recent phone or computer${gpu?'':' (this browser lacks the graphics support it relies on, so it would be slow here)'}. It can take a few seconds to prepare each passage, and on an iPhone add this app to your Home Screen first, or the phone may clear the download.</p>`}
 const voiceAsk=b=>Promise.race([WEB?webSend(b):MCP.callTool(CONN,'ask_ai',b,{cache:false}).then(r=>{const j=r&&(r.payload??r.structuredContent);if(!j||j.error)throw{code:(j&&j.code)||'upstream_error'};return j}),new Promise((_,no)=>setTimeout(()=>no({code:'slow'}),15000))])
     .then(j=>{if(!j||typeof j.audio!=='string'||!j.audio)throw{code:'upstream_error'};const bin=atob(j.audio),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);const url=URL.createObjectURL(new Blob([u],{type:j.type||'audio/mpeg'}));engineOf.set(url,j.voice||'cloudflare');if(engineOf.size>60)engineOf.delete(engineOf.keys().next().value);return url});
-function voiceClip(text){let p=clips.get(text);if(p)return p;
-  p=voiceAsk({input:text,job:'speak'}).then(u=>{cloudFails=0;return u})
-    .catch(e=>{clips.delete(text);if(e&&e.code==='rate_limited')cloudOff=Date.now()+30*60e3;else cloudBad();throw e});
+function voiceClip(text){let p=clips.get(text);if(p)return p;const b={input:text,job:'speak'};
+  p=voiceAsk(b).catch(e=>{if(e&&(e.code==='rate_limited'||e.code==='session_expired'))throw e;return new Promise(r=>setTimeout(r,700)).then(()=>voiceAsk(b))}).then(u=>{cloudFails=0;return u})
+    .catch(e=>{clips.delete(text);if(e&&e.code==='rate_limited'){if(Date.now()>cloudOff)cloudRest(30,'The natural voice has reached its limit for today.')}else cloudBad();throw e});
   return keep(text,p)}
 const hush=()=>{try{if(TTS)speechSynthesis.cancel()}catch(e){}try{if(AUD)AUD.pause()}catch(e){}};
 /* Settings, Pronunciations: the Cloudflare voice reads one word or respelling exactly as typed (job "speak_cf"), so the two can be compared. */
@@ -682,7 +691,7 @@ function flagMark(row,x){if(x.on===false)row.dataset.off='1';else delete row.dat
 function flagType(inp){const F=P.flag,row=inp.closest('.frow');if(!F||!row)return;let x=flagEntry(row);
   if(!x){if(!sayClean(inp.value))return;x={w:'',s:''};F.rows.push(x);row.dataset.r=String(F.rows.length-1);row.querySelector('[data-ff="w"]').placeholder='word';st.says=[x,...(st.says||[])];
     const l=$('#flag-list');l.insertAdjacentHTML('beforeend',flagRow('new',null));l.scrollTop=l.scrollHeight}
-  const f=inp.dataset.ff,v=sayClean(inp.value).slice(0,f==='w'?60:120);x[f]=f==='w'?v.toLowerCase():v;if(f==='s'&&v)x.on=true;flagMark(row,x);F.dirty=true;saysChanged()}
+  const f=inp.dataset.ff,v=sayClean(inp.value).slice(0,f==='w'?60:120);F.touched.add(x.w);x[f]=f==='w'?v.toLowerCase():v;F.touched.add(x.w);if(f==='s'&&v)x.on=true;flagMark(row,x);F.dirty=true;saveState()}
 /* A word of the passage was tapped: go to its row if it has one (bringing a switched-off starter guess into view), else start a new row with it. */
 function flagWord(w){const F=P.flag,l=$('#flag-list');w=sayClean(w).toLowerCase();if(!F||!w)return;let r=F.rows.findIndex(x=>sayClean(x.w).toLowerCase()===w),row;
   if(r<0){const x=(st.says||[]).find(y=>sayClean(y.w).toLowerCase()===w);
@@ -690,10 +699,14 @@ function flagWord(w){const F=P.flag,l=$('#flag-list');w=sayClean(w).toLowerCase(
     else{row=l.querySelector('[data-r="new"]');const i=row.querySelector('[data-ff="w"]');i.value=w;flagType(i)}}
   row=row||l.querySelector('[data-r="'+r+'"]');if(!row)return;row.scrollIntoView({block:'nearest'});const s=row.querySelector('[data-ff="s"]');s.focus();try{s.setSelectionRange(s.value.length,s.value.length)}catch(e){}}
 /* Done: rows left blank are dropped, and if anything changed the lesson goes back one passage so the fix is heard. */
-function flagClose(resume){const F=P.flag;sayTok++;if(F){const n=(st.says||[]).length;st.says=(st.says||[]).filter(x=>sayClean(x.w)||sayClean(x.s));if(F.dirty||st.says.length!==n)saysChanged();if(F.dirty&&resume&&P.on&&F.from>=0&&F.from<P.q.length)P.i=F.from}
-  P.flag=null;drawFlag();if(resume&&P.on&&P.paused){hush();P.toggle()}else drawPlayer()}
+function flagClose(resume){const F=P.flag;sayTok++;let wait=0;if(F){const n=(st.says||[]).length;st.says=(st.says||[]).filter(x=>sayClean(x.w)||sayClean(x.s));
+    if(F.dirty||st.says.length!==n){clearTimeout(timers.state);timers.state=null;put('state',st);clipDrop([...F.touched]);wait=900}
+    if(F.dirty&&resume&&P.on&&F.from>=0&&F.from<P.q.length)P.i=F.from}
+  P.flag=null;drawFlag();drawPlayer();
+  /* The list is saved on the server, which is where the words are swapped, so the lesson waits a moment for the save before it reads on. */
+  if(resume&&P.on&&P.paused){const go=()=>{if(P.on&&P.paused&&!P.flag){hush();P.toggle()}};if(wait)setTimeout(go,wait);else go()}}
 function flagOpen(){let from=P.i;for(let k=P.i-1;k>=0;k--){if(P.q[k]&&P.q[k].say){from=k;break}}
-  P.flag={words:flagWords(),rows:(st.says||[]).filter(x=>x.on!==false||!sayClean(x.s)).reverse(),dirty:false,from};if(P.on&&!P.paused)P.toggle();drawFlag()}
+  P.flag={words:flagWords(),rows:(st.says||[]).filter(x=>x.on!==false||!sayClean(x.s)).reverse(),dirty:false,touched:new Set(),from};if(P.on&&!P.paused)P.toggle();drawFlag()}
 let unlocked=false;function unlock(){prime();if(unlocked||!TTS)return;unlocked=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}
 /* Text is cut into pieces at sentence ends (a full stop inside a number such as 0.5 is not one). The first piece of a passage is
    kept to about one sentence (140 characters), the second to 200 and the rest to 240, because a voice takes time in proportion to
@@ -1634,11 +1647,11 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='pflagx')return flagClose(true);
   if(a==='pflagw')return flagWord(b.dataset.w);
   if(a==='pflagh'){const row=b.closest('.frow'),el=row&&row.querySelector('[data-ff="'+(b.dataset.k==='w'?'w':'s')+'"]');return sayTry(sayClean(el&&el.value),b)}
-  if(a==='pflagon'){const row=b.closest('.frow'),x=flagEntry(row);if(!x||!sayClean(x.s))return toast('Type how it should be said first.');x.on=x.on===false;flagMark(row,x);P.flag.dirty=true;saysChanged();return}
+  if(a==='pflagon'){const row=b.closest('.frow'),x=flagEntry(row);if(!x||!sayClean(x.s))return toast('Type how it should be said first.');x.on=x.on===false;flagMark(row,x);P.flag.dirty=true;P.flag.touched.add(x.w);saveState();return}
   if(a==='pflagall'){flagClose(false);S.tab='settings';render();const c=$('#sayscard');if(c)c.scrollIntoView({block:'start'});return}
   if(a==='sayadd'){st.says=[{w:'',s:''},...(st.says||[])];saveState();render();const el=document.getElementById('say-w-0');if(el)el.focus();return}
-  if(a==='saydel'){const L=(st.says||[]).slice();L.splice(Number(b.dataset.i),1);st.says=L;saysChanged();render();return}
-  if(a==='sayon'){const x=(st.says||[])[Number(b.dataset.i)];if(!x)return;if(!sayClean(x.s))return toast('Give it a respelling first.');x.on=x.on===false;saysChanged();render();return}
+  if(a==='saydel'){const L=(st.says||[]).slice(),gone=L.splice(Number(b.dataset.i),1)[0];st.says=L;saysChanged([gone&&gone.w]);render();return}
+  if(a==='sayon'){const x=(st.says||[])[Number(b.dataset.i)];if(!x)return;if(!sayClean(x.s))return toast('Give it a respelling first.');x.on=x.on===false;saysChanged([x.w]);render();return}
   if(a==='sayplay'){const el=document.getElementById('say-'+b.dataset.k+'-'+b.dataset.i);return sayTry(sayClean(el&&el.value),b)}
   if(a==='prate'){const r=[.85,1,1.15,1.3,1.5],i=r.indexOf(st.prefs.rate);st.prefs.rate=r[(i+1)%r.length];saveState();if(P.on&&!P.paused){P.tok++;P.run()}drawPlayer();return}
   if(a==='up'){if(S.tab==='career')S.goal=null;else if(S.topic)S.topic=null;else if(S.sec)S.sec=null;else S.track=null;S.err='';render();return}
@@ -1726,7 +1739,7 @@ document.addEventListener('change',e=>{if(e.target.dataset&&'kvoice' in e.target
 document.addEventListener('change',e=>{if(e.target.dataset&&('gvoice' in e.target.dataset||'gtier' in e.target.dataset)){st.prefs['gvoice' in e.target.dataset?'gvoice':'gtier']=e.target.value;saveState();clips.forEach(p=>p.then(u=>URL.revokeObjectURL(u),()=>{}));clips.clear();toast('Voice changed. It applies from the next passage.');return}
   if(e.target.dataset&&'dvoice' in e.target.dataset){try{localStorage.setItem('dcc:dvoice',e.target.value)}catch(x){}pickVoice();if(TTS&&!P.on){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('This is the voice that will read your lessons.');if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}u.rate=st.prefs.rate;speechSynthesis.speak(u)}catch(x){}}}});
 document.addEventListener('change',e=>{if(e.target.dataset&&'ai' in e.target.dataset){if(e.target.dataset.ai==='teach'){TEACH=e.target.value;try{localStorage.setItem('dcc:teach',TEACH)}catch(x){}}else{AIP=e.target.value;try{localStorage.setItem('dcc:ai',AIP)}catch(x){}}drawAsk();drawTeach();if(S.tab==='settings'&&!S.busy)render();return}
-  if(e.target.dataset&&e.target.dataset.sayf){const x=(st.says||[])[Number(e.target.dataset.i)];if(x){const f=e.target.dataset.sayf,v=sayClean(e.target.value).slice(0,f==='w'?60:120);x[f]=f==='w'?v.toLowerCase():v;if(f==='s'&&v&&x.on==null)x.on=true;saysChanged()}return}
+  if(e.target.dataset&&e.target.dataset.sayf){const x=(st.says||[])[Number(e.target.dataset.i)];if(x){const f=e.target.dataset.sayf,v=sayClean(e.target.value).slice(0,f==='w'?60:120);const was=x.w;x[f]=f==='w'?v.toLowerCase():v;if(f==='s'&&v&&x.on==null)x.on=true;saysChanged([was,x.w])}return}
   if(e.target.dataset&&e.target.dataset.libf){const L=clone(libList()),x=L[Number(e.target.dataset.i)];if(x){x[e.target.dataset.libf]=e.target.value.trim();st.prefs.libs=L;saveState()}return}
   if(e.target.id==='hfilter'){S.hf=e.target.value;render();return}
   if(e.target.dataset&&e.target.dataset.hq){const v=e.target.value,id=e.target.dataset.hq;if(v==='c'){S.hq=id;render();const el=$('#hqn');if(el){el.focus();el.select()}}else if(v)hisQuestions(id,Number(v));return}

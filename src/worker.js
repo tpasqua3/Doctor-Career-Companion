@@ -443,7 +443,7 @@ async function speak(env, user, input, only) {
     else if (r instanceof Uint8Array) audio = b64(r);
     else if (r && typeof r.getReader === 'function') audio = b64(new Uint8Array(await new Response(r).arrayBuffer()));
     if (audio) { try { const small = slim(unb64(audio)); type = soundType(small); audio = b64(small); } catch (e) {} }
-  } catch (e) { console.log('speak: ' + String(e && e.message || e).slice(0, 200)); return { status: 429, error: 'The natural voice is not available just now.' }; }
+  } catch (e) { console.log('speak: ' + String(e && e.message || e).slice(0, 200)); return { status: 503, error: 'The natural voice is not available just now.' }; }
   if (!audio) return { status: 502, error: 'The natural voice sent nothing back.' };
   await env.DB.prepare("INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, 'tts', ?) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + excluded.n").bind(user.id, today(), text.length).run();
   return { status: 200, audio, type, voice: 'cloudflare' };
