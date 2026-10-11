@@ -383,11 +383,36 @@ async function googleSpeak(env, user, text) {
   }
   return null;
 }
-async function speak(env, user, input) {
-  const text = String(typeof input === 'string' ? input : '').replace(/\s+/g, ' ').trim().slice(0, 600);
+/* Pronunciations. The Cloudflare voice reads plain text only and gets some words wrong, drug names above all. Each account keeps a
+   list in its record (`says` in med/state: { w: the word, s: how to spell it so the voice says it right, on }), edited in the app's
+   Settings. Just before a passage goes to the Cloudflare voice, each listed word is swapped for its respelling: whole words only,
+   any capitalisation, a plural s carried over. The Google voices and the text on screen are never touched. */
+async function sayList(env, user) {
+  try { const row = await env.DB.prepare("SELECT json_extract(body, '$.says') AS s FROM docs WHERE user_id = ? AND path = 'med/state'").bind(user.id).first();
+    const a = row && row.s ? JSON.parse(row.s) : []; return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+function respell(text, list) {
+  const map = new Map();
+  for (const x of Array.isArray(list) ? list : []) {
+    if (!x || x.on === false || typeof x.w !== 'string' || typeof x.s !== 'string') continue;
+    const w = x.w.replace(/\s+/g, ' ').trim().toLowerCase(), s = x.s.replace(/\s+/g, ' ').trim();
+    if (w && s && w.length <= 60 && s.length <= 120 && !map.has(w) && map.size < 500) map.set(w, s);
+  }
+  if (!map.size) return text;
+  const words = [...map.keys()].sort((a, b) => b.length - a.length).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
+  const re = new RegExp("(?<![A-Za-z0-9])(" + words.join('|') + ")(s?)(?![A-Za-z0-9])", 'gi');
+  return text.replace(re, (m, w, s) => { const to = map.get(w.toLowerCase().replace(/\s+/g, ' ')); return to ? to + s : m; });
+}
+/* `only` is 'cf' for the Settings play buttons: the Cloudflare voice reads the text exactly as given, so a respelling can be heard
+   and compared with the word as written. */
+async function speak(env, user, input, only) {
+  let text = String(typeof input === 'string' ? input : '').replace(/\s+/g, ' ').trim().slice(0, 600);
   if (!text) return { status: 400, error: 'Nothing to read.' };
-  const g = await googleSpeak(env, user, text).catch(() => null);
-  if (g) return g;
+  if (only !== 'cf') {
+    const g = await googleSpeak(env, user, text).catch(() => null);
+    if (g) return g;
+    text = respell(text, await sayList(env, user)).slice(0, 900);
+  }
   if (!env.AI) return { status: 429, error: 'The natural voice is not available on this site.' };
   const cap = Number(env.TTS_DAILY_CHARS) || 400000;
   const row = await env.DB.prepare("SELECT SUM(n) AS n FROM ai_usage WHERE day = ? AND provider = 'tts'").bind(today()).first();
@@ -1204,7 +1229,7 @@ async function api(request, env, url, ctx) {
     return json({ ok: true });
   }
   if (route === 'POST /api/ai') {
-    const out = body.job === 'speak' ? await speak(env, user, body.input) : await runAI(env, user, { input: body.input, tier: body.tier, provider: str(body.provider, 20).toLowerCase(), account: body.account === true, chat: body.chat === true, job: str(body.job, 20), avoid: str(body.avoid, 20) });
+    const out = body.job === 'speak' || body.job === 'speak_cf' ? await speak(env, user, body.input, body.job === 'speak_cf' ? 'cf' : '') : await runAI(env, user, { input: body.input, tier: body.tier, provider: str(body.provider, 20).toLowerCase(), account: body.account === true, chat: body.chat === true, job: str(body.job, 20), avoid: str(body.avoid, 20) });
     return out.status === 200 ? json({ ...out, status: undefined }) : fail(out.status, out.error);
   }
   if (route === 'GET /api/drive/file') {
@@ -1305,7 +1330,7 @@ async function mcpServer(request, env, token, ctx) {
       const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return bad('This account no longer exists.');
       if (name === 'storage_status') return out(await storage(env, u));
       if (name === 'ai_providers') { const H = await hierarchy(env); return out({ providers: aiList(env, await aiUsed(env, uid), H), hierarchy: chart(env, H) }); }
-      const r = a.job === 'speak' ? await speak(env, u, a.input) : await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true, chat: a.chat === true, job: String(a.job || ''), avoid: String(a.avoid || '') });
+      const r = a.job === 'speak' || a.job === 'speak_cf' ? await speak(env, u, a.input, a.job === 'speak_cf' ? 'cf' : '') : await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true, chat: a.chat === true, job: String(a.job || ''), avoid: String(a.avoid || '') });
       return r.status === 200 ? out({ ...r, status: undefined }) : out({ error: r.error, code: r.status === 429 ? 'rate_limited' : 'upstream_error' });
     }
     if (name === 'library_status' || name === 'library_file') {

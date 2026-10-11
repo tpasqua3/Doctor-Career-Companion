@@ -158,6 +158,11 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 .ctl button{border:1px solid var(--line);background:var(--card);border-radius:50%;width:42px;height:42px;cursor:pointer;display:grid;place-items:center;flex:none}
 .ctl button.big{width:54px;height:54px;background:var(--teal);border-color:var(--teal);color:var(--teal-ink)}
 .ctl svg{width:20px;height:20px;fill:currentColor}
+.sayrow{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.sayrow .btn[aria-pressed="true"]{background:var(--good-soft);color:var(--good);border-color:transparent}
+.flagbox{display:flex;flex-direction:column;gap:6px}
+.flagwords{display:flex;gap:6px;flex-wrap:wrap;max-height:30vh;overflow-y:auto}
+.flagwords button{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:99px;padding:6px 12px;font-size:.85rem;cursor:pointer}
 .ctl .sp{border-radius:9px;width:auto;padding:0 10px;font-family:var(--num);font-size:.85rem}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(120px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:9px 14px;border-radius:9px;font-size:.88rem;z-index:20;max-width:calc(100% - 32px)}
 </style>
@@ -392,8 +397,21 @@ async function pull(){if(!LINKED||pending||jkeys().length||Date.now()-lastPull<1
 const blank=()=>({v:1,prefs:{about:'Internal medicine physician preparing for the ABIM certification examination and moving into outpatient primary care. Uses osteopathic manipulative treatment in practice.',setting:'out',commit:'std',rate:1,auto:true,passive:true,audit:true,setSize:5,lib:true,libName:'MKSAP Database',bpName:'ABIM Blueprint',planCover:'all',scope:'all',examDate:null,priority:'',perWeek:0,mix:'bal',lens:{short:6,std:10,deep:14},sess:{hy:8,std:20,deep:40,long:60}},
   topics:{},days:{},custom:[],ahd:[],gaps:[],sets:[],lessons:[],goals:[],areas:[],lib:null,best:0});
 let st=blank();
+/* Pronunciations: words the Cloudflare voice gets wrong, each with a spelling that makes it say the word right (st.says, kept in the
+   record, where the server reads it and swaps the words just before that voice is asked to read; see `respell` in src/worker.js).
+   These are suggestions to start from, written by ear-less guesswork, so each is off until the listener has heard it and turned it on. */
+const SAYS0=[['apixaban','uh pix uh ban'],['rivaroxaban','riv uh rox uh ban'],['dabigatran','dab ih gat ran'],['metoprolol','meh toe pro lol'],['carvedilol','car veh dih lol'],['lisinopril','lie sin oh pril'],['losartan','low sar tan'],['amlodipine','am low dih peen'],['hydrochlorothiazide','high dro klor oh thigh uh zide'],['chlorthalidone','klor thal ih doan'],['spironolactone','speer on oh lack tone'],['furosemide','fyoor oh seh mide'],['atorvastatin','uh tor vuh stat in'],['rosuvastatin','row soo vuh stat in'],['ezetimibe','eh zet ih mibe'],['empagliflozin','em puh glih flow zin'],['dapagliflozin','dap uh glih flow zin'],['semaglutide','sem uh gloo tide'],['tirzepatide','tur zep uh tide'],['metformin','met for min'],['levothyroxine','lee voe thigh rox een'],['clopidogrel','kloe pid oh grel'],['ticagrelor','tie kag reh lor'],['amiodarone','am ee oh duh rone'],['sacubitril','sack yoo bih tril'],['allopurinol','al oh pure ih nol'],['tiotropium','tie oh trow pee um'],['denosumab','den oh soo mab']];
+const sayClean=v=>String(v||'').replace(/\s+/g,' ').trim();
+const saysChanged=()=>{saveState();clips.forEach(p=>p.then(u=>URL.revokeObjectURL(u),()=>{}));clips.clear()};
+function saysHtml(){const L=st.says||[],todo=L.filter(x=>!sayClean(x.s)).length,on=L.filter(x=>x.on!==false&&sayClean(x.s)).length;
+  return `<div class="card" id="sayscard"><h3>Pronunciations</h3><p class="small muted">The Cloudflare voice gets some words wrong, drug names most of all. List a word here with a spelling that makes the voice say it right, and that voice will use your spelling from then on. The text on screen and the Google voices are not changed.</p>
+   <p class="small"><span class="chip good">${on} in use</span> ${todo?`<span class="chip warn">${todo} need${todo>1?'':'s'} a respelling</span> `:''}${L.length-on-todo?`<span class="chip off">${L.length-on-todo} off</span>`:''}</p>
+   <div class="row"><button class="btn pri" data-act="sayadd">Add a word</button></div>
+   ${L.map((x,i)=>`<div class="sayrow"><div class="row" style="align-items:flex-end"><label class="f">Word<input type="text" data-sayf="w" data-i="${i}" id="say-w-${i}" value="${esc(x.w||'')}" autocapitalize="off" autocomplete="off" spellcheck="false"></label><label class="f">Say it as<input type="text" data-sayf="s" data-i="${i}" id="say-s-${i}" value="${esc(x.s||'')}" placeholder="spelled the way it sounds" autocapitalize="off" autocomplete="off" spellcheck="false"></label></div>
+    <div class="row"><button class="btn sm" data-act="sayplay" data-k="w" data-i="${i}">Hear it as written</button><button class="btn sm" data-act="sayplay" data-k="s" data-i="${i}">Hear the respelling</button><span style="flex:1"></span><button class="btn sm" data-act="sayon" data-i="${i}" aria-pressed="${x.on!==false&&!!sayClean(x.s)}">${!sayClean(x.s)?'No respelling yet':x.on!==false?'In use':'Off'}</button><button class="btn sm" data-act="saydel" data-i="${i}">Remove</button></div></div>`).join('')}
+   <p class="small muted">Spell it the way it sounds, in short everyday words with spaces between the parts, for example <b>uh pix uh ban</b>. Press Hear the respelling, change it until it sounds right, then leave it In use. The starter entries are guesses and are off until you have heard them. To collect words while you listen, choose Cloudflare MeloTTS as the natural voice model above and tap the flag in the player when a word sounds wrong.</p></div>`}
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
-function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}/* Once per account: the guideline collection (kept beside the syllabus, with its registry) joins the libraries as a second source. Removing it in Settings sticks. */
+function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(!Array.isArray(st.says))st.says=SAYS0.map(x=>({w:x[0],s:x[1],on:false}));/* Once per account: the guideline collection (kept beside the syllabus, with its registry) joins the libraries as a second source. Removing it in Settings sticks. */
   if(!st.prefs.glLib){st.prefs.glLib=1;const L=libRows().filter(x=>x.name);if(!L.some(x=>x.role==='guideline'||/guideline/i.test(x.name)))st.prefs.libs=[...L,{name:'Guidelines and Backend',role:'guideline',year:''}]}
   if(st.prefs.examDate==null){const d=new Date();d.setMonth(d.getMonth()+8);st.prefs.examDate=dayStr(d)}  applyBlueprint();applyCustom();applyLens();
   Object.keys(docs).forEach(k=>{if(!k.startsWith('les_'))return;const L=docs[k];if(L&&L.id&&TOP[L.tid]&&Array.isArray(L.segs)&&!st.lessons.some(x=>x.id===L.id))st.lessons.push({id:L.id,tid:L.tid,title:L.title,len:L.len||'std',min:L.min,t:L.t||0,done:L.done||0})});st.lessons.sort((x,y)=>x.t-y.t);}
@@ -591,12 +609,24 @@ function kokHtml(){if(!kokCan())return'';kokFind();const sz=x=>x==='fp32'?'Full 
   else h=`<div class="row"><button class="btn sm" data-act="kokget" data-size="q8">Download Standard (92 MB)</button><button class="btn sm" data-act="kokget" data-size="fp32">Download Full quality (326 MB)</button></div>`;
   if(KOK.state==='err')h+=`<p class="small" style="color:var(--bad,#b23a2a)">${esc(KOK.err)}</p>`;
   return h+`<p class="small muted">The offline voice is the most natural one. It is downloaded once and then runs on this device: no data used, no daily limit. Use Wi-Fi for the download. Standard suits most phones; Full quality sounds a little better and needs a recent phone or computer${gpu?'':' (this browser lacks the graphics support it relies on, so it would be slow here)'}. It can take a few seconds to prepare each passage, and on an iPhone add this app to your Home Screen first, or the phone may clear the download.</p>`}
-function voiceClip(text){let p=clips.get(text);if(p)return p;const b={input:text,job:'speak'};
-  p=Promise.race([WEB?webSend(b):MCP.callTool(CONN,'ask_ai',b,{cache:false}).then(r=>{const j=r&&(r.payload??r.structuredContent);if(!j||j.error)throw{code:(j&&j.code)||'upstream_error'};return j}),new Promise((_,no)=>setTimeout(()=>no({code:'slow'}),15000))])
-    .then(j=>{if(!j||typeof j.audio!=='string'||!j.audio)throw{code:'upstream_error'};cloudFails=0;const bin=atob(j.audio),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);const url=URL.createObjectURL(new Blob([u],{type:j.type||'audio/mpeg'}));engineOf.set(url,j.voice||'cloudflare');if(engineOf.size>60)engineOf.delete(engineOf.keys().next().value);return url})
+const voiceAsk=b=>Promise.race([WEB?webSend(b):MCP.callTool(CONN,'ask_ai',b,{cache:false}).then(r=>{const j=r&&(r.payload??r.structuredContent);if(!j||j.error)throw{code:(j&&j.code)||'upstream_error'};return j}),new Promise((_,no)=>setTimeout(()=>no({code:'slow'}),15000))])
+    .then(j=>{if(!j||typeof j.audio!=='string'||!j.audio)throw{code:'upstream_error'};const bin=atob(j.audio),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);const url=URL.createObjectURL(new Blob([u],{type:j.type||'audio/mpeg'}));engineOf.set(url,j.voice||'cloudflare');if(engineOf.size>60)engineOf.delete(engineOf.keys().next().value);return url});
+function voiceClip(text){let p=clips.get(text);if(p)return p;
+  p=voiceAsk({input:text,job:'speak'}).then(u=>{cloudFails=0;return u})
     .catch(e=>{clips.delete(text);if(e&&e.code==='rate_limited')cloudOff=Date.now()+30*60e3;else cloudBad();throw e});
   return keep(text,p)}
 const hush=()=>{try{if(TTS)speechSynthesis.cancel()}catch(e){}try{if(AUD)AUD.pause()}catch(e){}};
+/* Settings, Pronunciations: the Cloudflare voice reads one word or respelling exactly as typed (job "speak_cf"), so the two can be compared. */
+let sayTok=0;
+function sayTry(text,btn){if(!text)return toast('Type something to hear first.');if(!AUD||!(WEB||(LINKED&&!!MCP)))return toast('The Cloudflare voice cannot be reached from here just now.');
+  if(P.on&&!P.paused)P.toggle();prime();const tok=++sayTok,was=btn.textContent;btn.disabled=true;btn.textContent='Loading…';const done=()=>{btn.disabled=false;btn.textContent=was};
+  voiceAsk({input:text,job:'speak_cf'}).then(url=>{done();if(tok!==sayTok)return URL.revokeObjectURL(url);hush();AUD.onerror=null;AUD.onended=()=>URL.revokeObjectURL(url);AUD.src=url;AUD.defaultPlaybackRate=AUD.playbackRate=1;const p=AUD.play();if(p&&p.catch)p.catch(()=>toast('Tap again to play it.'))},
+    e=>{done();toast(e&&e.code==='rate_limited'?'The Cloudflare voice has reached its limit for today. Try again tomorrow.':'The Cloudflare voice did not answer. Try again in a moment.',5000)})}
+/* The player's flag: the words of the piece being read and the one before it (the voice has often moved on by the time of the tap),
+   longest first, since the long ones are usually the drug names. Tapping one adds it to the list with no respelling yet. */
+function flagWords(){const have=new Set((st.says||[]).map(x=>sayClean(x.w).toLowerCase())),seen=new Set(),out=[];
+  for(let k=P.i;k>=0&&k>=P.i-1;k--){const t=P.q[k]&&P.q[k].say;if(t)(t.match(/[A-Za-z][A-Za-z'\u2019-]{3,}/g)||[]).forEach(w=>{const l=w.toLowerCase().replace(/['\u2019-]+$/,'');if(l.length>3&&!seen.has(l)&&!have.has(l)){seen.add(l);out.push(l)}})}
+  return out.sort((a,b)=>b.length-a.length).slice(0,24)}
 let unlocked=false;function unlock(){prime();if(unlocked||!TTS)return;unlocked=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}
 /* Text is cut into pieces at sentence ends (a full stop inside a number such as 0.5 is not one). The first piece of a passage is
    kept to about one sentence (140 characters), the second to 200 and the rest to 240, because a voice takes time in proportion to
@@ -607,7 +637,7 @@ const cut=(s,max)=>{const out=[];s=s.trim();while(s.length>max){const head=s.sli
 const chunks=t=>{const out=[];let cur='';const lim=()=>out.length?out.length>1?240:200:140,put=()=>{if(cur.trim())out.push(cur.trim());cur=''};
   sents(String(t).replace(/\s+/g,' ').trim()).forEach(s=>{if(cur&&(cur+s).length>lim())put();if(s.length>lim()){const ps=cut(s,lim());cur=ps.pop()+' ';ps.forEach(x=>out.push(x))}else cur+=s});put();return out};
 const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:null,
-  load(items,title,sub,done){this.stop(true);this.q=[];items.forEach(it=>{if(it.say)chunks(it.say).forEach(c=>this.q.push({say:c,seg:it.seg}));else this.q.push(it)});this.i=0;this.title=title;this.sub=sub||'';this.done=done||null;this.on=true;this.paused=false;this.run()},
+  load(items,title,sub,done){this.stop(true);this.flag=null;this.q=[];items.forEach(it=>{if(it.say)chunks(it.say).forEach(c=>this.q.push({say:c,seg:it.seg}));else this.q.push(it)});this.i=0;this.title=title;this.sub=sub||'';this.done=done||null;this.on=true;this.paused=false;this.run()},
   run(){clearTimeout(this.timer);const tok=++this.tok;if(!this.on||this.paused)return drawPlayer();
     if(this.i>=this.q.length){this.on=false;drawPlayer();mark(-1);const d=this.done;this.done=null;if(d)d();return}
     const it=this.q[this.i],next=()=>{if(tok!==this.tok)return;this.i++;this.run()};mark(it.seg??-1,it.say);drawPlayer();
@@ -626,7 +656,7 @@ const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:nu
   jump(n){if(!this.on)return;const seg=this.q[this.i]&&this.q[this.i].seg;let i=this.i;
     if(n>0){while(i<this.q.length&&this.q[i].seg===seg)i++}else{while(i>0&&this.q[i-1].seg===seg)i--;if(i===this.i&&i>0){const s2=this.q[i-1].seg;i--;while(i>0&&this.q[i-1].seg===s2)i--}}
     this.i=i;this.tok++;hush();kokTrim(this.q[i]&&this.q[i].say);this.paused=false;this.run()},
-  stop(quiet){this.tok++;clearTimeout(this.timer);kokTrim();this.on=false;this.paused=false;this.done=null;hush();if(!quiet){mark(-1);drawPlayer()}}};
+  stop(quiet){this.tok++;clearTimeout(this.timer);kokTrim();this.on=false;this.paused=false;this.done=null;this.flag=null;hush();if(!quiet){mark(-1);drawPlayer()}}};
 /* What is being read is shown twice: the section it belongs to is tinted, and inside it the piece being spoken right now is marked
    and kept in view, so the page follows the voice through a long section. The piece is found by its words in the section's text
    and marked with the browser's highlight feature (no change to the page itself); where a browser lacks it, the section tint and
@@ -647,12 +677,13 @@ function mark(seg,text){const hl=typeof CSS!=='undefined'&&CSS.highlights&&typeo
   const calm=matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth';
   document.querySelectorAll('[data-seg]').forEach(el=>{const on=String(seg)===el.dataset.seg;if(on&&el.dataset.now!=='1'&&P.on&&!r)el.scrollIntoView({block:el.offsetHeight>innerHeight*.6?'start':'center',behavior:calm});el.dataset.now=on?'1':''});
   if(r&&Date.now()-handScroll>6000){try{const b=r.getBoundingClientRect(),top=innerHeight*.16,bot=innerHeight*.58;if(b.height&&(b.top<top||b.bottom>bot))scrollBy({top:b.top-innerHeight*.3,behavior:calm})}catch(e){}}}
-const IC={play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
+const IC={flag:'<svg viewBox="0 0 24 24"><path d="M5 3h2v18H5zm3 1h11l-2.5 4.5L19 14H8z"/></svg>',play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
 function drawPlayer(){const el=$('#player');$('#fab').dataset.up=P.on?'1':'';if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
   el.innerHTML=`<div class="in"><div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><div class="t">${esc(P.title)}</div><div class="tiny muted">${esc(P.sub)}${P.q[P.i]&&P.q[P.i].wait?' · thinking time':''}${P.by&&ENGINE[P.by]?' · '+ENGINE[P.by]:''}</div></div><span class="tiny num muted">${p}%</span></div>
   <div class="meter"><i style="width:${p}%"></i></div>
+  ${P.flag?`<div class="flagbox"><div class="row between" style="flex-wrap:nowrap"><b class="small">Which word sounded wrong?</b><button class="btn sm" data-act="pflagx">Close</button></div>${P.flag.length?`<div class="flagwords">${P.flag.map(w=>`<button data-act="pflagw" data-w="${esc(w)}">${esc(w)}</button>`).join('')}</div><span class="tiny muted">It is added to Settings, Pronunciations, where you give it a respelling.</span>`:'<span class="small muted">Every word in this passage is already on your list.</span>'}</div>`:''}
   <div class="ctl"><button data-act="pprev" aria-label="Back one section">${IC.prev}</button><button class="big" data-act="ptoggle" aria-label="${P.paused?'Play':'Pause'}">${P.paused?IC.play:IC.pause}</button><button data-act="pnext" aria-label="Skip one section">${IC.next}</button>
-  <button class="sp" data-act="prate" aria-label="Reading speed">${st.prefs.rate.toFixed(2).replace(/0$/,'')}×</button><span style="flex:1"></span><button data-act="pstop" aria-label="Stop">${IC.stop}</button></div></div>`}
+  <button class="sp" data-act="prate" aria-label="Reading speed">${st.prefs.rate.toFixed(2).replace(/0$/,'')}×</button><span style="flex:1"></span>${P.by==='cloudflare'&&P.q[P.i]&&P.q[P.i].say?`<button data-act="pflag" aria-label="A word sounded wrong" title="A word sounded wrong">${IC.flag}</button>`:''}<button data-act="pstop" aria-label="Stop">${IC.stop}</button></div></div>`}
 
 /* ---------- Reading a PDF ----------
    Guidelines arrive as journal PDFs: two columns, running heads, tables and flow diagrams. A PDF holds no reading order, only pieces
@@ -1453,6 +1484,7 @@ function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h
   <div class="card"><h3>Audio</h3><div class="plain"><span class="eyebrow">Reading speed</span>${segBtns('rate',[[.85,'0.85×'],[1,'1×'],[1.15,'1.15×'],[1.3,'1.3×'],[1.5,'1.5×']],p.rate)}</div>
    <div class="plain"><span class="eyebrow">Voice</span>${segBtns('voice',[...(kokCan()&&KOK.have?[['offline','Offline voice']]:[]),['cloud','Natural voice'],['device','This device\'s voice']],p.voice==='device'?'device':p.voice==='offline'&&kokCan()&&KOK.have?'offline':'cloud')}${gvoiceSelect()}${voiceSelect()}<span class="small muted">The natural voice is free and has allowances shared by everyone using the app: the best voices have a monthly one, and a simpler natural voice with a daily one takes over when it is spent. When neither can be reached, lessons are read in this device's voice, chosen here.</span>${kokCan()?`<div id="kokbox" style="margin-top:10px">${kokHtml()}</div>`:''}</div>
    <div class="plain"><span class="eyebrow">After each lesson</span>${segBtns('passive',[[true,'Read the check questions aloud, pause, then give the answer'],[false,'Stop after the lesson']],p.passive)}<span class="small muted">Questions heard hands-free are not scored. Tap an answer on screen to score it.</span></div></div>
+  ${saysHtml()}
   <div class="card"><h3>Lengths</h3><p class="small muted">Minutes are at 1× speed, at about 135 spoken words a minute; a faster reading speed shortens them. One lesson can run up to 60 minutes. Past about 14 minutes it is written and fact-checked in parts, which keeps it accurate but takes a few minutes to prepare. For longer listening still, lengthen the session and it plays more lessons in a row.</p>
    <div class="plain"><span class="eyebrow">One lesson, in minutes</span><div class="row">${[['short','High-yield'],['std','Standard'],['deep','Deep dive']].map(([k,n])=>`<label class="f" style="min-width:90px">${n}<input type="number" min="2" max="60" inputmode="numeric" data-len="${k}" id="len-${k}" value="${LEN[k].min}" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px;width:100%"></label>`).join('')}</div></div>
    <div class="plain"><span class="eyebrow">One session, in minutes</span><div class="row">${Object.entries(COMMIT).map(([k,c])=>`<label class="f" style="min-width:90px">${c.name}<input type="number" min="5" max="180" inputmode="numeric" data-sess="${k}" id="sess-${k}" value="${c.min}" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px;width:100%"></label>`).join('')}</div><span class="small muted">${Object.values(COMMIT).map(c=>c.name+': '+c.lessons+' lesson'+(c.lessons>1?'s':'')).join(' · ')}</span></div></div>
@@ -1532,6 +1564,13 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='kokcancel'){const had=KOK.have;kokStop();if(!had&&st.prefs.voice==='offline'){st.prefs.voice='cloud';saveState()}render();return}
   if(a==='kokremove'){kokRemove();return}
   if(a==='pstop'){P.stop();if(S.session)S.session.waiting=false;return}
+  if(a==='pflag'){if(P.flag){P.flag=null;return drawPlayer()}P.flag=flagWords();if(!P.paused)P.toggle();else drawPlayer();return}
+  if(a==='pflagx'){P.flag=null;if(P.paused)P.toggle();else drawPlayer();return}
+  if(a==='pflagw'){const w=sayClean(b.dataset.w).toLowerCase();if(w&&!(st.says||[]).some(x=>sayClean(x.w).toLowerCase()===w)){st.says=[{w,s:''},...(st.says||[])];saysChanged()}P.flag=null;if(P.paused)P.toggle();else drawPlayer();toast('Added \u201c'+w+'\u201d. Give it a respelling in Settings, under Pronunciations.',5000);return}
+  if(a==='sayadd'){st.says=[{w:'',s:''},...(st.says||[])];saveState();render();const el=document.getElementById('say-w-0');if(el)el.focus();return}
+  if(a==='saydel'){const L=(st.says||[]).slice();L.splice(Number(b.dataset.i),1);st.says=L;saysChanged();render();return}
+  if(a==='sayon'){const x=(st.says||[])[Number(b.dataset.i)];if(!x)return;if(!sayClean(x.s))return toast('Give it a respelling first.');x.on=x.on===false;saysChanged();render();return}
+  if(a==='sayplay'){const el=document.getElementById('say-'+b.dataset.k+'-'+b.dataset.i);return sayTry(sayClean(el&&el.value),b)}
   if(a==='prate'){const r=[.85,1,1.15,1.3,1.5],i=r.indexOf(st.prefs.rate);st.prefs.rate=r[(i+1)%r.length];saveState();if(P.on&&!P.paused){P.tok++;P.run()}drawPlayer();return}
   if(a==='up'){if(S.tab==='career')S.goal=null;else if(S.topic)S.topic=null;else if(S.sec)S.sec=null;else S.track=null;S.err='';render();return}
   if(a==='session')return startSession(b.dataset.sc);
@@ -1613,6 +1652,7 @@ document.addEventListener('change',e=>{if(e.target.dataset&&'kvoice' in e.target
 document.addEventListener('change',e=>{if(e.target.dataset&&('gvoice' in e.target.dataset||'gtier' in e.target.dataset)){st.prefs['gvoice' in e.target.dataset?'gvoice':'gtier']=e.target.value;saveState();clips.forEach(p=>p.then(u=>URL.revokeObjectURL(u),()=>{}));clips.clear();toast('Voice changed. It applies from the next passage.');return}
   if(e.target.dataset&&'dvoice' in e.target.dataset){try{localStorage.setItem('dcc:dvoice',e.target.value)}catch(x){}pickVoice();if(TTS&&!P.on){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('This is the voice that will read your lessons.');if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}u.rate=st.prefs.rate;speechSynthesis.speak(u)}catch(x){}}}});
 document.addEventListener('change',e=>{if(e.target.dataset&&'ai' in e.target.dataset){if(e.target.dataset.ai==='teach'){TEACH=e.target.value;try{localStorage.setItem('dcc:teach',TEACH)}catch(x){}}else{AIP=e.target.value;try{localStorage.setItem('dcc:ai',AIP)}catch(x){}}drawAsk();drawTeach();if(S.tab==='settings'&&!S.busy)render();return}
+  if(e.target.dataset&&e.target.dataset.sayf){const x=(st.says||[])[Number(e.target.dataset.i)];if(x){const f=e.target.dataset.sayf,v=sayClean(e.target.value).slice(0,f==='w'?60:120);x[f]=f==='w'?v.toLowerCase():v;if(f==='s'&&v&&x.on==null)x.on=true;saysChanged()}return}
   if(e.target.dataset&&e.target.dataset.libf){const L=clone(libList()),x=L[Number(e.target.dataset.i)];if(x){x[e.target.dataset.libf]=e.target.value.trim();st.prefs.libs=L;saveState()}return}
   if(e.target.id==='hfilter'){S.hf=e.target.value;render();return}
   if(e.target.dataset&&e.target.dataset.hq){const v=e.target.value,id=e.target.dataset.hq;if(v==='c'){S.hq=id;render();const el=$('#hqn');if(el){el.focus();el.select()}}else if(v)hisQuestions(id,Number(v));return}
