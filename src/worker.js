@@ -314,6 +314,33 @@ async function llama(env, messages, tier) {
 /* One request from the app, for one account. `job` says what the request is for (see JOBS); `provider` is the service the user
    picked ("auto" for none); `avoid` is the service that wrote the thing under review; `account` lets the model look up this
    account's record and the library while it answers (Gemini and DeepSeek). */
+/* ---------- Reading aloud ----------
+   One short passage of a lesson turned into speech by Cloudflare's free voice model, returned as an MP3 in base64. It arrives as an
+   /api/ai request (or the ask_ai connector tool) whose job is "speak", so the app inside Claude needs no extra tool.
+   The free Cloudflare allowance is one pool for the whole Cloudflare account. TTS_DAILY_CHARS (default 400,000 characters, about
+   seven hours of speech) stops this app using more than that in a day; past it, or whenever Cloudflare refuses, the answer is a
+   429 and the app reads with the device's own voice instead. Characters spoken are counted per account in ai_usage as "tts". */
+const TTS_MODEL = '@cf/myshell-ai/melotts';
+const b64 = bytes => { let t = ''; for (let i = 0; i < bytes.length; i += 0x8000) t += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(t); };
+async function speak(env, user, input) {
+  const text = String(typeof input === 'string' ? input : '').replace(/\s+/g, ' ').trim().slice(0, 600);
+  if (!text) return { status: 400, error: 'Nothing to read.' };
+  if (!env.AI) return { status: 429, error: 'The natural voice is not available on this site.' };
+  const cap = Number(env.TTS_DAILY_CHARS) || 400000;
+  const row = await env.DB.prepare("SELECT SUM(n) AS n FROM ai_usage WHERE day = ? AND provider = 'tts'").bind(today()).first();
+  if (((row && row.n) || 0) + text.length > cap) return { status: 429, error: 'The natural voice has reached its limit for today.' };
+  let audio = '';
+  try {
+    const r = await env.AI.run(env.TTS_MODEL || TTS_MODEL, { prompt: text, lang: 'en' });
+    if (r && typeof r.audio === 'string') audio = r.audio;
+    else if (r instanceof ArrayBuffer) audio = b64(new Uint8Array(r));
+    else if (r instanceof Uint8Array) audio = b64(r);
+    else if (r && typeof r.getReader === 'function') audio = b64(new Uint8Array(await new Response(r).arrayBuffer()));
+  } catch (e) { console.log('speak: ' + String(e && e.message || e).slice(0, 200)); return { status: 429, error: 'The natural voice is not available just now.' }; }
+  if (!audio) return { status: 502, error: 'The natural voice sent nothing back.' };
+  await env.DB.prepare("INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, 'tts', ?) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + excluded.n").bind(user.id, today(), text.length).run();
+  return { status: 200, audio, type: 'audio/mpeg' };
+}
 async function runAI(env, user, { input, tier, provider, account, chat, job, avoid }) {
   tier = tier === 'quick' ? 'quick' : 'default';
   job = JOB[job] ? job : chat ? 'chat' : 'lesson';   // a request that does not say is held to the highest bar
@@ -1056,7 +1083,7 @@ async function api(request, env, url, ctx) {
     return json({ ok: true });
   }
   if (route === 'POST /api/ai') {
-    const out = await runAI(env, user, { input: body.input, tier: body.tier, provider: str(body.provider, 20).toLowerCase(), account: body.account === true, chat: body.chat === true, job: str(body.job, 20), avoid: str(body.avoid, 20) });
+    const out = body.job === 'speak' ? await speak(env, user, body.input) : await runAI(env, user, { input: body.input, tier: body.tier, provider: str(body.provider, 20).toLowerCase(), account: body.account === true, chat: body.chat === true, job: str(body.job, 20), avoid: str(body.avoid, 20) });
     return out.status === 200 ? json({ ...out, status: undefined }) : fail(out.status, out.error);
   }
   if (route === 'GET /api/drive/file') {
@@ -1157,7 +1184,7 @@ async function mcpServer(request, env, token, ctx) {
       const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return bad('This account no longer exists.');
       if (name === 'storage_status') return out(await storage(env, u));
       if (name === 'ai_providers') { const H = await hierarchy(env); return out({ providers: aiList(env, await aiUsed(env, uid), H), hierarchy: chart(env, H) }); }
-      const r = await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true, chat: a.chat === true, job: String(a.job || ''), avoid: String(a.avoid || '') });
+      const r = a.job === 'speak' ? await speak(env, u, a.input) : await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true, chat: a.chat === true, job: String(a.job || ''), avoid: String(a.avoid || '') });
       return r.status === 200 ? out({ ...r, status: undefined }) : out({ error: r.error, code: r.status === 429 ? 'rate_limited' : 'upstream_error' });
     }
     if (name === 'library_status' || name === 'library_file') {
