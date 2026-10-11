@@ -162,8 +162,11 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 .sayrow .btn[aria-pressed="true"]{background:var(--good-soft);color:var(--good);border-color:transparent}
 /* The Pronunciation guide sits where the Ask panel does, lower right, over about half the screen, so the lesson text stays in view above it.
    --fa is how solid it is (the See-through slider): the panel and its boxes thin out, the words in it stay sharp. */
-.flagpop{--fa:100%;position:fixed;right:0;bottom:0;z-index:12;width:min(440px,100%);height:min(50%,460px);display:flex;flex-direction:column;gap:8px;background:color-mix(in srgb,var(--paper) var(--fa),transparent);border:1px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,.2);padding:12px 14px 10px}
+.flagpop{--fa:100%;position:fixed;right:0;bottom:0;z-index:12;width:min(440px,100%);height:min(50%,460px);min-height:210px;display:flex;flex-direction:column;gap:8px;background:color-mix(in srgb,var(--paper) var(--fa),transparent);border:1px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,.2);padding:12px 14px 10px}
 .flagpop h3{white-space:nowrap}
+/* Dragged short, the panel keeps the table and drops the word chips and the footnote to make room for it. */
+.flagpop[data-small="1"] .chips,.flagpop[data-small="1"] .fnote{display:none}
+.fgrip{flex:none;height:20px;margin:-10px 0 -6px;display:grid;place-items:center;cursor:ns-resize;touch-action:none}.fgrip i{display:block;width:44px;height:5px;border-radius:3px;background:var(--line)}.fgrip:hover i,.fgrip:active i{background:var(--muted)}
 .fop{display:flex;align-items:center;gap:10px}.fop input{flex:1;min-width:0;accent-color:var(--teal)}
 .flagpop .chips{flex:none;padding-bottom:2px}.flagpop .chips button{background:color-mix(in srgb,var(--card) var(--fa),transparent);color:var(--ink)}
 .flist{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px;overscroll-behavior:contain}
@@ -653,14 +656,21 @@ function flagWords(){const have={},seen=new Set(),out=[];(st.says||[]).forEach(x
 function flagRow(r,x){const off=x&&x.on===false;return `<div class="frow" data-r="${r}"${off?' data-off="1"':''}><button class="fsp" data-act="pflagh" data-k="w" aria-label="Hear it as written" title="Hear it as written">${IC.spk}</button><input type="text" data-ff="w" value="${esc(x?x.w:'')}" placeholder="${x?'word':'new word'}" aria-label="Before: the word as written" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><input type="text" data-ff="s" value="${esc(x?x.s:'')}" placeholder="say it as" aria-label="After: how to say it" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button class="fsp" data-act="pflagh" data-k="s" aria-label="Hear the respelling" title="Hear the respelling">${IC.spk}</button><button class="fck" data-act="pflagon" aria-pressed="${!!x&&!off&&!!sayClean(x.s)}" aria-label="Use this respelling" title="Use this respelling">${IC.flag}</button></div>`}
 function drawFlag(){const el=$('#flagpop'),F=P.flag;$('#fab').style.visibility=F?'hidden':'';if(!F){el.hidden=true;el.innerHTML='';el.style.bottom='';return}el.hidden=false;
   let op=100;try{op=Number(localStorage.getItem('dcc:flagop'))||100}catch(e){}op=Math.min(100,Math.max(25,op));el.style.setProperty('--fa',op+'%');
-  el.innerHTML=`<div class="row between" style="flex-wrap:nowrap"><h3>Pronunciation guide</h3><button class="btn sm pri" data-act="pflagx">Done</button></div>
+  let fh=0;try{fh=Number(localStorage.getItem('dcc:flagh'))||0}catch(e){}el.style.height=fh?fh+'px':'';el.dataset.small=fh&&fh<340?'1':'';
+  el.innerHTML=`<div class="fgrip" id="flag-grip" role="separator" aria-orientation="horizontal" aria-label="Drag up or down to resize" title="Drag to resize"><i></i></div><div class="row between" style="flex-wrap:nowrap"><h3>Pronunciation guide</h3><button class="btn sm pri" data-act="pflagx">Done</button></div>
    <label class="fop tiny muted">See-through<input type="range" id="flag-op" min="25" max="100" step="5" value="${op}" aria-label="How solid this panel is"></label>
    ${F.words.length?`<div class="chips" id="flag-chips">${F.words.map(x=>`<button data-act="pflagw" data-w="${esc(x.w)}">${esc(x.w)}</button>`).join('')}</div>`:''}
    <div class="frow fcols eyebrow"><span></span><span>Before</span><span>After</span><span></span><span></span></div>
    <div class="flist" id="flag-list">${F.rows.map((x,r)=>flagRow(r,x)).join('')}${flagRow('new',null)}</div>
-   <div class="row between" style="flex-wrap:nowrap"><span class="tiny muted">Type in the empty row to add a word. ${SITE.owner?'Your changes apply to every account.':'Your changes apply to your account only.'}</span><button class="btn link sm" data-act="pflagall" style="flex:none">Full list</button></div>`;
+   <div class="row between fnote" style="flex-wrap:nowrap"><span class="tiny muted">Type in the empty row to add a word. ${SITE.owner?'Your changes apply to every account.':'Your changes apply to your account only.'}</span><button class="btn link sm" data-act="pflagall" style="flex:none">Full list</button></div>`;
   const l=$('#flag-list');l.scrollTop=l.scrollHeight;flagLift()}
 /* The panel rests on top of the player, so its controls stay in reach; when a phone's keyboard is up it sits on the keyboard instead. */
+/* The bar at the top of the panel is dragged up or down to make the panel taller or shorter; the height is remembered on this device. */
+let flagDrag=null;
+document.addEventListener('pointerdown',e=>{const g=e.target.closest&&e.target.closest('#flag-grip');if(!g)return;e.preventDefault();const el=$('#flagpop');flagDrag={y:e.clientY,h:el.getBoundingClientRect().height};try{g.setPointerCapture(e.pointerId)}catch(x){}});
+document.addEventListener('pointermove',e=>{if(!flagDrag)return;const el=$('#flagpop'),max=Math.max(200,(window.visualViewport?visualViewport.height:innerHeight)*.9-(parseFloat(el.style.bottom)||0));flagDrag.now=Math.round(Math.min(max,Math.max(210,flagDrag.h+flagDrag.y-e.clientY)));el.style.height=flagDrag.now+'px';el.dataset.small=flagDrag.now<340?'1':''});
+const flagDrop=()=>{if(!flagDrag)return;if(flagDrag.now){try{localStorage.setItem('dcc:flagh',String(flagDrag.now))}catch(e){}}flagDrag=null};
+document.addEventListener('pointerup',flagDrop);document.addEventListener('pointercancel',flagDrop);
 function flagLift(){const el=$('#flagpop'),vv=window.visualViewport,pl=$('#player');if(!el||el.hidden)return;const kb=vv?Math.round(innerHeight-vv.height-vv.offsetTop):0,base=pl&&!pl.hidden?pl.offsetHeight:0;el.style.bottom=Math.max(0,kb>60?kb:base)+'px';if(vv)el.style.maxHeight=Math.round(vv.height*.92-(kb>60?0:base))+'px'}
 try{if(window.visualViewport){visualViewport.addEventListener('resize',flagLift);visualViewport.addEventListener('scroll',flagLift)}}catch(e){}
 const flagEntry=row=>{const F=P.flag;return F&&row&&row.dataset.r!=='new'?F.rows[Number(row.dataset.r)]:null};
