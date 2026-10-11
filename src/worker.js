@@ -770,6 +770,19 @@ async function summary(env, uid) {
   return results;
 }
 
+/* ---------- Life OS "Connect" button ----------
+   Life OS shows this account's recent activity on its Home screen. Pressing Connect there brings the person here; if they are
+   logged in, a private read link for their account is made (the same kind the Claude connector uses, in addition to it) and
+   handed straight back to Life OS. The link only ever goes to the Life OS address below. */
+const LIFEOS_URL = 'https://life-os.tpasqua3.workers.dev';
+async function lifeosConnect(env, user) {
+  const home = String(env.LIFEOS_URL || LIFEOS_URL).replace(/\/+$/, ''), head = { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' };
+  if (!user) return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Log in first</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:17px/1.5 system-ui,sans-serif;background:Canvas;color:CanvasText}main{max-width:34ch;padding:24px;text-align:center}h1{font-size:1.4rem;margin:0 0 8px}a{display:inline-block;margin:10px 6px 0;padding:10px 16px;border-radius:8px;border:1px solid;text-decoration:none;color:inherit;font-weight:600}</style><main><h1>Log in to Doctor Career Companion first</h1><p>You are not logged in to Doctor Career Companion in this browser. Log in, then press Connect in Life OS again.</p><a href="/">Log in to Doctor Career Companion</a><a href="${home}/">Back to Life OS</a></main></html>`, { status: 401, headers: { 'Content-Type': 'text/html; charset=utf-8', ...head } });
+  const token = rand(32);
+  await env.DB.prepare('INSERT INTO links (token_hash, user_id, created) VALUES (?, ?, ?)').bind(await sha(token), user.id, new Date().toISOString()).run();
+  return new Response(null, { status: 302, headers: { Location: home + '/#connected=' + token, ...head } });
+}
+
 async function api(request, env, url, ctx) {
   const route = request.method + ' ' + url.pathname;
   if (request.method !== 'GET') {
@@ -876,6 +889,7 @@ async function api(request, env, url, ctx) {
   }
 
   const user = await currentUser(request, env);
+  if (request.method === 'GET' && url.pathname === '/api/lifeos/connect') return lifeosConnect(env, user);
   if (route === 'POST /api/logout') {
     const m = /(?:^|;\s*)dcc_session=([a-f0-9]{64})/.exec(request.headers.get('Cookie') || '');
     if (m) await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(await sha(m[1])).run();
