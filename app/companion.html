@@ -160,8 +160,9 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 .ctl svg{width:20px;height:20px;fill:currentColor}
 .sayrow{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px}
 .sayrow .btn[aria-pressed="true"]{background:var(--good-soft);color:var(--good);border-color:transparent}
-.flagpop{position:fixed;inset:0;z-index:15;background:rgba(8,13,20,.5);display:flex;align-items:flex-start;justify-content:center;padding:calc(14px + env(safe-area-inset-top,0px)) 12px 12px;overflow-y:auto}
-.flagpop .card{width:100%;max-width:460px;box-shadow:0 14px 40px rgba(0,0,0,.3)}
+/* The pronunciation pop-up sits where the Ask panel does, lower right, over about half the screen, so the lesson text stays in view above it. */
+.flagpop{position:fixed;right:0;bottom:0;z-index:12;width:min(440px,100%);max-height:min(58%,500px);overflow-y:auto;background:var(--paper);border:1px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,.2);padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px))}
+.flagpop .card{border:0;padding:0;background:none}
 .flagwords{display:flex;gap:6px;flex-wrap:wrap;max-height:34vh;overflow-y:auto}
 .flagwords button{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:99px;padding:7px 13px;font-size:.9rem;cursor:pointer}
 .flagwords button[data-has]{border-color:var(--teal);color:var(--teal)}
@@ -413,7 +414,7 @@ function saysHtml(){const L=st.says||[],todo=L.filter(x=>!sayClean(x.s)).length,
    <div class="row"><button class="btn pri" data-act="sayadd">Add a word</button></div>
    ${L.map((x,i)=>`<div class="sayrow"><div class="row" style="align-items:flex-end"><label class="f">Word<input type="text" data-sayf="w" data-i="${i}" id="say-w-${i}" value="${esc(x.w||'')}" autocapitalize="off" autocomplete="off" spellcheck="false"></label><label class="f">Say it as<input type="text" data-sayf="s" data-i="${i}" id="say-s-${i}" value="${esc(x.s||'')}" placeholder="spelled the way it sounds" autocapitalize="off" autocomplete="off" spellcheck="false"></label></div>
     <div class="row"><button class="btn sm" data-act="sayplay" data-k="w" data-i="${i}">Hear it as written</button><button class="btn sm" data-act="sayplay" data-k="s" data-i="${i}">Hear the respelling</button><span style="flex:1"></span><button class="btn sm" data-act="sayon" data-i="${i}" aria-pressed="${x.on!==false&&!!sayClean(x.s)}">${!sayClean(x.s)?'No respelling yet':x.on!==false?'In use':'Off'}</button><button class="btn sm" data-act="saydel" data-i="${i}">Remove</button></div></div>`).join('')}
-   <p class="small muted">Spell it the way it sounds, in short everyday words with spaces between the parts, for example <b>uh pix uh ban</b>. Press Hear the respelling, change it until it sounds right, then leave it In use. The starter entries are guesses and are off until you have heard them. To fix words while you listen, choose Cloudflare MeloTTS as the natural voice model above and tap the flag in the player when a word sounds wrong: you can respell it there and the passage is read again.</p></div>`}
+   <p class="small muted">Spell it the way it sounds, in short everyday words with spaces between the parts, for example <b>uh pix uh ban</b>. Press Hear the respelling, change it until it sounds right, then leave it In use. The starter entries are guesses and are off until you have heard them. To fix words while you listen, choose Cloudflare MeloTTS as the natural voice model above and tap the check mark in the player when a word sounds wrong: you can respell it there and the passage is read again.</p></div>`}
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
 function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(!Array.isArray(st.says))st.says=SAYS0.map(x=>({w:x[0],s:x[1],on:false}));/* Once per account: the guideline collection (kept beside the syllabus, with its registry) joins the libraries as a second source. Removing it in Settings sticks. */
   if(!st.prefs.glLib){st.prefs.glLib=1;const L=libRows().filter(x=>x.name);if(!L.some(x=>x.role==='guideline'||/guideline/i.test(x.name)))st.prefs.libs=[...L,{name:'Guidelines and Backend',role:'guideline',year:''}]}
@@ -701,12 +702,12 @@ function mark(seg,text){const hl=typeof CSS!=='undefined'&&CSS.highlights&&typeo
   const calm=matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth';
   document.querySelectorAll('[data-seg]').forEach(el=>{const on=String(seg)===el.dataset.seg;if(on&&el.dataset.now!=='1'&&P.on&&!r)el.scrollIntoView({block:el.offsetHeight>innerHeight*.6?'start':'center',behavior:calm});el.dataset.now=on?'1':''});
   if(r&&Date.now()-handScroll>6000){try{const b=r.getBoundingClientRect(),top=innerHeight*.16,bot=innerHeight*.58;if(b.height&&(b.top<top||b.bottom>bot))scrollBy({top:b.top-innerHeight*.3,behavior:calm})}catch(e){}}}
-const IC={flag:'<svg viewBox="0 0 24 24"><path d="M5 3h2v18H5zm3 1h11l-2.5 4.5L19 14H8z"/></svg>',play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
+const IC={flag:'<svg viewBox="0 0 24 24"><path d="M9.2 16.6 4.9 12.3l-1.5 1.5 5.8 5.8L21 7.8l-1.5-1.5z"/></svg>',play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
 function drawPlayer(){const el=$('#player');if(!P.on&&P.flag){P.flag=null}if(!P.flag&&!$('#flagpop').hidden)drawFlag();$('#fab').dataset.up=P.on?'1':'';if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
   el.innerHTML=`<div class="in"><div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><div class="t">${esc(P.title)}</div><div class="tiny muted">${esc(P.sub)}${P.q[P.i]&&P.q[P.i].wait?' · thinking time':''}${P.by&&ENGINE[P.by]?' · '+ENGINE[P.by]:''}</div></div><span class="tiny num muted">${p}%</span></div>
   <div class="meter"><i style="width:${p}%"></i></div>
   <div class="ctl"><button data-act="pprev" aria-label="Back one section">${IC.prev}</button><button class="big" data-act="ptoggle" aria-label="${P.paused?'Play':'Pause'}">${P.paused?IC.play:IC.pause}</button><button data-act="pnext" aria-label="Skip one section">${IC.next}</button>
-  <button class="sp" data-act="prate" aria-label="Reading speed">${st.prefs.rate.toFixed(2).replace(/0$/,'')}×</button><span style="flex:1"></span>${P.by==='cloudflare'&&P.q[P.i]&&P.q[P.i].say?`<button data-act="pflag" aria-label="A word sounded wrong" title="A word sounded wrong">${IC.flag}</button>`:''}<button data-act="pstop" aria-label="Stop">${IC.stop}</button></div></div>`}
+  <button class="sp" data-act="prate" aria-label="Reading speed">${st.prefs.rate.toFixed(2).replace(/0$/,'')}×</button><span style="flex:1"></span>${P.by==='cloudflare'&&P.q[P.i]&&P.q[P.i].say?`<button data-act="pflag" aria-label="Check a pronunciation" title="Check a pronunciation">${IC.flag}</button>`:''}<button data-act="pstop" aria-label="Stop">${IC.stop}</button></div></div>`}
 
 /* ---------- Reading a PDF ----------
    Guidelines arrive as journal PDFs: two columns, running heads, tables and flow diagrams. A PDF holds no reading order, only pieces
@@ -1558,7 +1559,6 @@ function readBackup(text){let j;try{j=JSON.parse(text)}catch(e){return {err:'Tha
   const n=Object.keys(out).length;return n?{n,saved:j.saved||'',state:!!(out.state&&out.state.v),docs:out}:{err:'That backup is empty.'}}
 
 document.addEventListener('click',async e=>{unlock();
-  if(e.target.id==='flagpop')return flagClose(true);
   const tab=e.target.closest('[data-tab]');if(tab){if(S.quiz)endQuiz();if(!P.on)endAct(S.deck?{n:S.deck.seen}:null);S.tab=tab.dataset.tab;S.lesson=null;S.deck=null;S.clist=false;S.err='';if(S.session&&!P.on)S.session=null;render();scrollTo(0,0);return}
   const dk=e.target.closest('[data-deck]');if(dk){S.tab='cards';S.cscope='top:'+dk.dataset.deck;S.deck=null;S.clist=false;render();scrollTo(0,0);return}
   const pp=e.target.closest('[data-pp]');if(pp){if(pp.disabled)return;S.pp=Number(pp.dataset.pp);render();const c=$('#plancard');if(c)c.scrollIntoView({block:'nearest'});return}
