@@ -526,7 +526,9 @@ const monthSoFar=()=>new Date().getDate();
    The browser's speech voice reads a queue of short pieces, one sentence group at a time, so pause, skip and speed all work and the
    section being read can be lit on screen. A queue item is spoken text, a silent wait (thinking time before an answer), or a marker.
    Each piece is read by the natural voice when it can be (the server's free Cloudflare voice, asked for as an AI request whose job
-   is "speak" and played as a sound clip; the next two pieces are fetched ahead so there is no gap). That voice has one daily
+   is "speak" and played as a sound clip). So that sound starts quickly, the first piece of every section is a single short sentence and later
+   pieces grow; the next three pieces and the opening piece of the next section are fetched while the current one plays, so neither
+   reading on nor skipping a section waits. That voice has one daily
    allowance shared by everyone, so whenever it is used up, slow, unreachable or switched off in Settings, the piece is read by the
    device's own voice instead, and the natural voice is left alone for a while before it is tried again. */
 const TTS='speechSynthesis' in window&&typeof SpeechSynthesisUtterance!=='undefined';
@@ -563,8 +565,11 @@ async function kokRemove(){kokStop();KOK.have='';KOK.voices=[];try{localStorage.
 /* A voice already on this device is started quietly when it is the chosen one; until it is ready the other voices read. */
 function kokWake(){if(kokCan()&&st.prefs.voice==='offline'&&KOK.have&&KOK.state==='off')kokStart(KOK.have)}
 function kokClip(text){const v=kokVoice(),key='k:'+v+':'+text;let p=clips.get(key);if(p)return p;
-  p=new Promise((ok,no)=>{if(KOK.state!=='ready')return no({code:'offline_voice'});const id=++KOK.seq;KOK.wait[id]={ok,no};KOK.w.postMessage({say:{id,text,voice:v}});setTimeout(()=>{if(KOK.wait[id]){delete KOK.wait[id];no({code:'slow'})}},90000)});
+  p=new Promise((ok,no)=>{if(KOK.state!=='ready')return no({code:'offline_voice'});const id=++KOK.seq;KOK.wait[id]={ok,no,key};KOK.w.postMessage({say:{id,text,voice:v}});setTimeout(()=>{if(KOK.wait[id]){delete KOK.wait[id];no({code:'slow'})}},90000)});
   p.catch(()=>{clips.delete(key)});return keep(key,p)}
+/* When the listener skips or stops, passages still waiting their turn in the offline voice are no longer wanted. The voice makes one
+   passage at a time, so they are withdrawn (all but `keepText`, the one about to be read) to let the wanted passage go next. */
+function kokTrim(keepText){if(!KOK.w)return;const keepKey=keepText?'k:'+kokVoice()+':'+keepText:'';Object.keys(KOK.wait).forEach(id=>{const h=KOK.wait[id];if(h.key===keepKey)return;delete KOK.wait[id];try{KOK.w.postMessage({drop:Number(id)})}catch(e){}h.no({code:'dropped'})})}
 function kokDraw(){const el=document.getElementById('kokbox');if(el)el.innerHTML=kokHtml()}
 function kokHtml(){if(!kokCan())return'';const sz=x=>x==='fp32'?'Full quality':'Standard',gpu=!!navigator.gpu;let h='';
   if(KOK.state==='loading')h=`<span class="small">${KOK.have===KOK.size?'Starting the offline voice…':'Downloading the offline voice ('+sz(KOK.size)+')… '+KOK.pct+'%'}</span> <button class="btn sm" data-act="kokcancel">Cancel</button>`;
@@ -581,17 +586,25 @@ function voiceClip(text){let p=clips.get(text);if(p)return p;const b={input:text
   return keep(text,p)}
 const hush=()=>{try{if(TTS)speechSynthesis.cancel()}catch(e){}try{if(AUD)AUD.pause()}catch(e){}};
 let unlocked=false;function unlock(){prime();if(unlocked||!TTS)return;unlocked=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}
-const chunks=t=>{const out=[];let cur='';(String(t).replace(/\s+/g,' ').match(/[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$/g)||[]).forEach(s=>{if((cur+s).length>240&&cur){out.push(cur.trim());cur=''}cur+=s});if(cur.trim())out.push(cur.trim());return out};
+/* Text is cut into pieces at sentence ends (a full stop inside a number such as 0.5 is not one). The first piece of a passage is
+   kept to about one sentence (140 characters), the second to 200 and the rest to 240, because a voice takes time in proportion to
+   the length it is given: a short opening piece is what makes a section start at once. A sentence longer than the limit is cut at
+   a comma, semicolon, colon or dash, else at a space, so nothing is ever too long for the voice to take whole. */
+const sents=t=>{const out=[],re=/[.!?]+["')\]]*\s+/g;let a=0;while(re.exec(t)){out.push(t.slice(a,re.lastIndex));a=re.lastIndex}if(a<t.length)out.push(t.slice(a));return out};
+const cut=(s,max)=>{const out=[];s=s.trim();while(s.length>max){const head=s.slice(0,max+1);let k=0;for(const re of[/[,;:\u2013\u2014]\s/g,/\s/g]){let m;while((m=re.exec(head)))if(m.index>=max*.4)k=m.index+1;if(k)break}if(!k)k=max;out.push(s.slice(0,k).trim());s=s.slice(k).trim()}if(s)out.push(s);return out};
+const chunks=t=>{const out=[];let cur='';const lim=()=>out.length?out.length>1?240:200:140,put=()=>{if(cur.trim())out.push(cur.trim());cur=''};
+  sents(String(t).replace(/\s+/g,' ').trim()).forEach(s=>{if(cur&&(cur+s).length>lim())put();if(s.length>lim()){const ps=cut(s,lim());cur=ps.pop()+' ';ps.forEach(x=>out.push(x))}else cur+=s});put();return out};
 const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:null,
   load(items,title,sub,done){this.stop(true);this.q=[];items.forEach(it=>{if(it.say)chunks(it.say).forEach(c=>this.q.push({say:c,seg:it.seg}));else this.q.push(it)});this.i=0;this.title=title;this.sub=sub||'';this.done=done||null;this.on=true;this.paused=false;this.run()},
   run(){clearTimeout(this.timer);const tok=++this.tok;if(!this.on||this.paused)return drawPlayer();
     if(this.i>=this.q.length){this.on=false;drawPlayer();mark(-1);const d=this.done;this.done=null;if(d)d();return}
     const it=this.q[this.i],next=()=>{if(tok!==this.tok)return;this.i++;this.run()};mark(it.seg??-1);drawPlayer();
     if(it.wait){this.timer=setTimeout(next,it.wait);return}
-    hush();kokWake();if(kokOn())this.clip(it,tok,next,kokClip,1,()=>{},()=>{if(cloudOn())this.clip(it,tok,next,voiceClip,2,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)});
-    else if(cloudOn())this.clip(it,tok,next,voiceClip,2,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)},
-  /* Play one piece as a sound clip from `get` (the offline voice or the server's voice), fetching `ahead` pieces in advance; `other` reads it if that fails. */
+    hush();kokWake();if(kokOn())this.clip(it,tok,next,kokClip,1,()=>{},()=>{if(cloudOn())this.clip(it,tok,next,voiceClip,3,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)});
+    else if(cloudOn())this.clip(it,tok,next,voiceClip,3,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)},
+  /* Play one piece as a sound clip from `get` (the offline voice or the server's voice), fetching `ahead` pieces in advance and the opening piece of the next section (where Skip lands); `other` reads it if that fails. */
   clip(it,tok,next,get,ahead,cloudBad,other){const cur=get(it.say);for(let k=this.i+1,n=0;k<this.q.length&&n<ahead;k++)if(this.q[k].say){n++;get(this.q[k].say).catch(()=>{})}
+    if(it.seg!=null){let j=this.i+1;while(j<this.q.length&&(this.q[j].seg===it.seg||!this.q[j].say))j++;if(j<this.q.length)get(this.q[j].say).catch(()=>{})}
     cur.then(url=>{if(tok!==this.tok)return;AUD.onended=next;AUD.onerror=()=>{if(tok!==this.tok)return;cloudBad();other()};AUD.src=url;AUD.defaultPlaybackRate=AUD.playbackRate=st.prefs.rate;
       const p=AUD.play();if(p&&p.catch)p.catch(e=>{if(tok!==this.tok)return;if(e&&e.name==='NotAllowedError'){primed=false;this.paused=true;this.tok++;drawPlayer();toast('Tap the play button below to start the audio.',6000)}else if(!e||e.name!=='AbortError'){cloudBad();other()}})},
       ()=>{if(tok===this.tok)other()})},
@@ -600,8 +613,8 @@ const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:nu
   toggle(){if(!this.on)return;this.paused=!this.paused;if(this.paused){this.tok++;clearTimeout(this.timer);hush();drawPlayer()}else{prime();this.run()}},
   jump(n){if(!this.on)return;const seg=this.q[this.i]&&this.q[this.i].seg;let i=this.i;
     if(n>0){while(i<this.q.length&&this.q[i].seg===seg)i++}else{while(i>0&&this.q[i-1].seg===seg)i--;if(i===this.i&&i>0){const s2=this.q[i-1].seg;i--;while(i>0&&this.q[i-1].seg===s2)i--}}
-    this.i=i;this.tok++;hush();this.paused=false;this.run()},
-  stop(quiet){this.tok++;clearTimeout(this.timer);this.on=false;this.paused=false;this.done=null;hush();if(!quiet){mark(-1);drawPlayer()}}};
+    this.i=i;this.tok++;hush();kokTrim(this.q[i]&&this.q[i].say);this.paused=false;this.run()},
+  stop(quiet){this.tok++;clearTimeout(this.timer);kokTrim();this.on=false;this.paused=false;this.done=null;hush();if(!quiet){mark(-1);drawPlayer()}}};
 function mark(seg){document.querySelectorAll('[data-seg]').forEach(el=>{const on=String(seg)===el.dataset.seg;if(on&&el.dataset.now!=='1'&&P.on)el.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});el.dataset.now=on?'1':''})}
 const IC={play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
 function drawPlayer(){const el=$('#player');$('#fab').dataset.up=P.on?'1':'';if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);

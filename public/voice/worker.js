@@ -2,6 +2,7 @@
    passage is being turned into speech. The page (app/companion.html, "kok") sends:
      { load: { dtype: 'q8' | 'fp32', device: 'wasm' | 'webgpu' } }   download (first time) and start the model
      { say: { id, text, voice } }                                     speak one passage
+     { drop: id }                                                     a passage still waiting that is no longer wanted
    and gets back { progress }, { ready, voices } , { clip: { id, wav } } or { error, id }. */
 import { KokoroTTS } from './kokoro.web.js';
 let tts = null;
@@ -13,7 +14,9 @@ function wav(samples, rate) {
   return out.buffer;
 }
 let chain = Promise.resolve();
+const dropped = new Set();
 self.onmessage = e => { const m = e.data || {};
+  if (m.drop) { dropped.add(m.drop); return; }
   chain = chain.then(async () => {
     if (m.load) {
       const seen = {};
@@ -21,6 +24,7 @@ self.onmessage = e => { const m = e.data || {};
         progress_callback: p => { if (p && p.status === 'progress' && p.total) { seen[p.file] = [p.loaded, p.total]; let a = 0, b = 0; for (const k in seen) { a += seen[k][0]; b += seen[k][1]; } self.postMessage({ progress: { loaded: a, total: b } }); } } });
       const v = tts.voices; self.postMessage({ ready: true, voices: Object.keys(v).map(id => ({ id, name: v[id].name, accent: id[0] === 'b' ? 'British' : 'American', gender: v[id].gender, grade: v[id].overallGrade })) });
     } else if (m.say) {
+      if (dropped.delete(m.say.id)) return;
       if (!tts) throw new Error('not loaded');
       const a = await tts.generate(m.say.text, { voice: m.say.voice || 'af_heart', speed: 1 }), buf = wav(a.audio, a.sampling_rate);
       self.postMessage({ clip: { id: m.say.id, wav: buf } }, [buf]);
