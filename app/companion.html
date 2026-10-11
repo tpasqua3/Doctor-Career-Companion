@@ -160,9 +160,12 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 .ctl svg{width:20px;height:20px;fill:currentColor}
 .sayrow{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px}
 .sayrow .btn[aria-pressed="true"]{background:var(--good-soft);color:var(--good);border-color:transparent}
-.flagbox{display:flex;flex-direction:column;gap:6px}
-.flagwords{display:flex;gap:6px;flex-wrap:wrap;max-height:30vh;overflow-y:auto}
-.flagwords button{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:99px;padding:6px 12px;font-size:.85rem;cursor:pointer}
+.flagpop{position:fixed;inset:0;z-index:15;background:rgba(8,13,20,.5);display:flex;align-items:flex-start;justify-content:center;padding:calc(14px + env(safe-area-inset-top,0px)) 12px 12px;overflow-y:auto}
+.flagpop .card{width:100%;max-width:460px;box-shadow:0 14px 40px rgba(0,0,0,.3)}
+.flagwords{display:flex;gap:6px;flex-wrap:wrap;max-height:34vh;overflow-y:auto}
+.flagwords button{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:99px;padding:7px 13px;font-size:.9rem;cursor:pointer}
+.flagwords button[data-has]{border-color:var(--teal);color:var(--teal)}
+@media (pointer:coarse){.flagpop input{font-size:16px}}
 .ctl .sp{border-radius:9px;width:auto;padding:0 10px;font-family:var(--num);font-size:.85rem}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(120px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:9px 14px;border-radius:9px;font-size:.88rem;z-index:20;max-width:calc(100% - 32px)}
 </style>
@@ -174,6 +177,7 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 <div class="player" id="player" hidden></div>
 <button class="fab" id="fab" data-act="askopen" aria-label="Ask the study companion">Ask</button>
 <div class="askp" id="askp" role="dialog" aria-label="Study companion" hidden></div>
+<div class="flagpop" id="flagpop" hidden></div>
 <div class="toast" id="toast" hidden></div>
 <script>
 'use strict';
@@ -409,7 +413,7 @@ function saysHtml(){const L=st.says||[],todo=L.filter(x=>!sayClean(x.s)).length,
    <div class="row"><button class="btn pri" data-act="sayadd">Add a word</button></div>
    ${L.map((x,i)=>`<div class="sayrow"><div class="row" style="align-items:flex-end"><label class="f">Word<input type="text" data-sayf="w" data-i="${i}" id="say-w-${i}" value="${esc(x.w||'')}" autocapitalize="off" autocomplete="off" spellcheck="false"></label><label class="f">Say it as<input type="text" data-sayf="s" data-i="${i}" id="say-s-${i}" value="${esc(x.s||'')}" placeholder="spelled the way it sounds" autocapitalize="off" autocomplete="off" spellcheck="false"></label></div>
     <div class="row"><button class="btn sm" data-act="sayplay" data-k="w" data-i="${i}">Hear it as written</button><button class="btn sm" data-act="sayplay" data-k="s" data-i="${i}">Hear the respelling</button><span style="flex:1"></span><button class="btn sm" data-act="sayon" data-i="${i}" aria-pressed="${x.on!==false&&!!sayClean(x.s)}">${!sayClean(x.s)?'No respelling yet':x.on!==false?'In use':'Off'}</button><button class="btn sm" data-act="saydel" data-i="${i}">Remove</button></div></div>`).join('')}
-   <p class="small muted">Spell it the way it sounds, in short everyday words with spaces between the parts, for example <b>uh pix uh ban</b>. Press Hear the respelling, change it until it sounds right, then leave it In use. The starter entries are guesses and are off until you have heard them. To collect words while you listen, choose Cloudflare MeloTTS as the natural voice model above and tap the flag in the player when a word sounds wrong.</p></div>`}
+   <p class="small muted">Spell it the way it sounds, in short everyday words with spaces between the parts, for example <b>uh pix uh ban</b>. Press Hear the respelling, change it until it sounds right, then leave it In use. The starter entries are guesses and are off until you have heard them. To fix words while you listen, choose Cloudflare MeloTTS as the natural voice model above and tap the flag in the player when a word sounds wrong: you can respell it there and the passage is read again.</p></div>`}
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
 function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(!Array.isArray(st.says))st.says=SAYS0.map(x=>({w:x[0],s:x[1],on:false}));/* Once per account: the guideline collection (kept beside the syllabus, with its registry) joins the libraries as a second source. Removing it in Settings sticks. */
   if(!st.prefs.glLib){st.prefs.glLib=1;const L=libRows().filter(x=>x.name);if(!L.some(x=>x.role==='guideline'||/guideline/i.test(x.name)))st.prefs.libs=[...L,{name:'Guidelines and Backend',role:'guideline',year:''}]}
@@ -624,9 +628,29 @@ function sayTry(text,btn){if(!text)return toast('Type something to hear first.')
     e=>{done();toast(e&&e.code==='rate_limited'?'The Cloudflare voice has reached its limit for today. Try again tomorrow.':'The Cloudflare voice did not answer. Try again in a moment.',5000)})}
 /* The player's flag: the words of the piece being read and the one before it (the voice has often moved on by the time of the tap),
    longest first, since the long ones are usually the drug names. Tapping one adds it to the list with no respelling yet. */
-function flagWords(){const have=new Set((st.says||[]).map(x=>sayClean(x.w).toLowerCase())),seen=new Set(),out=[];
-  for(let k=P.i;k>=0&&k>=P.i-1;k--){const t=P.q[k]&&P.q[k].say;if(t)(t.match(/[A-Za-z][A-Za-z'\u2019-]{3,}/g)||[]).forEach(w=>{const l=w.toLowerCase().replace(/['\u2019-]+$/,'');if(l.length>3&&!seen.has(l)&&!have.has(l)){seen.add(l);out.push(l)}})}
-  return out.sort((a,b)=>b.length-a.length).slice(0,24)}
+function flagWords(){const have={},seen=new Set(),out=[];(st.says||[]).forEach(x=>{have[sayClean(x.w).toLowerCase()]=x});
+  for(let k=P.i;k>=0&&k>=P.i-1;k--){const t=P.q[k]&&P.q[k].say;if(t)(t.match(/[A-Za-z][A-Za-z'’-]{3,}/g)||[]).forEach(w=>{const l=w.toLowerCase().replace(/['’-]+$/,'');if(l.length>3&&!seen.has(l)){seen.add(l);out.push({w:l,k,has:!!(have[l]&&sayClean(have[l].s)&&have[l].on!==false)})}})}
+  return out.sort((a,b)=>b.w.length-a.w.length).slice(0,24)}
+/* The pop-up the flag opens, over the lesson: pick the word (or type it), type how it should be said, hear it in the Cloudflare
+   voice, save. The passage the word was in is then read again with the fix. Nothing here leaves the lesson. */
+function drawFlag(){const el=$('#flagpop'),F=P.flag;if(!F){el.hidden=true;el.innerHTML='';return}el.hidden=false;
+  el.innerHTML=`<div class="card" role="dialog" aria-label="Fix a pronunciation">${F.pick?`<div class="row between" style="flex-wrap:nowrap"><h3 style="overflow-wrap:anywhere">${esc(F.pick.w)}</h3><button class="btn sm" data-act="pflagx">Close</button></div>
+    <label class="f">Say it as<input type="text" id="flag-s" value="${esc(F.pick.s||'')}" placeholder="spelled the way it sounds" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></label>
+    <div class="row"><button class="btn sm" data-act="pflagh" data-k="w">Hear it as written</button><button class="btn sm" data-act="pflagh" data-k="s">Hear the respelling</button></div>
+    <div class="row"><button class="btn pri" data-act="pflags">Save and replay</button><button class="btn" data-act="pflagl">Fix later</button><button class="btn" data-act="pflagb">Back</button></div>
+    <span class="tiny muted">Short everyday words with spaces between the parts work best, for example uh pix uh ban. Only the Cloudflare voice uses this.</span>`
+   :`<div class="row between" style="flex-wrap:nowrap"><h3>Which word sounded wrong?</h3><button class="btn sm" data-act="pflagx">Close</button></div>
+    ${F.words.length?`<div class="flagwords">${F.words.map((x,i)=>`<button data-act="pflagw" data-i="${i}"${x.has?' data-has="1"':''}>${esc(x.w)}</button>`).join('')}</div>`:''}
+    <div class="row" style="flex-wrap:nowrap"><input type="text" id="flag-o" placeholder="or type the word" aria-label="Another word" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button class="btn" data-act="pflago" style="flex:none">Fix it</button></div>
+    <div class="row between"><span class="tiny muted">Outlined words already have a respelling you can change.</span><button class="btn link sm" data-act="pflagall">Open the full list</button></div>`}</div>`;
+  const f=$(F.pick?'#flag-s':null);if(f){f.focus();try{f.setSelectionRange(f.value.length,f.value.length)}catch(e){}}}
+function flagPick(w,k){w=sayClean(w).toLowerCase().slice(0,60);if(!w)return toast('Type the word first.');const x=(st.says||[]).find(y=>sayClean(y.w).toLowerCase()===w);P.flag.pick={w,k,s:x?sayClean(x.s):''};drawFlag()}
+function flagClose(resume){sayTok++;P.flag=null;drawFlag();if(resume&&P.on&&P.paused){hush();P.toggle()}else drawPlayer()}
+function flagSave(later){const F=P.flag;if(!F||!F.pick)return;const s=later?'':sayClean(($('#flag-s')||{}).value).slice(0,120),w=F.pick.w;if(!later&&!s)return toast('Type how it should be said, or choose Fix later.');
+  const L2=(st.says||[]).slice(),x=L2.find(y=>sayClean(y.w).toLowerCase()===w);
+  if(later){if(!x)L2.unshift({w,s:''})}else if(x){x.s=s;x.on=true}else L2.unshift({w,s,on:true});
+  st.says=L2;saysChanged();if(!later&&P.on&&F.pick.k>=0&&F.pick.k<P.q.length)P.i=F.pick.k;
+  flagClose(true);toast(later?'Saved “'+w+'” to fix later, in Settings under Pronunciations.':'Saved. Reading that passage again.',4000)}
 let unlocked=false;function unlock(){prime();if(unlocked||!TTS)return;unlocked=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}
 /* Text is cut into pieces at sentence ends (a full stop inside a number such as 0.5 is not one). The first piece of a passage is
    kept to about one sentence (140 characters), the second to 200 and the rest to 240, because a voice takes time in proportion to
@@ -678,10 +702,9 @@ function mark(seg,text){const hl=typeof CSS!=='undefined'&&CSS.highlights&&typeo
   document.querySelectorAll('[data-seg]').forEach(el=>{const on=String(seg)===el.dataset.seg;if(on&&el.dataset.now!=='1'&&P.on&&!r)el.scrollIntoView({block:el.offsetHeight>innerHeight*.6?'start':'center',behavior:calm});el.dataset.now=on?'1':''});
   if(r&&Date.now()-handScroll>6000){try{const b=r.getBoundingClientRect(),top=innerHeight*.16,bot=innerHeight*.58;if(b.height&&(b.top<top||b.bottom>bot))scrollBy({top:b.top-innerHeight*.3,behavior:calm})}catch(e){}}}
 const IC={flag:'<svg viewBox="0 0 24 24"><path d="M5 3h2v18H5zm3 1h11l-2.5 4.5L19 14H8z"/></svg>',play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
-function drawPlayer(){const el=$('#player');$('#fab').dataset.up=P.on?'1':'';if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
+function drawPlayer(){const el=$('#player');if(!P.on&&P.flag){P.flag=null}if(!P.flag&&!$('#flagpop').hidden)drawFlag();$('#fab').dataset.up=P.on?'1':'';if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
   el.innerHTML=`<div class="in"><div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><div class="t">${esc(P.title)}</div><div class="tiny muted">${esc(P.sub)}${P.q[P.i]&&P.q[P.i].wait?' · thinking time':''}${P.by&&ENGINE[P.by]?' · '+ENGINE[P.by]:''}</div></div><span class="tiny num muted">${p}%</span></div>
   <div class="meter"><i style="width:${p}%"></i></div>
-  ${P.flag?`<div class="flagbox"><div class="row between" style="flex-wrap:nowrap"><b class="small">Which word sounded wrong?</b><button class="btn sm" data-act="pflagx">Close</button></div>${P.flag.length?`<div class="flagwords">${P.flag.map(w=>`<button data-act="pflagw" data-w="${esc(w)}">${esc(w)}</button>`).join('')}</div><span class="tiny muted">It is added to Settings, Pronunciations, where you give it a respelling.</span>`:'<span class="small muted">Every word in this passage is already on your list.</span>'}</div>`:''}
   <div class="ctl"><button data-act="pprev" aria-label="Back one section">${IC.prev}</button><button class="big" data-act="ptoggle" aria-label="${P.paused?'Play':'Pause'}">${P.paused?IC.play:IC.pause}</button><button data-act="pnext" aria-label="Skip one section">${IC.next}</button>
   <button class="sp" data-act="prate" aria-label="Reading speed">${st.prefs.rate.toFixed(2).replace(/0$/,'')}×</button><span style="flex:1"></span>${P.by==='cloudflare'&&P.q[P.i]&&P.q[P.i].say?`<button data-act="pflag" aria-label="A word sounded wrong" title="A word sounded wrong">${IC.flag}</button>`:''}<button data-act="pstop" aria-label="Stop">${IC.stop}</button></div></div>`}
 
@@ -1535,6 +1558,7 @@ function readBackup(text){let j;try{j=JSON.parse(text)}catch(e){return {err:'Tha
   const n=Object.keys(out).length;return n?{n,saved:j.saved||'',state:!!(out.state&&out.state.v),docs:out}:{err:'That backup is empty.'}}
 
 document.addEventListener('click',async e=>{unlock();
+  if(e.target.id==='flagpop')return flagClose(true);
   const tab=e.target.closest('[data-tab]');if(tab){if(S.quiz)endQuiz();if(!P.on)endAct(S.deck?{n:S.deck.seen}:null);S.tab=tab.dataset.tab;S.lesson=null;S.deck=null;S.clist=false;S.err='';if(S.session&&!P.on)S.session=null;render();scrollTo(0,0);return}
   const dk=e.target.closest('[data-deck]');if(dk){S.tab='cards';S.cscope='top:'+dk.dataset.deck;S.deck=null;S.clist=false;render();scrollTo(0,0);return}
   const pp=e.target.closest('[data-pp]');if(pp){if(pp.disabled)return;S.pp=Number(pp.dataset.pp);render();const c=$('#plancard');if(c)c.scrollIntoView({block:'nearest'});return}
@@ -1564,9 +1588,15 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='kokcancel'){const had=KOK.have;kokStop();if(!had&&st.prefs.voice==='offline'){st.prefs.voice='cloud';saveState()}render();return}
   if(a==='kokremove'){kokRemove();return}
   if(a==='pstop'){P.stop();if(S.session)S.session.waiting=false;return}
-  if(a==='pflag'){if(P.flag){P.flag=null;return drawPlayer()}P.flag=flagWords();if(!P.paused)P.toggle();else drawPlayer();return}
-  if(a==='pflagx'){P.flag=null;if(P.paused)P.toggle();else drawPlayer();return}
-  if(a==='pflagw'){const w=sayClean(b.dataset.w).toLowerCase();if(w&&!(st.says||[]).some(x=>sayClean(x.w).toLowerCase()===w)){st.says=[{w,s:''},...(st.says||[])];saysChanged()}P.flag=null;if(P.paused)P.toggle();else drawPlayer();toast('Added \u201c'+w+'\u201d. Give it a respelling in Settings, under Pronunciations.',5000);return}
+  if(a==='pflag'){if(P.flag)return flagClose(true);P.flag={words:flagWords(),pick:null};if(P.on&&!P.paused)P.toggle();drawFlag();return}
+  if(a==='pflagx')return flagClose(true);
+  if(a==='pflagw'){const x=P.flag&&P.flag.words[Number(b.dataset.i)];if(x)flagPick(x.w,x.k);return}
+  if(a==='pflago')return flagPick(v('flag-o'),P.i);
+  if(a==='pflagb'){sayTok++;P.flag.pick=null;drawFlag();return}
+  if(a==='pflagh'){if(!P.flag||!P.flag.pick)return;return sayTry(b.dataset.k==='w'?P.flag.pick.w:sayClean(($('#flag-s')||{}).value),b)}
+  if(a==='pflags')return flagSave(false);
+  if(a==='pflagl')return flagSave(true);
+  if(a==='pflagall'){flagClose(false);S.tab='settings';render();const c=$('#sayscard');if(c)c.scrollIntoView({block:'start'});return}
   if(a==='sayadd'){st.says=[{w:'',s:''},...(st.says||[])];saveState();render();const el=document.getElementById('say-w-0');if(el)el.focus();return}
   if(a==='saydel'){const L=(st.says||[]).slice();L.splice(Number(b.dataset.i),1);st.says=L;saysChanged();render();return}
   if(a==='sayon'){const x=(st.says||[])[Number(b.dataset.i)];if(!x)return;if(!sayClean(x.s))return toast('Give it a respelling first.');x.on=x.on===false;saysChanged();render();return}
@@ -1648,6 +1678,7 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='restoreok'){const R=S.restore;if(!R||R.err)return;P.stop(true);endAct();clearTimeout(timers.state);timers.state=null;Object.entries(R.docs).forEach(([n,body])=>put(n,clone(body)));CS=null;S.restore=null;S.lesson=null;S.quiz=null;S.deck=null;S.session=null;loadState();render();toast('Restored '+R.n+' items.',5000);return}
 });
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&e.target.id==='askin'){e.preventDefault();const t=e.target.value;e.target.value='';sendChat(t)}if(e.key==='Escape'&&S.askOpen){S.askOpen=false;drawAsk()}});
+document.addEventListener('keydown',e=>{if(!P.flag)return;if(e.key==='Escape')return flagClose(true);if(e.key!=='Enter')return;if(e.target.id==='flag-s'){e.preventDefault();flagSave(false)}else if(e.target.id==='flag-o'){e.preventDefault();flagPick(e.target.value,P.i)}});
 document.addEventListener('change',e=>{if(e.target.dataset&&'kvoice' in e.target.dataset){try{localStorage.setItem('dcc:kvoice',e.target.value)}catch(x){}if(KOK.state==='ready'&&!P.on){prime();P.load([{say:'This is the voice that will read your lessons.'}],'Voice sample','')}}});
 document.addEventListener('change',e=>{if(e.target.dataset&&('gvoice' in e.target.dataset||'gtier' in e.target.dataset)){st.prefs['gvoice' in e.target.dataset?'gvoice':'gtier']=e.target.value;saveState();clips.forEach(p=>p.then(u=>URL.revokeObjectURL(u),()=>{}));clips.clear();toast('Voice changed. It applies from the next passage.');return}
   if(e.target.dataset&&'dvoice' in e.target.dataset){try{localStorage.setItem('dcc:dvoice',e.target.value)}catch(x){}pickVoice();if(TTS&&!P.on){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('This is the voice that will read your lessons.');if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}u.rate=st.prefs.rate;speechSynthesis.speak(u)}catch(x){}}}});
