@@ -348,9 +348,13 @@ const GTTS = [
 /* The Google voices a listener may pick in the app's Settings (kept in their record as prefs.gvoice), and whether each is a woman's
    or a man's voice, so that the Neural2 and WaveNet kinds, which have their own names, follow the choice as closely as they can. */
 const GVOICES = { Aoede: 'F', Kore: 'F', Leda: 'F', Zephyr: 'F', Puck: 'M', Charon: 'M', Fenrir: 'M', Orus: 'M' };
-async function googleVoice(env, user, kind) {
-  let pick = '';
-  try { const row = await env.DB.prepare("SELECT json_extract(body, '$.prefs.gvoice') AS v FROM docs WHERE user_id = ? AND path = 'med/state'").bind(user.id).first(); if (row && GVOICES[row.v]) pick = row.v; } catch (e) {}
+/* prefs.gtier is the listener's choice of model: '' (best available), one of the Google kinds to start from, or 'melo' for the
+   Cloudflare voice only. A chosen Google kind still gives way to the next once its free allowance for the month is spent. */
+async function googlePrefs(env, user) {
+  try { const row = await env.DB.prepare("SELECT json_extract(body, '$.prefs.gvoice') AS v, json_extract(body, '$.prefs.gtier') AS t FROM docs WHERE user_id = ? AND path = 'med/state'").bind(user.id).first();
+    return { pick: row && GVOICES[row.v] ? row.v : '', tier: row && typeof row.t === 'string' ? row.t : '' }; } catch (e) { return { pick: '', tier: '' }; }
+}
+function googleVoice(env, pick, kind) {
   const man = GVOICES[pick] === 'M';
   if (kind === 'chirp') return pick ? 'en-US-Chirp3-HD-' + pick : (env.GOOGLE_TTS_VOICE || 'en-US-Chirp3-HD-Aoede');
   return kind === 'neural2' ? 'en-US-Neural2-' + (man ? 'D' : 'F') : 'en-US-Wavenet-' + (man ? 'D' : 'F');
@@ -361,13 +365,15 @@ async function googleUsage(env) {
 }
 async function googleSpeak(env, user, text) {
   if (!env.GOOGLE_TTS_KEY) return null;
+  const prefs = await googlePrefs(env, user);
+  if (prefs.tier === 'melo') return null;
   const used = await googleUsage(env), share = Math.min(1, Math.max(0, Number(env.GOOGLE_TTS_SHARE) || 0.95));
-  for (const v of GTTS) {
+  for (const v of GTTS.slice(Math.max(0, GTTS.findIndex(x => x.id === prefs.tier)))) {
     const key = 'gtts-' + v.id;
     if ((used[key] || 0) + text.length > v.free * share) continue;
     try {
       const r = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': env.GOOGLE_TTS_KEY },
-        body: JSON.stringify({ input: { text }, voice: { languageCode: 'en-US', name: await googleVoice(env, user, v.id) }, audioConfig: { audioEncoding: 'MP3' } }), signal: AbortSignal.timeout(9000) });
+        body: JSON.stringify({ input: { text }, voice: { languageCode: 'en-US', name: googleVoice(env, prefs.pick, v.id) }, audioConfig: { audioEncoding: 'MP3' } }), signal: AbortSignal.timeout(9000) });
       if (!r.ok) { console.log('google voice ' + v.id + ': ' + r.status + ' ' + (await r.text()).slice(0, 200)); if (r.status === 429 || r.status >= 500) continue; return null; }
       const j = await r.json();
       if (!j || typeof j.audioContent !== 'string' || !j.audioContent) continue;
