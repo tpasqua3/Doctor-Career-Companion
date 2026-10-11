@@ -53,7 +53,7 @@ textarea{font:inherit;font-size:.88rem;line-height:1.5;color:var(--ink);backgrou
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LANGS={med:'Study and career record'};
-let me=null,mode='login',resetMode='direct',pwOpen=false,newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
+let me=null,mode='login',resetMode='direct',pwOpen=false,fgQs=null,fgEmail='',rqOpen=false,newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
 const driveMsg=new URLSearchParams(location.search).get('drive')||'';
 const when=t=>t?new Date(t).toLocaleString():'never';
 const nextUrl=new URLSearchParams(location.search).has('next');
@@ -63,15 +63,19 @@ function auth(){
   if(resetTok)return `<h1>Choose a new password</h1><div class="card"><label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label>${msg}<div class="row"><button class="btn pri" data-act="reset">Save password</button></div></div>`;
   const su=mode==='signup',fg=mode==='forgot';
   /* No email on this site yet: the forgotten password is replaced on the spot, against the email and name the account was made under. */
-  if(fg&&resetMode==='direct')return `<div><h1>Doctor Career Companion</h1></div>
-  <div class="card"><h2>Choose a new password</h2><p class="small muted">Enter the email and the name your account was created with, then your new password.</p>
-   <label>Email<input id="email" type="email" autocomplete="email"></label>
-   <div class="row"><label style="flex:1">First name<input id="first" autocomplete="given-name"></label><label style="flex:1">Last name<input id="last" autocomplete="family-name"></label></div>
-   <label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label>
-   <label>New password again<input id="pw2" type="password" autocomplete="new-password" minlength="8"></label>
-   ${msg}
-   <div class="row"><button class="btn pri" data-act="direct">Change password</button></div>
-   <div class="row small"><button class="btn link" data-mode="login">Back to log in</button></div></div>`;
+  if(fg&&resetMode==='direct'){const pws=`<label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label>
+   <label>New password again<input id="pw2" type="password" autocomplete="new-password" minlength="8"></label>`,back='<div class="row small"><button class="btn link" data-act="fgback">Use a different email</button><button class="btn link" data-mode="login">Back to log in</button></div>';
+   return `<div><h1>Doctor Career Companion</h1></div><div class="card"><h2>Choose a new password</h2>
+   ${!fgQs?`<p class="small muted">Enter the email of your account. You will then answer one of the recovery questions you set.</p>
+     <label>Email<input id="email" type="email" autocomplete="email"></label>${msg}
+     <div class="row"><button class="btn pri" data-act="fgnext">Continue</button></div><div class="row small"><button class="btn link" data-mode="login">Back to log in</button></div>`
+   :fgQs.length?`<p class="small muted">${esc(fgEmail)}</p>
+     <label>Recovery question<select id="rq">${fgQs.map(q=>`<option>${esc(q)}</option>`).join('')}</select></label>
+     <label>Your answer<input id="ra" autocomplete="off" autocapitalize="off"></label>${pws}${msg}
+     <div class="row"><button class="btn pri" data-act="direct">Change password</button></div>${back}`
+   :`<p class="small muted">${esc(fgEmail)} has no recovery questions set yet. Enter the first and last name the account was created with instead.</p>
+     <div class="row"><label style="flex:1">First name<input id="first" autocomplete="given-name"></label><label style="flex:1">Last name<input id="last" autocomplete="family-name"></label></div>${pws}${msg}
+     <div class="row"><button class="btn pri" data-act="direct">Change password</button></div>${back}`}</div>`}
   if(fg&&resetMode==='off')return `<div><h1>Doctor Career Companion</h1></div><div class="card"><h2>Reset your password</h2><p class="small muted">Password reset is switched off on this site. Ask the person who invited you to help.</p><div class="row small"><button class="btn link" data-mode="login">Back to log in</button></div></div>`;
   return `<div><h1>Doctor Career Companion</h1><p class="muted">Your account keeps your study record (question history, mastery by topic, lessons, career plans) whether you use the app here or inside Claude.</p></div>
   <div class="card"><h2>${su?'Create your account':fg?'Reset your password':'Log in'}</h2>
@@ -94,7 +98,7 @@ function home(){
      <div class="row"><button class="btn pri" data-act="mklink">${me.connector?'Make a new link':'Make my connector link'}</button>${me.connector?'<button class="btn" data-act="offlink">Turn off</button>':''}</div>`}</div>
   <div class="card"><h2>Your record</h2>${langs.length?`<table><thead><tr><th>Area</th><th>Saved items</th><th>Last saved</th></tr></thead><tbody>${langs.map(l=>`<tr><td>${esc(LANGS[l.lang]||l.lang)}</td><td>${l.n}</td><td>${esc(new Date(l.updated).toLocaleString())}</td></tr>`).join('')}</tbody></table>`:'<p class="small muted">Nothing saved yet. Your record appears here after your first session.</p>'}
    <div class="row"><a class="btn" href="/api/backup">Download a backup</a></div></div>
-  ${store()}${ais()}${me.owner?owner()+labour()+legal():''}
+  ${recovery()}${store()}${ais()}${me.owner?owner()+labour()+legal():''}
   ${msg}
   <div class="card"><h2>Account</h2><p class="small muted">${esc(me.email)} · recovery email</p>
    ${pwOpen?`<label>Current password<input id="cur" type="password" autocomplete="current-password"></label>
@@ -103,6 +107,16 @@ function home(){
     <span class="small muted">At least 8 characters. Other devices logged in to this account are logged out; this one stays in.</span>
     <div class="row"><button class="btn pri" data-act="pwsave">Save new password</button><button class="btn" data-act="pwclose">Cancel</button></div>`:'<div class="row"><button class="btn" data-act="pwopen">Change password</button></div>'}
    <div class="row">${confirmDel?'<button class="btn danger" data-act="delacct">Yes, delete my account and everything saved</button><button class="btn" data-act="nodel">Keep it</button>':'<button class="btn danger" data-act="askdel">Delete account</button>'}</div></div>`}
+/* The recovery questions this account answers to replace a forgotten password: up to three, each chosen from the site's list. */
+function recovery(){const have=me.recovery||[],list=me.questions||[];if(!list.length)return '';
+  const pick=i=>`<label>Question ${i+1}${i?' (optional)':''}<select id="rq${i}"><option value="">${i?'None':'Choose a question'}</option>${list.map(q=>`<option ${have[i]===q?'selected':''}>${esc(q)}</option>`).join('')}</select></label>
+    <label>Answer ${i+1}<input id="ra${i}" autocomplete="off" autocapitalize="off" placeholder="${have[i]?'Leave blank to keep your saved answer':''}"></label>`;
+  return `<div class="card"><div class="row" style="justify-content:space-between"><h2>Recovery questions</h2><span class="chip ${have.length?'on':''}">${have.length?have.length+' set':'Not set'}</span></div>
+   <p class="small muted">If you forget your password, "Forgot password?" on the log in screen asks you to pick one of these and answer it. Capitals, punctuation and extra spaces do not matter.</p>
+   ${rqOpen?`${[0,1,2].map(pick).join('')}<label>Current password<input id="rcur" type="password" autocomplete="current-password"></label>
+     <div class="row"><button class="btn pri" data-act="rqsave">Save recovery questions</button><button class="btn" data-act="rqclose">Cancel</button></div>`
+   :`${have.length?`<ol class="small">${have.map(q=>`<li>${esc(q)}</li>`).join('')}</ol>`:'<div class="note">You have none yet. Until you set one, your password can be replaced by anyone who knows your email and name.</div>'}
+     <div class="row"><button class="btn ${have.length?'':'pri'}" data-act="rqopen">${have.length?'Change recovery questions':'Set recovery questions'}</button></div>`}</div>`}
 /* This account's own folder in Google Drive: how much of the record is there, and its dated backups. */
 function store(){const s=me.storage||{};if(!s.on)return me.owner?'':`<div class="card"><h2>Central storage</h2><p class="small muted">Your record is saved in this site's database. The copy in Google Drive is not switched on yet.</p></div>`;
   return `<div class="card"><div class="row" style="justify-content:space-between"><h2>Central storage</h2><span class="chip ${s.waiting||s.error?'':'on'}">${s.error?'Problem':s.waiting?s.waiting+' waiting':'Up to date'}</span></div>
@@ -144,13 +158,18 @@ function draw(){$('#app').innerHTML=(me?home():auth())+'<p class="small muted" s
 const v=id=>($('#'+id)||{}).value||'';
 const show=(t,ok)=>{msg=`<div class="${ok?'ok':'err'}">${esc(t)}</div>`;draw()};
 document.addEventListener('click',async e=>{
-  const m=e.target.closest('[data-mode]');if(m){mode=m.dataset.mode;msg='';if(mode==='forgot'){try{resetMode=(await api('GET','/api/reset/mode')).mode}catch(x){}}draw();return}
+  const m=e.target.closest('[data-mode]');if(m){mode=m.dataset.mode;msg='';fgQs=null;draw();if(mode==='forgot'){try{const was=resetMode;resetMode=(await api('GET','/api/reset/mode')).mode;if(resetMode!==was&&mode==='forgot')draw()}catch(x){}}return}
   const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;msg='';
   try{
     if(a==='login'){await api('POST','/api/login',{email:v('email'),password:v('pw')});if(nextUrl)return location.replace('/');return load()}
     if(a==='signup'){await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw'),code:v('code')});if(nextUrl)return location.replace('/');return load()}
     if(a==='forgot'){try{await api('POST','/api/forgot',{email:v('email')})}catch(x){if(/not switched on/.test(x.message)){resetMode='direct';return draw()}throw x}return show('Check your email for a reset link. It works for one hour.',true)}
-    if(a==='direct'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');try{await api('POST','/api/forgot/direct',{email:v('email'),firstName:v('first'),lastName:v('last'),password:v('pw')})}catch(x){if(/reset by email/.test(x.message)){resetMode='email';return show('This site resets passwords by email. Enter your recovery email.')}throw x}mode='login';return show('Password changed. Log in with your new password.',true)}
+    if(a==='fgnext'){const em=v('email').trim();try{fgQs=(await api('POST','/api/forgot/questions',{email:em})).questions;fgEmail=em}catch(x){if(/reset by email/.test(x.message)){resetMode='email';return show('This site resets passwords by email. Enter your recovery email.')}throw x}return draw()}
+    if(a==='fgback'){fgQs=null;return draw()}
+    if(a==='rqopen'){rqOpen=true;return draw()}
+    if(a==='rqclose'){rqOpen=false;return draw()}
+    if(a==='rqsave'){const r=await api('PUT','/api/recovery',{current:v('rcur'),items:[0,1,2].map(i=>({question:v('rq'+i),answer:v('ra'+i)}))});me.recovery=r.recovery;rqOpen=false;return show('Recovery questions saved.',true)}
+    if(a==='direct'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/forgot/direct',{email:fgEmail,question:v('rq'),answer:v('ra'),firstName:v('first'),lastName:v('last'),password:v('pw')});fgQs=null;mode='login';return show('Password changed. Log in with your new password.',true)}
     if(a==='pwopen'){pwOpen=true;return draw()}
     if(a==='pwclose'){pwOpen=false;return draw()}
     if(a==='pwsave'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/password',{current:v('cur'),password:v('pw')});pwOpen=false;return show('Password changed.',true)}

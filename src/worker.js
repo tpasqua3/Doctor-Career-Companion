@@ -15,10 +15,10 @@ const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')
 const rand = n => hex(crypto.getRandomValues(new Uint8Array(n)));
 const sha = async s => hex(await crypto.subtle.digest('SHA-256', enc.encode(s)));
 const same = (a, b) => { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
-async function hashPassword(password, saltHex) {
+async function hashPassword(password, saltHex, iterations = 100000) {
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
   const salt = Uint8Array.from(saltHex.match(/../g).map(h => parseInt(h, 16)));
-  return hex(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100000 }, key, 256));
+  return hex(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, key, 256));
 }
 const json = (o, status = 200, headers = {}) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers } });
 const fail = (status, error) => json({ error }, status);
@@ -39,6 +39,8 @@ function init(env) {
       first TEXT, last TEXT, created TEXT NOT NULL, fails INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS resets (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL, created INTEGER NOT NULL)`),
+    /* Recovery questions an account set on its account page (up to three). The answer is kept only as a salted hash, like a password. */
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS recovery (user_id TEXT NOT NULL, slot INTEGER NOT NULL, question TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (user_id, slot))`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS links (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created TEXT NOT NULL)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS usage (user_id TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (user_id, day))`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS docs (user_id TEXT NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (user_id, path))`),
@@ -79,10 +81,18 @@ async function strike(env, u) {
 }
 /* How a forgotten password is replaced on this site:
      email    a one-hour link sent to the recovery email. On as soon as a RESEND_API_KEY secret is set.
-     direct   no email: the person gives the account's email and the name it was made under, and chooses a new password on the spot.
-              Used while email is not set up. PASSWORD_RESET = "direct" keeps it on alongside email; "off" switches it off.
+     direct   no email: the person gives the account's email, picks one of the recovery questions that account set on its account page,
+              answers it, and chooses a new password on the spot. An account that has not set any questions yet is checked against the
+              name it was made under instead. Used while email is not set up. PASSWORD_RESET = "direct" keeps it on alongside email; "off" switches it off.
      off      neither. */
 const resetMode = env => { const want = String(env.PASSWORD_RESET || '').toLowerCase(); return want === 'off' ? (env.RESEND_API_KEY ? 'email' : 'off') : want === 'direct' || !env.RESEND_API_KEY ? 'direct' : 'email'; };
+/* The recovery questions an account may choose from. An answer is compared ignoring capitals, punctuation and extra spaces. */
+const QUESTIONS = ['What was the name of your first pet?', 'What city were you born in?', 'What was the name of your elementary school?', 'What was the make and model of your first car?',
+  'What is your mother\'s maiden name?', 'What was the name of the street you grew up on?', 'What was your childhood nickname?', 'What is the middle name of your oldest sibling?',
+  'What was the first concert you attended?', 'What was the name of your first employer?', 'In what city did your parents meet?', 'What was the name of your favorite teacher?'];
+const MAX_RECOVERY = 3, ANSWER_ROUNDS = 25000;
+const answerKey = a => String(a || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 200);
+const recoveryOf = async (env, uid) => (await env.DB.prepare('SELECT slot, question, salt, hash FROM recovery WHERE user_id = ? ORDER BY slot').bind(uid).all()).results;
 const sameName = (a, b) => same(String(a || '').trim().toLowerCase(), String(b || '').trim().toLowerCase());
 async function startSession(env, userId) {
   const token = rand(32);
@@ -803,19 +813,35 @@ async function api(request, env, url, ctx) {
   }
 
   /* The login screen asks which way a forgotten password is replaced here, so it can show the right form. */
-  if (route === 'GET /api/reset/mode') return json({ mode: resetMode(env), email: !!env.RESEND_API_KEY });
-  /* Forgot password without email: the account's email plus the first and last name it was made under, and the new password. */
+  if (route === 'GET /api/reset/mode') return json({ mode: resetMode(env), email: !!env.RESEND_API_KEY, questions: QUESTIONS });
+  /* Forgot password without email, step 1: the recovery questions the account with this email has set (never the answers). */
+  if (route === 'POST /api/forgot/questions') {
+    if (resetMode(env) !== 'direct') return fail(403, 'Passwords are reset by email on this site.');
+    const email = str(body.email, 200).toLowerCase();
+    if (!EMAIL_OK.test(email)) return fail(400, 'Enter the email address of your account.');
+    const u = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+    if (!u) return fail(404, 'No account uses that email address.');
+    return json({ questions: (await recoveryOf(env, u.id)).map(r => r.question) });
+  }
+  /* Step 2: the answer to one of those questions, and the new password. An account with no questions set gives its first and last name. */
   if (route === 'POST /api/forgot/direct') {
     if (resetMode(env) !== 'direct') return fail(403, 'Passwords are reset by email on this site.');
     const email = str(body.email, 200).toLowerCase(), password = body.password;
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter the email address of your account.');
-    if (!str(body.firstName, 60)) return fail(400, 'Enter the first name on your account.');
     if (!PASSWORD_OK(password)) return fail(400, PASSWORD_RULE);
     const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
-    const bad = () => fail(401, 'Those details do not match an account.');
-    if (!u) { await hashPassword('x', '00000000000000000000000000000000'); return bad(); }
+    if (!u) { await hashPassword('x', '00000000000000000000000000000000', ANSWER_ROUNDS); return fail(401, 'Those details do not match an account.'); }
     if (u.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
-    if (!sameName(body.firstName, u.first) || !sameName(body.lastName, u.last)) { await strike(env, u); return bad(); }
+    const set = await recoveryOf(env, u.id);
+    if (set.length) {
+      const row = set.find(r => r.question === str(body.question, 200)), answer = answerKey(body.answer);
+      if (!row) return fail(400, 'Choose one of your recovery questions.');
+      if (!answer) return fail(400, 'Enter your answer.');
+      if (!same(await hashPassword(answer, row.salt, ANSWER_ROUNDS), row.hash)) { await strike(env, u); return fail(401, 'That answer is not right.'); }
+    } else {
+      if (!str(body.firstName, 60)) return fail(400, 'Enter the first name on your account.');
+      if (!sameName(body.firstName, u.first) || !sameName(body.lastName, u.last)) { await strike(env, u); return fail(401, 'Those details do not match the account.'); }
+    }
     await setPassword(env, u.id, password);
     console.log('password reset without email', u.id);
     return json({ ok: true });
@@ -867,10 +893,34 @@ async function api(request, env, url, ctx) {
     await setPassword(env, user.id, body.password, m ? await sha(m[1]) : '');
     return json({ ok: true });
   }
+  /* Set the account's recovery questions (one to three, each from the list, no question twice). The current password is asked for again.
+     A question left with a blank answer keeps the answer it already had. */
+  if (route === 'PUT /api/recovery') {
+    if (user.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
+    const items = (Array.isArray(body.items) ? body.items : []).filter(i => i && typeof i === 'object' && str(i.question, 200)).slice(0, MAX_RECOVERY + 1);
+    if (items.length > MAX_RECOVERY) return fail(400, `Choose up to ${MAX_RECOVERY} questions.`);
+    if (items.some(i => !QUESTIONS.includes(str(i.question, 200)))) return fail(400, 'Choose each question from the list.');
+    if (new Set(items.map(i => str(i.question, 200))).size !== items.length) return fail(400, 'Choose a different question for each one.');
+    const had = await recoveryOf(env, user.id), rows = [];
+    for (const i of items) {
+      const question = str(i.question, 200), answer = answerKey(i.answer), old = had.find(r => r.question === question);
+      if (!answer && !old) return fail(400, 'Enter an answer for each question.');
+      if (answer && answer.length < 2) return fail(400, 'Each answer needs at least 2 letters or numbers.');
+      rows.push({ question, answer, old });
+    }
+    if (typeof body.current !== 'string' || !same(await hashPassword(body.current, user.salt), user.hash)) { await strike(env, user); return fail(401, 'Your current password is not right.'); }
+    const writes = [env.DB.prepare('DELETE FROM recovery WHERE user_id = ?').bind(user.id)];
+    for (const [slot, r] of rows.entries()) {
+      const salt = r.answer ? rand(16) : r.old.salt, hash = r.answer ? await hashPassword(r.answer, salt, ANSWER_ROUNDS) : r.old.hash;
+      writes.push(env.DB.prepare('INSERT INTO recovery (user_id, slot, question, salt, hash) VALUES (?, ?, ?, ?, ?)').bind(user.id, slot, r.question, salt, hash));
+    }
+    await env.DB.batch(writes);
+    return json({ recovery: rows.map(r => r.question) });
+  }
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
     const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user);
-    return json({ ...profile(user), reset: resetMode(env), ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), connector: link ? link.created : null, areas: await summary(env, user.id),
+    return json({ ...profile(user), reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), connector: link ? link.created : null, areas: await summary(env, user.id),
       library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: await storage(env, user), owner,
       drive: owner ? { mode: DRIVE.mode, account: DRIVE.email, canConnect: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET), redirect: url.origin + '/api/google/callback' } : undefined });
   }
@@ -1027,6 +1077,7 @@ async function api(request, env, url, ctx) {
       env.DB.prepare('DELETE FROM usage WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM resets WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM recovery WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM links WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
     ]);
