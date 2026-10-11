@@ -160,13 +160,22 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 .ctl svg{width:20px;height:20px;fill:currentColor}
 .sayrow{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:10px}
 .sayrow .btn[aria-pressed="true"]{background:var(--good-soft);color:var(--good);border-color:transparent}
-/* The pronunciation pop-up sits where the Ask panel does, lower right, over about half the screen, so the lesson text stays in view above it. */
-.flagpop{position:fixed;right:0;bottom:0;z-index:12;width:min(440px,100%);max-height:min(58%,500px);overflow-y:auto;background:var(--paper);border:1px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,.2);padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px))}
-.flagpop .card{border:0;padding:0;background:none}
-.flagwords{display:flex;gap:6px;flex-wrap:wrap;max-height:34vh;overflow-y:auto}
-.flagwords button{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:99px;padding:7px 13px;font-size:.9rem;cursor:pointer}
-.flagwords button[data-has]{border-color:var(--teal);color:var(--teal)}
-@media (pointer:coarse){.flagpop input{font-size:16px}}
+/* The Pronunciation guide sits where the Ask panel does, lower right, over about half the screen, so the lesson text stays in view above it.
+   --fa is how solid it is (the See-through slider): the panel and its boxes thin out, the words in it stay sharp. */
+.flagpop{--fa:100%;position:fixed;right:0;bottom:0;z-index:12;width:min(440px,100%);height:min(50%,460px);display:flex;flex-direction:column;gap:8px;background:color-mix(in srgb,var(--paper) var(--fa),transparent);border:1px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,.2);padding:12px 14px 10px}
+.flagpop h3{white-space:nowrap}
+.fop{display:flex;align-items:center;gap:10px}.fop input{flex:1;min-width:0;accent-color:var(--teal)}
+.flagpop .chips{flex:none;padding-bottom:2px}.flagpop .chips button{background:color-mix(in srgb,var(--card) var(--fa),transparent);color:var(--ink)}
+.flist{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px;overscroll-behavior:contain}
+.frow{display:grid;grid-template-columns:34px minmax(0,1fr) minmax(0,1fr) 34px 34px;gap:6px;align-items:center;flex:none}
+.frow.fcols{padding-top:2px}
+.frow input[type=text]{padding:7px 9px;background:color-mix(in srgb,var(--card) var(--fa),transparent)}
+.frow[data-off] input[type=text]{color:var(--muted)}
+.fsp,.fck{width:34px;height:34px;border:1px solid var(--line);border-radius:9px;background:color-mix(in srgb,var(--card) var(--fa),transparent);color:var(--ink);cursor:pointer;display:grid;place-items:center;padding:0;font-size:.8rem}
+.fsp svg,.fck svg{width:17px;height:17px;fill:currentColor}
+.fck{color:var(--line)}.fck[aria-pressed="true"]{background:var(--good-soft);color:var(--good);border-color:transparent}
+.fsp:disabled{opacity:.6}
+@media (pointer:coarse){.flagpop input[type=text]{font-size:16px}}
 .ctl .sp{border-radius:9px;width:auto;padding:0 10px;font-family:var(--num);font-size:.85rem}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(120px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:9px 14px;border-radius:9px;font-size:.88rem;z-index:20;max-width:calc(100% - 32px)}
 </style>
@@ -414,7 +423,7 @@ function saysHtml(){const L=st.says||[],todo=L.filter(x=>!sayClean(x.s)).length,
    <div class="row"><button class="btn pri" data-act="sayadd">Add a word</button></div>
    ${L.map((x,i)=>`<div class="sayrow"><div class="row" style="align-items:flex-end"><label class="f">Word<input type="text" data-sayf="w" data-i="${i}" id="say-w-${i}" value="${esc(x.w||'')}" autocapitalize="off" autocomplete="off" spellcheck="false"></label><label class="f">Say it as<input type="text" data-sayf="s" data-i="${i}" id="say-s-${i}" value="${esc(x.s||'')}" placeholder="spelled the way it sounds" autocapitalize="off" autocomplete="off" spellcheck="false"></label></div>
     <div class="row"><button class="btn sm" data-act="sayplay" data-k="w" data-i="${i}">Hear it as written</button><button class="btn sm" data-act="sayplay" data-k="s" data-i="${i}">Hear the respelling</button><span style="flex:1"></span><button class="btn sm" data-act="sayon" data-i="${i}" aria-pressed="${x.on!==false&&!!sayClean(x.s)}">${!sayClean(x.s)?'No respelling yet':x.on!==false?'In use':'Off'}</button><button class="btn sm" data-act="saydel" data-i="${i}">Remove</button></div></div>`).join('')}
-   <p class="small muted">Spell it the way it sounds, in short everyday words with spaces between the parts, for example <b>uh pix uh ban</b>. Press Hear the respelling, change it until it sounds right, then leave it In use. The starter entries are guesses and are off until you have heard them. To fix words while you listen, choose Cloudflare MeloTTS as the natural voice model above and tap the check mark in the player when a word sounds wrong: you can respell it there and the passage is read again.</p></div>`}
+   <p class="small muted">Spell it the way it sounds, in short everyday words with spaces between the parts, for example <b>uh pix uh ban</b>. Press Hear the respelling, change it until it sounds right, then leave it In use. The starter entries are guesses and are off until you have heard them. To fix words while you listen, choose Cloudflare MeloTTS as the natural voice model above and tap the check mark in the player when a word sounds wrong: the Pronunciation guide opens over the lesson, and the passage is read again when you close it.</p></div>`}
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
 function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(!Array.isArray(st.says))st.says=SAYS0.map(x=>({w:x[0],s:x[1],on:false}));/* Once per account: the guideline collection (kept beside the syllabus, with its registry) joins the libraries as a second source. Removing it in Settings sticks. */
   if(!st.prefs.glLib){st.prefs.glLib=1;const L=libRows().filter(x=>x.name);if(!L.some(x=>x.role==='guideline'||/guideline/i.test(x.name)))st.prefs.libs=[...L,{name:'Guidelines and Backend',role:'guideline',year:''}]}
@@ -624,7 +633,7 @@ const hush=()=>{try{if(TTS)speechSynthesis.cancel()}catch(e){}try{if(AUD)AUD.pau
 /* Settings, Pronunciations: the Cloudflare voice reads one word or respelling exactly as typed (job "speak_cf"), so the two can be compared. */
 let sayTok=0;
 function sayTry(text,btn){if(!text)return toast('Type something to hear first.');if(!AUD||!(WEB||(LINKED&&!!MCP)))return toast('The Cloudflare voice cannot be reached from here just now.');
-  if(P.on&&!P.paused)P.toggle();prime();const tok=++sayTok,was=btn.textContent;btn.disabled=true;btn.textContent='Loading…';const done=()=>{btn.disabled=false;btn.textContent=was};
+  if(P.on&&!P.paused)P.toggle();prime();const tok=++sayTok,was=btn.innerHTML;btn.disabled=true;btn.innerHTML=btn.classList.contains('fsp')?'…':'Loading…';const done=()=>{btn.disabled=false;btn.innerHTML=was};
   voiceAsk({input:text,job:'speak_cf'}).then(url=>{done();if(tok!==sayTok)return URL.revokeObjectURL(url);hush();AUD.onerror=null;AUD.onended=()=>URL.revokeObjectURL(url);AUD.src=url;AUD.defaultPlaybackRate=AUD.playbackRate=1;const p=AUD.play();if(p&&p.catch)p.catch(()=>toast('Tap again to play it.'))},
     e=>{done();toast(e&&e.code==='rate_limited'?'The Cloudflare voice has reached its limit for today. Try again tomorrow.':'The Cloudflare voice did not answer. Try again in a moment.',5000)})}
 /* The player's flag: the words of the piece being read and the one before it (the voice has often moved on by the time of the tap),
@@ -632,26 +641,43 @@ function sayTry(text,btn){if(!text)return toast('Type something to hear first.')
 function flagWords(){const have={},seen=new Set(),out=[];(st.says||[]).forEach(x=>{have[sayClean(x.w).toLowerCase()]=x});
   for(let k=P.i;k>=0&&k>=P.i-1;k--){const t=P.q[k]&&P.q[k].say;if(t)(t.match(/[A-Za-z][A-Za-z'’-]{3,}/g)||[]).forEach(w=>{const l=w.toLowerCase().replace(/['’-]+$/,'');if(l.length>3&&!seen.has(l)){seen.add(l);out.push({w:l,k,has:!!(have[l]&&sayClean(have[l].s)&&have[l].on!==false)})}})}
   return out.sort((a,b)=>b.w.length-a.w.length).slice(0,24)}
-/* The pop-up the flag opens, over the lesson: pick the word (or type it), type how it should be said, hear it in the Cloudflare
-   voice, save. The passage the word was in is then read again with the fix. Nothing here leaves the lesson. */
-function drawFlag(){const el=$('#flagpop'),F=P.flag;if(!F){el.hidden=true;el.innerHTML='';return}el.hidden=false;
-  el.innerHTML=`<div class="card" role="dialog" aria-label="Fix a pronunciation">${F.pick?`<div class="row between" style="flex-wrap:nowrap"><h3 style="overflow-wrap:anywhere">${esc(F.pick.w)}</h3><button class="btn sm" data-act="pflagx">Close</button></div>
-    <label class="f">Say it as<input type="text" id="flag-s" value="${esc(F.pick.s||'')}" placeholder="spelled the way it sounds" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></label>
-    <div class="row"><button class="btn sm" data-act="pflagh" data-k="w">Hear it as written</button><button class="btn sm" data-act="pflagh" data-k="s">Hear the respelling</button></div>
-    <div class="row"><button class="btn pri" data-act="pflags">Save and replay</button><button class="btn" data-act="pflagl">Fix later</button><button class="btn" data-act="pflagb">Back</button></div>
-    <span class="tiny muted">Short everyday words with spaces between the parts work best, for example uh pix uh ban. Only the Cloudflare voice uses this.</span>`
-   :`<div class="row between" style="flex-wrap:nowrap"><h3>Which word sounded wrong?</h3><button class="btn sm" data-act="pflagx">Close</button></div>
-    ${F.words.length?`<div class="flagwords">${F.words.map((x,i)=>`<button data-act="pflagw" data-i="${i}"${x.has?' data-has="1"':''}>${esc(x.w)}</button>`).join('')}</div>`:''}
-    <div class="row" style="flex-wrap:nowrap"><input type="text" id="flag-o" placeholder="or type the word" aria-label="Another word" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button class="btn" data-act="pflago" style="flex:none">Fix it</button></div>
-    <div class="row between"><span class="tiny muted">Outlined words already have a respelling you can change.</span><button class="btn link sm" data-act="pflagall">Open the full list</button></div>`}</div>`;
-  const f=$(F.pick?'#flag-s':null);if(f){f.focus();try{f.setSelectionRange(f.value.length,f.value.length)}catch(e){}}}
-function flagPick(w,k){w=sayClean(w).toLowerCase().slice(0,60);if(!w)return toast('Type the word first.');const x=(st.says||[]).find(y=>sayClean(y.w).toLowerCase()===w);P.flag.pick={w,k,s:x?sayClean(x.s):''};drawFlag()}
-function flagClose(resume){sayTok++;P.flag=null;drawFlag();if(resume&&P.on&&P.paused){hush();P.toggle()}else drawPlayer()}
-function flagSave(later){const F=P.flag;if(!F||!F.pick)return;const s=later?'':sayClean(($('#flag-s')||{}).value).slice(0,120),w=F.pick.w;if(!later&&!s)return toast('Type how it should be said, or choose Fix later.');
-  const L2=(st.says||[]).slice(),x=L2.find(y=>sayClean(y.w).toLowerCase()===w);
-  if(later){if(!x)L2.unshift({w,s:''})}else if(x){x.s=s;x.on=true}else L2.unshift({w,s,on:true});
-  st.says=L2;saysChanged();if(!later&&P.on&&F.pick.k>=0&&F.pick.k<P.q.length)P.i=F.pick.k;
-  flagClose(true);toast(later?'Saved “'+w+'” to fix later, in Settings under Pronunciations.':'Saved. Reading that passage again.',4000)}
+/* The Pronunciation guide: the panel the player's check mark opens, lower right where the Ask panel opens, with the lesson paused
+   behind it. It is the list as a two-column table, Before (the word as written) and After (how to spell it so the voice says it
+   right), each with a speaker button that has the Cloudflare voice read that side. The list scrolls inside the panel and always
+   ends in an empty row: typing in it makes a new entry and a fresh empty row appears under it. Changes save as they are typed.
+   A slider makes the panel see-through so the lesson text can be read behind it. P.flag = {rows: the entries shown, in order,
+   dirty, from: the passage to go back to}. Entries that are switched off (the starter guesses) stay in Settings until asked for. */
+function flagRow(r,x){const off=x&&x.on===false;return `<div class="frow" data-r="${r}"${off?' data-off="1"':''}><button class="fsp" data-act="pflagh" data-k="w" aria-label="Hear it as written" title="Hear it as written">${IC.spk}</button><input type="text" data-ff="w" value="${esc(x?x.w:'')}" placeholder="${x?'word':'new word'}" aria-label="Before: the word as written" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><input type="text" data-ff="s" value="${esc(x?x.s:'')}" placeholder="say it as" aria-label="After: how to say it" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button class="fsp" data-act="pflagh" data-k="s" aria-label="Hear the respelling" title="Hear the respelling">${IC.spk}</button><button class="fck" data-act="pflagon" aria-pressed="${!!x&&!off&&!!sayClean(x.s)}" aria-label="Use this respelling" title="Use this respelling">${IC.flag}</button></div>`}
+function drawFlag(){const el=$('#flagpop'),F=P.flag;$('#fab').style.visibility=F?'hidden':'';if(!F){el.hidden=true;el.innerHTML='';el.style.bottom='';return}el.hidden=false;
+  let op=100;try{op=Number(localStorage.getItem('dcc:flagop'))||100}catch(e){}op=Math.min(100,Math.max(25,op));el.style.setProperty('--fa',op+'%');
+  el.innerHTML=`<div class="row between" style="flex-wrap:nowrap"><h3>Pronunciation guide</h3><button class="btn sm pri" data-act="pflagx">Done</button></div>
+   <label class="fop tiny muted">See-through<input type="range" id="flag-op" min="25" max="100" step="5" value="${op}" aria-label="How solid this panel is"></label>
+   ${F.words.length?`<div class="chips" id="flag-chips">${F.words.map(x=>`<button data-act="pflagw" data-w="${esc(x.w)}">${esc(x.w)}</button>`).join('')}</div>`:''}
+   <div class="frow fcols eyebrow"><span></span><span>Before</span><span>After</span><span></span><span></span></div>
+   <div class="flist" id="flag-list">${F.rows.map((x,r)=>flagRow(r,x)).join('')}${flagRow('new',null)}</div>
+   <div class="row between" style="flex-wrap:nowrap"><span class="tiny muted">Type in the empty row to add a word. Only the Cloudflare voice uses this.</span><button class="btn link sm" data-act="pflagall" style="flex:none">Full list</button></div>`;
+  const l=$('#flag-list');l.scrollTop=l.scrollHeight;flagLift()}
+/* The panel rests on top of the player, so its controls stay in reach; when a phone's keyboard is up it sits on the keyboard instead. */
+function flagLift(){const el=$('#flagpop'),vv=window.visualViewport,pl=$('#player');if(!el||el.hidden)return;const kb=vv?Math.round(innerHeight-vv.height-vv.offsetTop):0,base=pl&&!pl.hidden?pl.offsetHeight:0;el.style.bottom=Math.max(0,kb>60?kb:base)+'px';if(vv)el.style.maxHeight=Math.round(vv.height*.92-(kb>60?0:base))+'px'}
+try{if(window.visualViewport){visualViewport.addEventListener('resize',flagLift);visualViewport.addEventListener('scroll',flagLift)}}catch(e){}
+const flagEntry=row=>{const F=P.flag;return F&&row&&row.dataset.r!=='new'?F.rows[Number(row.dataset.r)]:null};
+function flagMark(row,x){if(x.on===false)row.dataset.off='1';else delete row.dataset.off;row.querySelector('.fck').setAttribute('aria-pressed',String(x.on!==false&&!!sayClean(x.s)))}
+/* Typing in a row. The empty row becomes a real entry at its first character and a new empty row is put under it. */
+function flagType(inp){const F=P.flag,row=inp.closest('.frow');if(!F||!row)return;let x=flagEntry(row);
+  if(!x){if(!sayClean(inp.value))return;x={w:'',s:''};F.rows.push(x);row.dataset.r=String(F.rows.length-1);row.querySelector('[data-ff="w"]').placeholder='word';st.says=[x,...(st.says||[])];
+    const l=$('#flag-list');l.insertAdjacentHTML('beforeend',flagRow('new',null));l.scrollTop=l.scrollHeight}
+  const f=inp.dataset.ff,v=sayClean(inp.value).slice(0,f==='w'?60:120);x[f]=f==='w'?v.toLowerCase():v;if(f==='s'&&v)x.on=true;flagMark(row,x);F.dirty=true;saysChanged()}
+/* A word of the passage was tapped: go to its row if it has one (bringing a switched-off starter guess into view), else start a new row with it. */
+function flagWord(w){const F=P.flag,l=$('#flag-list');w=sayClean(w).toLowerCase();if(!F||!w)return;let r=F.rows.findIndex(x=>sayClean(x.w).toLowerCase()===w),row;
+  if(r<0){const x=(st.says||[]).find(y=>sayClean(y.w).toLowerCase()===w);
+    if(x){F.rows.push(x);r=F.rows.length-1;l.querySelector('[data-r="new"]').insertAdjacentHTML('beforebegin',flagRow(r,x))}
+    else{row=l.querySelector('[data-r="new"]');const i=row.querySelector('[data-ff="w"]');i.value=w;flagType(i)}}
+  row=row||l.querySelector('[data-r="'+r+'"]');if(!row)return;row.scrollIntoView({block:'nearest'});const s=row.querySelector('[data-ff="s"]');s.focus();try{s.setSelectionRange(s.value.length,s.value.length)}catch(e){}}
+/* Done: rows left blank are dropped, and if anything changed the lesson goes back one passage so the fix is heard. */
+function flagClose(resume){const F=P.flag;sayTok++;if(F){const n=(st.says||[]).length;st.says=(st.says||[]).filter(x=>sayClean(x.w)||sayClean(x.s));if(F.dirty||st.says.length!==n)saysChanged();if(F.dirty&&resume&&P.on&&F.from>=0&&F.from<P.q.length)P.i=F.from}
+  P.flag=null;drawFlag();if(resume&&P.on&&P.paused){hush();P.toggle()}else drawPlayer()}
+function flagOpen(){let from=P.i;for(let k=P.i-1;k>=0;k--){if(P.q[k]&&P.q[k].say){from=k;break}}
+  P.flag={words:flagWords(),rows:(st.says||[]).filter(x=>x.on!==false||!sayClean(x.s)).reverse(),dirty:false,from};if(P.on&&!P.paused)P.toggle();drawFlag()}
 let unlocked=false;function unlock(){prime();if(unlocked||!TTS)return;unlocked=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}
 /* Text is cut into pieces at sentence ends (a full stop inside a number such as 0.5 is not one). The first piece of a passage is
    kept to about one sentence (140 characters), the second to 200 and the rest to 240, because a voice takes time in proportion to
@@ -702,7 +728,7 @@ function mark(seg,text){const hl=typeof CSS!=='undefined'&&CSS.highlights&&typeo
   const calm=matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth';
   document.querySelectorAll('[data-seg]').forEach(el=>{const on=String(seg)===el.dataset.seg;if(on&&el.dataset.now!=='1'&&P.on&&!r)el.scrollIntoView({block:el.offsetHeight>innerHeight*.6?'start':'center',behavior:calm});el.dataset.now=on?'1':''});
   if(r&&Date.now()-handScroll>6000){try{const b=r.getBoundingClientRect(),top=innerHeight*.16,bot=innerHeight*.58;if(b.height&&(b.top<top||b.bottom>bot))scrollBy({top:b.top-innerHeight*.3,behavior:calm})}catch(e){}}}
-const IC={flag:'<svg viewBox="0 0 24 24"><path d="M9.2 16.6 4.9 12.3l-1.5 1.5 5.8 5.8L21 7.8l-1.5-1.5z"/></svg>',play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
+const IC={spk:'<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zm11.5 3A4.5 4.5 0 0 0 13 8v8a4.5 4.5 0 0 0 2.5-4z"/></svg>',flag:'<svg viewBox="0 0 24 24"><path d="M9.2 16.6 4.9 12.3l-1.5 1.5 5.8 5.8L21 7.8l-1.5-1.5z"/></svg>',play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
 function drawPlayer(){const el=$('#player');if(!P.on&&P.flag){P.flag=null}if(!P.flag&&!$('#flagpop').hidden)drawFlag();$('#fab').dataset.up=P.on?'1':'';if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
   el.innerHTML=`<div class="in"><div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><div class="t">${esc(P.title)}</div><div class="tiny muted">${esc(P.sub)}${P.q[P.i]&&P.q[P.i].wait?' · thinking time':''}${P.by&&ENGINE[P.by]?' · '+ENGINE[P.by]:''}</div></div><span class="tiny num muted">${p}%</span></div>
   <div class="meter"><i style="width:${p}%"></i></div>
@@ -1588,14 +1614,11 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='kokcancel'){const had=KOK.have;kokStop();if(!had&&st.prefs.voice==='offline'){st.prefs.voice='cloud';saveState()}render();return}
   if(a==='kokremove'){kokRemove();return}
   if(a==='pstop'){P.stop();if(S.session)S.session.waiting=false;return}
-  if(a==='pflag'){if(P.flag)return flagClose(true);P.flag={words:flagWords(),pick:null};if(P.on&&!P.paused)P.toggle();drawFlag();return}
+  if(a==='pflag'){if(P.flag)return flagClose(true);return flagOpen()}
   if(a==='pflagx')return flagClose(true);
-  if(a==='pflagw'){const x=P.flag&&P.flag.words[Number(b.dataset.i)];if(x)flagPick(x.w,x.k);return}
-  if(a==='pflago')return flagPick(v('flag-o'),P.i);
-  if(a==='pflagb'){sayTok++;P.flag.pick=null;drawFlag();return}
-  if(a==='pflagh'){if(!P.flag||!P.flag.pick)return;return sayTry(b.dataset.k==='w'?P.flag.pick.w:sayClean(($('#flag-s')||{}).value),b)}
-  if(a==='pflags')return flagSave(false);
-  if(a==='pflagl')return flagSave(true);
+  if(a==='pflagw')return flagWord(b.dataset.w);
+  if(a==='pflagh'){const row=b.closest('.frow'),el=row&&row.querySelector('[data-ff="'+(b.dataset.k==='w'?'w':'s')+'"]');return sayTry(sayClean(el&&el.value),b)}
+  if(a==='pflagon'){const row=b.closest('.frow'),x=flagEntry(row);if(!x||!sayClean(x.s))return toast('Type how it should be said first.');x.on=x.on===false;flagMark(row,x);P.flag.dirty=true;saysChanged();return}
   if(a==='pflagall'){flagClose(false);S.tab='settings';render();const c=$('#sayscard');if(c)c.scrollIntoView({block:'start'});return}
   if(a==='sayadd'){st.says=[{w:'',s:''},...(st.says||[])];saveState();render();const el=document.getElementById('say-w-0');if(el)el.focus();return}
   if(a==='saydel'){const L=(st.says||[]).slice();L.splice(Number(b.dataset.i),1);st.says=L;saysChanged();render();return}
@@ -1678,7 +1701,11 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='restoreok'){const R=S.restore;if(!R||R.err)return;P.stop(true);endAct();clearTimeout(timers.state);timers.state=null;Object.entries(R.docs).forEach(([n,body])=>put(n,clone(body)));CS=null;S.restore=null;S.lesson=null;S.quiz=null;S.deck=null;S.session=null;loadState();render();toast('Restored '+R.n+' items.',5000);return}
 });
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&e.target.id==='askin'){e.preventDefault();const t=e.target.value;e.target.value='';sendChat(t)}if(e.key==='Escape'&&S.askOpen){S.askOpen=false;drawAsk()}});
-document.addEventListener('keydown',e=>{if(!P.flag)return;if(e.key==='Escape')return flagClose(true);if(e.key!=='Enter')return;if(e.target.id==='flag-s'){e.preventDefault();flagSave(false)}else if(e.target.id==='flag-o'){e.preventDefault();flagPick(e.target.value,P.i)}});
+document.addEventListener('keydown',e=>{if(!P.flag)return;if(e.key==='Escape')return flagClose(true);const t=e.target;if(e.key!=='Enter'||!t.dataset||!t.dataset.ff)return;e.preventDefault();
+  const row=t.closest('.frow'),to=t.dataset.ff==='w'?row.querySelector('[data-ff="s"]'):$('#flag-list [data-r="new"] [data-ff="w"]');if(to){to.focus();to.scrollIntoView({block:'nearest'})}});
+document.addEventListener('input',e=>{const t=e.target;if(!P.flag||!t||!t.closest||!t.closest('#flagpop'))return;
+  if(t.id==='flag-op'){$('#flagpop').style.setProperty('--fa',t.value+'%');try{localStorage.setItem('dcc:flagop',t.value)}catch(x){}return}
+  if(t.dataset&&t.dataset.ff)flagType(t)});
 document.addEventListener('change',e=>{if(e.target.dataset&&'kvoice' in e.target.dataset){try{localStorage.setItem('dcc:kvoice',e.target.value)}catch(x){}if(KOK.state==='ready'&&!P.on){prime();P.load([{say:'This is the voice that will read your lessons.'}],'Voice sample','')}}});
 document.addEventListener('change',e=>{if(e.target.dataset&&('gvoice' in e.target.dataset||'gtier' in e.target.dataset)){st.prefs['gvoice' in e.target.dataset?'gvoice':'gtier']=e.target.value;saveState();clips.forEach(p=>p.then(u=>URL.revokeObjectURL(u),()=>{}));clips.clear();toast('Voice changed. It applies from the next passage.');return}
   if(e.target.dataset&&'dvoice' in e.target.dataset){try{localStorage.setItem('dcc:dvoice',e.target.value)}catch(x){}pickVoice();if(TTS&&!P.on){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('This is the voice that will read your lessons.');if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}u.rate=st.prefs.rate;speechSynthesis.speak(u)}catch(x){}}}});
