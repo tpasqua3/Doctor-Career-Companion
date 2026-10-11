@@ -53,7 +53,7 @@ textarea{font:inherit;font-size:.88rem;line-height:1.5;color:var(--ink);backgrou
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LANGS={med:'Study and career record'};
-let me=null,mode='login',resetMode='email',pwOpen=false,newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
+let me=null,mode='login',resetMode='direct',pwOpen=false,newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
 const driveMsg=new URLSearchParams(location.search).get('drive')||'';
 const when=t=>t?new Date(t).toLocaleString():'never';
 const nextUrl=new URLSearchParams(location.search).has('next');
@@ -144,13 +144,13 @@ function draw(){$('#app').innerHTML=(me?home():auth())+'<p class="small muted" s
 const v=id=>($('#'+id)||{}).value||'';
 const show=(t,ok)=>{msg=`<div class="${ok?'ok':'err'}">${esc(t)}</div>`;draw()};
 document.addEventListener('click',async e=>{
-  const m=e.target.closest('[data-mode]');if(m){mode=m.dataset.mode;msg='';draw();return}
+  const m=e.target.closest('[data-mode]');if(m){mode=m.dataset.mode;msg='';if(mode==='forgot'){try{resetMode=(await api('GET','/api/reset/mode')).mode}catch(x){}}draw();return}
   const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;msg='';
   try{
     if(a==='login'){await api('POST','/api/login',{email:v('email'),password:v('pw')});if(nextUrl)return location.replace('/');return load()}
     if(a==='signup'){await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw'),code:v('code')});if(nextUrl)return location.replace('/');return load()}
-    if(a==='forgot'){await api('POST','/api/forgot',{email:v('email')});return show('Check your email for a reset link. It works for one hour.',true)}
-    if(a==='direct'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/forgot/direct',{email:v('email'),firstName:v('first'),lastName:v('last'),password:v('pw')});mode='login';return show('Password changed. Log in with your new password.',true)}
+    if(a==='forgot'){try{await api('POST','/api/forgot',{email:v('email')})}catch(x){if(/not switched on/.test(x.message)){resetMode='direct';return draw()}throw x}return show('Check your email for a reset link. It works for one hour.',true)}
+    if(a==='direct'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');try{await api('POST','/api/forgot/direct',{email:v('email'),firstName:v('first'),lastName:v('last'),password:v('pw')})}catch(x){if(/reset by email/.test(x.message)){resetMode='email';return show('This site resets passwords by email. Enter your recovery email.')}throw x}mode='login';return show('Password changed. Log in with your new password.',true)}
     if(a==='pwopen'){pwOpen=true;return draw()}
     if(a==='pwclose'){pwOpen=false;return draw()}
     if(a==='pwsave'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/password',{current:v('cur'),password:v('pw')});pwOpen=false;return show('Password changed.',true)}
