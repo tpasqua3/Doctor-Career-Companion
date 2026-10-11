@@ -28,6 +28,9 @@
   //   RESEND_API_KEY                optional: turns on password reset by emailed link (MAIL_FROM sets the sender). Until it is set,
   //                                 "Forgot password?" changes the password directly against the account's email and name.
   //   GEMINI_API_KEY                the Gemini key from Google AI Studio
+  //   GOOGLE_TTS_KEY                optional: a Google Cloud API key limited to the Text-to-Speech API. Lessons are then read by Google's
+  //                                 voices up to 95% of each voice kind's free monthly characters (GOOGLE_TTS_SHARE changes the share),
+  //                                 and by the Cloudflare voice after that.
   //   DEEPSEEK_API_KEY              optional: a DeepSeek key; DeepSeek then appears in the Ask chat drop-down
   //   OWNER_EMAIL                   the account email of the site owner, the only one who may connect Google Drive
   //   GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET   the Google sign-in the owner uses once to let this server write to Drive

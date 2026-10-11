@@ -315,7 +315,8 @@ async function llama(env, messages, tier) {
    picked ("auto" for none); `avoid` is the service that wrote the thing under review; `account` lets the model look up this
    account's record and the library while it answers (Gemini and DeepSeek). */
 /* ---------- Reading aloud ----------
-   One short passage of a lesson turned into speech by Cloudflare's free voice model, returned as an MP3 in base64. It arrives as an
+   One short passage of a lesson turned into speech, by Google's voices while their free monthly allowance lasts (googleSpeak below)
+   and otherwise by Cloudflare's free voice model, returned as a sound file in base64. It arrives as an
    /api/ai request (or the ask_ai connector tool) whose job is "speak", so the app inside Claude needs no extra tool.
    The free Cloudflare allowance is one pool for the whole Cloudflare account. TTS_DAILY_CHARS (default 400,000 characters, about
    seven hours of speech) stops this app using more than that in a day; past it, or whenever Cloudflare refuses, the answer is a
@@ -334,9 +335,43 @@ function slim(bytes) {
   return out;
 }
 const soundType = b => b[0] === 0x52 && b[1] === 0x49 ? 'audio/wav' : 'audio/mpeg';
+/* Google Cloud Text-to-Speech reads first when the site has a key for it (GOOGLE_TTS_KEY). Google gives each kind of voice its own free
+   allowance of characters every month and bills the account's card for anything past it, so each kind is used only up to a share of
+   its allowance (GOOGLE_TTS_SHARE, default 0.95) and then the next kind takes over: the newest and most natural first. When all
+   three are spent for the month, or Google cannot be reached, the Cloudflare voice below reads instead. Characters are counted for
+   the whole site, per kind, in ai_usage as "gtts-<kind>"; a month here is a calendar month in UTC, which the margin allows for. */
+const GTTS = [
+  { id: 'chirp', voice: 'en-US-Chirp3-HD-Aoede', free: 1e6 },
+  { id: 'neural2', voice: 'en-US-Neural2-F', free: 1e6 },
+  { id: 'wavenet', voice: 'en-US-Wavenet-F', free: 4e6 },
+];
+async function googleUsage(env) {
+  const { results } = await env.DB.prepare("SELECT provider, SUM(n) AS n FROM ai_usage WHERE day LIKE ? AND provider LIKE 'gtts-%' GROUP BY provider").bind(today().slice(0, 7) + '-%').all();
+  return Object.fromEntries(results.map(r => [r.provider, r.n || 0]));
+}
+async function googleSpeak(env, user, text) {
+  if (!env.GOOGLE_TTS_KEY) return null;
+  const used = await googleUsage(env), share = Math.min(1, Math.max(0, Number(env.GOOGLE_TTS_SHARE) || 0.95));
+  for (const v of GTTS) {
+    const key = 'gtts-' + v.id;
+    if ((used[key] || 0) + text.length > v.free * share) continue;
+    try {
+      const r = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': env.GOOGLE_TTS_KEY },
+        body: JSON.stringify({ input: { text }, voice: { languageCode: 'en-US', name: (v.id === 'chirp' && env.GOOGLE_TTS_VOICE) || v.voice }, audioConfig: { audioEncoding: 'MP3' } }), signal: AbortSignal.timeout(9000) });
+      if (!r.ok) { console.log('google voice ' + v.id + ': ' + r.status + ' ' + (await r.text()).slice(0, 200)); if (r.status === 429 || r.status >= 500) continue; return null; }
+      const j = await r.json();
+      if (!j || typeof j.audioContent !== 'string' || !j.audioContent) continue;
+      await env.DB.prepare('INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + excluded.n').bind(user.id, today(), key, text.length).run();
+      return { status: 200, audio: j.audioContent, type: 'audio/mpeg', voice: 'google-' + v.id };
+    } catch (e) { console.log('google voice ' + v.id + ': ' + String(e && e.message || e).slice(0, 200)); return null; }
+  }
+  return null;
+}
 async function speak(env, user, input) {
   const text = String(typeof input === 'string' ? input : '').replace(/\s+/g, ' ').trim().slice(0, 600);
   if (!text) return { status: 400, error: 'Nothing to read.' };
+  const g = await googleSpeak(env, user, text).catch(() => null);
+  if (g) return g;
   if (!env.AI) return { status: 429, error: 'The natural voice is not available on this site.' };
   const cap = Number(env.TTS_DAILY_CHARS) || 400000;
   const row = await env.DB.prepare("SELECT SUM(n) AS n FROM ai_usage WHERE day = ? AND provider = 'tts'").bind(today()).first();
@@ -352,7 +387,7 @@ async function speak(env, user, input) {
   } catch (e) { console.log('speak: ' + String(e && e.message || e).slice(0, 200)); return { status: 429, error: 'The natural voice is not available just now.' }; }
   if (!audio) return { status: 502, error: 'The natural voice sent nothing back.' };
   await env.DB.prepare("INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, 'tts', ?) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + excluded.n").bind(user.id, today(), text.length).run();
-  return { status: 200, audio, type };
+  return { status: 200, audio, type, voice: 'cloudflare' };
 }
 /* ---------- The offline voice's files ----------
    The app can also read with a voice model that runs on the listener's own device (Kokoro; public/voice/). Its files are large
