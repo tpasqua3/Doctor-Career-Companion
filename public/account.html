@@ -55,7 +55,7 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LANGS={med:'Study and career record'};
 const SQLIST='<datalist id="sqList">'+['What was the name of your first pet?','What street did you grow up on?','What was the make of your first car?','What was the name of your elementary school?','What is your oldest cousin’s first name?'].map(q=>`<option value="${q}">`).join('')+'</datalist>';
-let fgQ=null,sqOpen=false,me=null,mode='login',resetMode='email',pwOpen=false,newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
+let fgQ=null,sqOpen=false,me=null,mode='login',resetMode='question',pwOpen=false,newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
 const driveMsg=new URLSearchParams(location.search).get('drive')||'';
 const when=t=>t?new Date(t).toLocaleString():'never';
 const nextUrl=new URLSearchParams(location.search).has('next');
@@ -157,13 +157,13 @@ function draw(){$('#app').innerHTML=(me?home():auth())+'<p class="small muted" s
 const v=id=>($('#'+id)||{}).value||'';
 const show=(t,ok)=>{msg=`<div class="${ok?'ok':'err'}">${esc(t)}</div>`;draw()};
 document.addEventListener('click',async e=>{
-  const m=e.target.closest('[data-mode]');if(m){const em=v('email');mode=m.dataset.mode;fgQ=null;msg='';draw();if(em&&$('#email')&&mode!=='signup')$('#email').value=em;return}
+  const m=e.target.closest('[data-mode]');if(m){const em=v('email');mode=m.dataset.mode;fgQ=null;msg='';if(mode==='forgot'){try{resetMode=(await api('GET','/api/reset/mode')).mode}catch(x){}}draw();if(em&&$('#email')&&mode!=='signup')$('#email').value=em;return}
   const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;msg='';
   try{
     if(a==='login'){await api('POST','/api/login',{email:v('email'),password:v('pw')});if(nextUrl)return location.replace('/');return load()}
     if(a==='signup'){await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw'),question:v('sq'),answer:v('sa'),code:v('code')});if(nextUrl)return location.replace('/');return load()}
-    if(a==='forgot'){await api('POST','/api/forgot',{email:v('email')});return show('Check your email for a reset link. It works for one hour.',true)}
-    if(a==='fgask'){const email=v('email').trim();fgQ={email,question:(await api('POST','/api/forgot/question',{email})).question};return draw()}
+    if(a==='forgot'){try{await api('POST','/api/forgot',{email:v('email')})}catch(x){if(/not switched on/.test(x.message)){resetMode='question';return draw()}throw x}return show('Check your email for a reset link. It works for one hour.',true)}
+    if(a==='fgask'){const email=v('email').trim();try{fgQ={email,question:(await api('POST','/api/forgot/question',{email})).question}}catch(x){if(/reset by email/.test(x.message)){resetMode='email';return show('This site resets passwords by email. Enter your recovery email.')}throw x}return draw()}
     if(a==='fgreset'){const pw=v('pw');if(pw!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/forgot/reset',{email:fgQ.email,answer:v('ans'),password:pw});
       await api('POST','/api/login',{email:fgQ.email,password:pw});fgQ=null;mode='login';if(nextUrl)return location.replace('/');await load();return show('Password changed. You are logged in.',true)}
     if(a==='sqopen'){sqOpen=true;return draw()}
