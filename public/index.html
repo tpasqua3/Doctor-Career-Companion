@@ -552,7 +552,7 @@ try{KOK.have=localStorage.getItem('dcc:kokoro')||''}catch(e){}
 const kokCan=()=>WEB&&typeof Worker!=='undefined'&&typeof caches!=='undefined';
 const kokVoice=()=>{let v='';try{v=localStorage.getItem('dcc:kvoice')||''}catch(e){}return v||'af_heart'};
 const kokOn=()=>!!AUD&&st.prefs.voice==='offline'&&KOK.state==='ready';
-function kokStart(size){if(!kokCan()||KOK.state==='loading'||(KOK.state==='ready'&&KOK.size===size))return;kokStop();
+function kokStart(size){if(!kokCan()||KOK.state==='loading'||(KOK.state==='ready'&&KOK.size===size))return;kokStop();try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{})}catch(e){}
   let w;try{w=new Worker('/voice/worker.js',{type:'module'})}catch(e){KOK.state='err';KOK.err='This browser cannot run the offline voice.';return kokDraw()}
   KOK.w=w;KOK.state='loading';KOK.size=size;KOK.pct=0;KOK.err='';
   const fail=msg=>{if(KOK.w!==w)return;const first=!KOK.have;kokStop();KOK.state='err';KOK.err=msg;if(first&&st.prefs.voice==='offline'){st.prefs.voice='cloud';saveState()}kokDraw()};
@@ -566,7 +566,16 @@ function kokStart(size){if(!kokCan()||KOK.state==='loading'||(KOK.state==='ready
 function kokStop(){if(KOK.w){try{KOK.w.terminate()}catch(e){}}Object.values(KOK.wait).forEach(h=>h.no({code:'offline_voice'}));KOK.w=null;KOK.wait={};KOK.state='off'}
 async function kokRemove(){kokStop();KOK.have='';KOK.voices=[];try{localStorage.removeItem('dcc:kokoro')}catch(e){}try{await caches.delete('transformers-cache');await caches.delete('kokoro-voices')}catch(e){}if(st.prefs.voice==='offline'){st.prefs.voice='cloud';saveState()}render()}
 /* A voice already on this device is started quietly when it is the chosen one; until it is ready the other voices read. */
-function kokWake(){if(kokCan()&&st.prefs.voice==='offline'&&KOK.have&&KOK.state==='off')kokStart(KOK.have)}
+function kokWake(){kokFind();if(kokCan()&&st.prefs.voice==='offline'&&KOK.have&&KOK.state==='off')kokStart(KOK.have)}
+/* Which size this device holds is noted in the browser's small storage, which a phone can clear on its own while the downloaded
+   voice files are still there. So once per visit the files themselves are looked for, and the note is restored from them: the voice
+   then starts from the copy on the device instead of being downloaded again. The browser is also asked to keep this site's files. */
+let kokSought=false;
+async function kokFind(){if(kokSought||!kokCan())return;kokSought=true;
+  try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{})}catch(e){}
+  if(KOK.have)return;
+  try{const c=await caches.open('transformers-cache'),urls=(await c.keys()).map(r=>r.url),has=n=>urls.some(u=>u.endsWith('/onnx/'+n)),size=has('model_quantized.onnx')?'q8':has('model.onnx')?'fp32':'';
+    if(size&&!KOK.have&&KOK.state==='off'){KOK.have=size;try{localStorage.setItem('dcc:kokoro',size)}catch(e){}kokDraw();kokWake()}}catch(e){}}
 function kokClip(text){const v=kokVoice(),key='k:'+v+':'+text;let p=clips.get(key);if(p)return p;
   p=new Promise((ok,no)=>{if(KOK.state!=='ready')return no({code:'offline_voice'});const id=++KOK.seq;KOK.wait[id]={ok,no,key};KOK.w.postMessage({say:{id,text,voice:v}});setTimeout(()=>{if(KOK.wait[id]){delete KOK.wait[id];no({code:'slow'})}},90000)});
   p.catch(()=>{clips.delete(key)});return keep(key,p)}
@@ -574,7 +583,7 @@ function kokClip(text){const v=kokVoice(),key='k:'+v+':'+text;let p=clips.get(ke
    passage at a time, so they are withdrawn (all but `keepText`, the one about to be read) to let the wanted passage go next. */
 function kokTrim(keepText){if(!KOK.w)return;const keepKey=keepText?'k:'+kokVoice()+':'+keepText:'';Object.keys(KOK.wait).forEach(id=>{const h=KOK.wait[id];if(h.key===keepKey)return;delete KOK.wait[id];try{KOK.w.postMessage({drop:Number(id)})}catch(e){}h.no({code:'dropped'})})}
 function kokDraw(){const el=document.getElementById('kokbox');if(el)el.innerHTML=kokHtml()}
-function kokHtml(){if(!kokCan())return'';const sz=x=>x==='fp32'?'Full quality':'Standard',gpu=!!navigator.gpu;let h='';
+function kokHtml(){if(!kokCan())return'';kokFind();const sz=x=>x==='fp32'?'Full quality':'Standard',gpu=!!navigator.gpu;let h='';
   if(KOK.state==='loading')h=`<span class="small">${KOK.have===KOK.size?'Starting the offline voice…':'Downloading the offline voice ('+sz(KOK.size)+')… '+KOK.pct+'%'}</span> <button class="btn sm" data-act="kokcancel">Cancel</button>`;
   else if(KOK.have){h=`<span class="small">Offline voice on this device: <b>${sz(KOK.have)}</b>${KOK.state==='ready'?'':' (not started)'}.</span>`;
     if(KOK.voices.length)h+=`<label class="small" style="display:block;margin:8px 0 4px">Offline voice <select data-kvoice aria-label="Offline voice">${KOK.voices.map(v=>`<option value="${esc(v.id)}"${v.id===kokVoice()?' selected':''}>${esc(v.name)} · ${esc(v.accent)} ${esc(String(v.gender||'').toLowerCase())}${v.grade?' · grade '+esc(v.grade):''}</option>`).join('')}</select></label>`;
