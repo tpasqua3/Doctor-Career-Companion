@@ -322,6 +322,18 @@ async function llama(env, messages, tier) {
    429 and the app reads with the device's own voice instead. Characters spoken are counted per account in ai_usage as "tts". */
 const TTS_MODEL = '@cf/myshell-ai/melotts';
 const b64 = bytes => { let t = ''; for (let i = 0; i < bytes.length; i += 0x8000) t += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(t); };
+const unb64 = t => { if (Uint8Array.fromBase64) return Uint8Array.fromBase64(t); const bin = atob(t), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
+/* The voice model answers with an uncompressed sound file at 44,100 samples a second, far more than speech needs and heavy on a
+   phone's data. A plain 16-bit single-channel file is halved to 22,050 by averaging each pair of samples; anything else is passed on as it is. */
+function slim(bytes) {
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), tag = o => String.fromCharCode(bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]);
+  if (bytes.length < 1000 || tag(0) !== 'RIFF' || tag(8) !== 'WAVE' || tag(36) !== 'data' || v.getUint16(20, true) !== 1 || v.getUint16(22, true) !== 1 || v.getUint16(34, true) !== 16 || v.getUint32(24, true) < 32000) return bytes;
+  const rate = v.getUint32(24, true) / 2, n = Math.floor(Math.min(v.getUint32(40, true), bytes.length - 44) / 4), out = new Uint8Array(44 + n * 2), o = new DataView(out.buffer);
+  out.set(bytes.subarray(0, 44)); o.setUint32(4, 36 + n * 2, true); o.setUint32(24, rate, true); o.setUint32(28, rate * 2, true); o.setUint32(40, n * 2, true);
+  for (let i = 0, a = 44; i < n; i++, a += 4) o.setInt16(44 + i * 2, (v.getInt16(a, true) + v.getInt16(a + 2, true)) >> 1, true);
+  return out;
+}
+const soundType = b => b[0] === 0x52 && b[1] === 0x49 ? 'audio/wav' : 'audio/mpeg';
 async function speak(env, user, input) {
   const text = String(typeof input === 'string' ? input : '').replace(/\s+/g, ' ').trim().slice(0, 600);
   if (!text) return { status: 400, error: 'Nothing to read.' };
@@ -329,17 +341,18 @@ async function speak(env, user, input) {
   const cap = Number(env.TTS_DAILY_CHARS) || 400000;
   const row = await env.DB.prepare("SELECT SUM(n) AS n FROM ai_usage WHERE day = ? AND provider = 'tts'").bind(today()).first();
   if (((row && row.n) || 0) + text.length > cap) return { status: 429, error: 'The natural voice has reached its limit for today.' };
-  let audio = '';
+  let audio = '', type = 'audio/mpeg';
   try {
     const r = await env.AI.run(env.TTS_MODEL || TTS_MODEL, { prompt: text, lang: 'en' });
     if (r && typeof r.audio === 'string') audio = r.audio;
     else if (r instanceof ArrayBuffer) audio = b64(new Uint8Array(r));
     else if (r instanceof Uint8Array) audio = b64(r);
     else if (r && typeof r.getReader === 'function') audio = b64(new Uint8Array(await new Response(r).arrayBuffer()));
+    if (audio) { try { const small = slim(unb64(audio)); type = soundType(small); audio = b64(small); } catch (e) {} }
   } catch (e) { console.log('speak: ' + String(e && e.message || e).slice(0, 200)); return { status: 429, error: 'The natural voice is not available just now.' }; }
   if (!audio) return { status: 502, error: 'The natural voice sent nothing back.' };
   await env.DB.prepare("INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, 'tts', ?) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + excluded.n").bind(user.id, today(), text.length).run();
-  return { status: 200, audio, type: 'audio/mpeg' };
+  return { status: 200, audio, type };
 }
 async function runAI(env, user, { input, tier, provider, account, chat, job, avoid }) {
   tier = tier === 'quick' ? 'quick' : 'default';
