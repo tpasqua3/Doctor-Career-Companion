@@ -354,6 +354,41 @@ async function speak(env, user, input) {
   await env.DB.prepare("INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, 'tts', ?) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + excluded.n").bind(user.id, today(), text.length).run();
   return { status: 200, audio, type };
 }
+/* ---------- The offline voice's files ----------
+   The app can also read with a voice model that runs on the listener's own device (Kokoro; public/voice/). Its files are large
+   (the model is 92 MB compressed or 326 MB at full quality) and are published by others, so this site keeps its own copy in the R2
+   bucket VOICE and serves them from /voice/hf/ (the model and voices, from huggingface.co) and /voice/ort/ (the ONNX runtime, from
+   jsdelivr). A file is copied into R2 the first time anyone asks for it and served from R2 ever after. Only the files named here
+   can be asked for, so this is not an open door to those sites. */
+const VOICE_REPO = 'onnx-community/Kokoro-82M-v1.0-ONNX', ORT_VERSION = '3.5.1';
+function voiceSource(path) {
+  let m = new RegExp('^/voice/hf/' + VOICE_REPO.replace(/[.]/g, '\\.') + '/resolve/main/(config\\.json|tokenizer\\.json|tokenizer_config\\.json|onnx/model(?:_quantized)?\\.onnx|voices/[a-z]{2}_[a-z0-9]{2,20}\\.bin)$').exec(path);
+  if (m) return { key: 'kokoro-v1.0/' + m[1], from: 'https://huggingface.co/' + VOICE_REPO + '/resolve/main/' + m[1], type: m[1].endsWith('.json') ? 'application/json' : 'application/octet-stream' };
+  m = /^\/voice\/ort\/(ort-wasm-simd-threaded(?:\.jsep)?\.(mjs|wasm))$/.exec(path);
+  if (m) return { key: 'ort-' + ORT_VERSION + '/' + m[1], from: 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@' + ORT_VERSION + '/dist/' + m[1], type: m[2] === 'mjs' ? 'text/javascript' : 'application/wasm' };
+  return null;
+}
+async function voiceCopy(env, f) {
+  const r = await fetch(f.from, { redirect: 'follow' });
+  if (!r.ok || !r.body) throw new Error('source answered ' + r.status);
+  const len = Number(r.headers.get('Content-Length')) || 0, opt = { httpMetadata: { contentType: f.type } };
+  if (len > 4e6 && !r.headers.get('Content-Encoding')) { const pipe = new FixedLengthStream(len); await Promise.all([r.body.pipeTo(pipe.writable), env.VOICE.put(f.key, pipe.readable, opt)]); }
+  else await env.VOICE.put(f.key, await r.arrayBuffer(), opt);
+}
+async function voiceFile(request, env, ctx, url) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return fail(405, 'Not allowed.');
+  const f = voiceSource(url.pathname);
+  if (!f) return fail(404, 'Not found.');
+  if (!env.VOICE) return fail(503, 'The offline voice is not set up on this site.');
+  let head = await env.VOICE.head(f.key);
+  if (!head) { const job = voiceCopy(env, f); ctx.waitUntil(job.catch(() => {})); try { await job; } catch (e) { console.log('voice: ' + f.key + ': ' + String(e && e.message || e)); return fail(502, 'That file could not be fetched just now. Try again.'); } head = await env.VOICE.head(f.key); }
+  if (!head) return fail(502, 'That file could not be kept. Try again.');
+  if (url.searchParams.has('check')) return json({ file: f.key, bytes: head.size });
+  const headers = { 'Content-Type': f.type, 'Content-Length': String(head.size), 'Cache-Control': 'public, max-age=31536000, immutable', ETag: head.httpEtag };
+  if (request.method === 'HEAD') return new Response(null, { headers });
+  const obj = await env.VOICE.get(f.key);
+  return obj ? new Response(obj.body, { headers }) : fail(502, 'That file could not be read. Try again.');
+}
 async function runAI(env, user, { input, tier, provider, account, chat, job, avoid }) {
   tier = tier === 'quick' ? 'quick' : 'default';
   job = JOB[job] ? job : chat ? 'chat' : 'lesson';   // a request that does not say is held to the highest bar
@@ -1232,6 +1267,10 @@ export default {
     }
     const page = /^\/(privacy|terms)(?:\.html)?\/?$/.exec(url.pathname);
     if (page && request.method === 'GET') { try { return await pageResponse(env, page[1]); } catch (e) { console.error(e); return new Response('This page could not be shown just now. Try again.', { status: 500 }); } }
+    if (url.pathname.startsWith('/voice/hf/') || url.pathname.startsWith('/voice/ort/')) {
+      try { return await voiceFile(request, env, ctx, url); }
+      catch (e) { console.error(e); return fail(500, 'Something went wrong on the server. Try again.'); }
+    }
     if (url.pathname.startsWith('/api/')) {
       try { return await api(request, env, url, ctx); }
       catch (e) { console.error(e); return fail(500, 'Something went wrong on the server. Try again.'); }

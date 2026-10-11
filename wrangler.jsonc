@@ -7,12 +7,14 @@
   "compatibility_date": "2026-09-01",
   // Variables added in the Cloudflare dashboard are kept when a push from GitHub deploys, instead of being wiped.
   "keep_vars": true,
-  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*", "/privacy.html", "/terms.html", "/privacy", "/terms"] },
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*", "/voice/hf/*", "/voice/ort/*", "/privacy.html", "/terms.html", "/privacy", "/terms"] },
   // No database_id: wrangler creates the database on the first deploy and reuses it afterwards.
   "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }],
   // The website's AI. Three services, each on when its setting is there: Gemini (GEMINI_API_KEY secret), Claude (ANTHROPIC_API_KEY
   // secret) and Cloudflare Workers AI (this binding). The app picks one; the others take over when it is over its limit.
   "ai": { "binding": "AI" },
+  // The files of the offline voice (a voice model that runs on the listener's device), copied here from their publishers on first use.
+  "r2_buckets": [{ "binding": "VOICE", "bucket_name": "doctor-career-companion-voice" }],
   // Every five minutes: copy any record still waiting into its account's folder in Google Drive, and write the day's backups.
   "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
