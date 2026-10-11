@@ -72,6 +72,30 @@ async function currentUser(request, env) {
   const row = await env.DB.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires > ?').bind(await sha(m[1]), Date.now()).first();
   return row || null;
 }
+/* Passwords are replaced in one place, whichever way the change was asked for (email link, the security question, or the account page).
+   Every login session of the account ends, except `keep` (the session the change was made from), and any unused reset link dies. */
+const PASSWORD_OK = p => typeof p === 'string' && p.length >= 8 && p.length <= 200;
+const PASSWORD_RULE = 'Choose a password of at least 8 characters.';
+async function setPassword(env, userId, password, keep) {
+  const salt = rand(16);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE users SET salt = ?, hash = ?, fails = 0, locked_until = 0, sq_fails = 0, sq_locked = 0 WHERE id = ?').bind(salt, await hashPassword(password, salt), userId),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?').bind(userId, keep || ''),
+    env.DB.prepare('DELETE FROM resets WHERE user_id = ?').bind(userId),
+  ]);
+}
+/* A wrong guess counts toward the same lock as a wrong login: five in a row and the account waits 15 minutes. */
+async function strike(env, u) {
+  const fails = u.fails + 1;
+  await env.DB.prepare('UPDATE users SET fails = ?, locked_until = ? WHERE id = ?').bind(fails >= 5 ? 0 : fails, fails >= 5 ? Date.now() + 15 * 60000 : 0, u.id).run();
+}
+/* How a forgotten password is replaced on this site:
+     email    a one-hour link sent to the recovery email. On as soon as a RESEND_API_KEY secret is set.
+     question no email: the person gives the account's email, is shown the security question they chose, and a right answer lets them
+              choose a new password on the spot. Used while email is not set up. PASSWORD_RESET = "question" keeps it on alongside
+              email; "off" switches it off.
+     off      neither. */
+const resetMode = env => { const want = String(env.PASSWORD_RESET || '').toLowerCase(); return want === 'off' ? (env.RESEND_API_KEY ? 'email' : 'off') : want === 'question' || !env.RESEND_API_KEY ? 'question' : 'email'; };
 async function startSession(env, userId) {
   const token = rand(32);
   await env.DB.prepare('INSERT INTO sessions (token_hash, user_id, expires) VALUES (?, ?, ?)').bind(await sha(token), userId, Date.now() + SESSION_DAYS * 864e5).run();
@@ -770,7 +794,7 @@ async function api(request, env, url, ctx) {
     if (env.SIGNUP_CODE && !same(str(body.code, 100), String(env.SIGNUP_CODE))) return fail(403, 'This site is by invitation. Enter the invitation code you were given.');
     if (!first) return fail(400, 'Enter your first name.');
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter a valid recovery email address.');
-    if (password.length < 8 || password.length > 200) return fail(400, 'Choose a password of at least 8 characters.');
+    if (!PASSWORD_OK(password)) return fail(400, PASSWORD_RULE);
     const sec = securityFields(body);
     if (sec.error) return fail(400, sec.error);
     if (await env.DB.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first()) return fail(409, 'An account with that email already exists. Log in instead.');
@@ -786,41 +810,35 @@ async function api(request, env, url, ctx) {
     const bad = () => fail(401, 'That email and password do not match.');
     if (!u) { await hashPassword(password || 'x', '00000000000000000000000000000000'); return bad(); }
     if (u.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
-    if (!same(await hashPassword(password, u.salt), u.hash)) {
-      const fails = u.fails + 1;
-      await env.DB.prepare('UPDATE users SET fails = ?, locked_until = ? WHERE id = ?').bind(fails >= 5 ? 0 : fails, fails >= 5 ? Date.now() + 15 * 60000 : 0, u.id).run();
-      return bad();
-    }
+    if (!same(await hashPassword(password, u.salt), u.hash)) { await strike(env, u); return bad(); }
     await env.DB.prepare('UPDATE users SET fails = 0, locked_until = 0 WHERE id = ?').bind(u.id).run();
     await env.DB.prepare('DELETE FROM sessions WHERE expires < ?').bind(Date.now()).run();
     return json(profile(u), 200, { 'Set-Cookie': await startSession(env, u.id) });
   }
 
-  /* Forgot password, with no email involved: give the account's email, get its security question, then send the answer with a new password. */
+  /* The login screen asks which way a forgotten password is replaced here, so it can show the right form. */
+  if (route === 'GET /api/reset/mode') return json({ mode: resetMode(env), email: !!env.RESEND_API_KEY });
+  /* Forgot password without email: give the account's email, get its security question, then send the answer with a new password. */
   if (route === 'POST /api/forgot/question' || route === 'POST /api/forgot/reset') {
+    if (resetMode(env) !== 'question') return fail(403, resetMode(env) === 'email' ? 'Passwords are reset by email on this site.' : 'Password reset is switched off on this site.');
     const email = str(body.email, 200).toLowerCase();
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter the email address on your account.');
     const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
     if (!u) return fail(404, 'No account uses that email address.');
     if (!u.sq || !u.sq_hash) return fail(409, 'This account has no security question yet, so its password cannot be reset here. One is set on the account page while logged in.');
     if (route === 'POST /api/forgot/question') return json({ question: u.sq });
-    const password = typeof body.password === 'string' ? body.password : '';
     if (u.sq_locked > Date.now()) return fail(429, 'Too many wrong answers. Try again in a few minutes.');
-    if (!same(await hashPassword(answerKey(body.answer), u.sq_salt), u.sq_hash)) {
+    if (!same(await hashPassword(answerKey(body.answer), u.sq_salt), u.sq_hash)) {   // its own count, so wrong answers cannot lock the owner out of logging in
       const fails = u.sq_fails + 1;
       await env.DB.prepare('UPDATE users SET sq_fails = ?, sq_locked = ? WHERE id = ?').bind(fails >= 5 ? 0 : fails, fails >= 5 ? Date.now() + 15 * 60000 : 0, u.id).run();
       return fail(403, 'That answer is not right.');
     }
-    if (password.length < 8 || password.length > 200) return fail(400, 'Choose a password of at least 8 characters.');
-    const salt = rand(16);
-    await env.DB.batch([
-      env.DB.prepare('UPDATE users SET salt = ?, hash = ?, fails = 0, locked_until = 0, sq_fails = 0, sq_locked = 0 WHERE id = ?').bind(salt, await hashPassword(password, salt), u.id),
-      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(u.id),   // anyone logged in with the old password is logged out
-      env.DB.prepare('DELETE FROM resets WHERE user_id = ?').bind(u.id),
-    ]);
+    if (!PASSWORD_OK(body.password)) return fail(400, PASSWORD_RULE);
+    await setPassword(env, u.id, body.password);
+    console.log('password reset by security question', u.id);
     return json({ ok: true });
   }
-  /* Forgot password by email: a one-hour, single-use link to the recovery email, sent through Resend (RESEND_API_KEY secret; MAIL_FROM sets the sender). */
+  /* Forgot password: a one-hour, single-use link to the recovery email, sent through Resend (RESEND_API_KEY secret; MAIL_FROM sets the sender). */
   if (route === 'POST /api/forgot') {
     const email = str(body.email, 200).toLowerCase();
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter your recovery email address.');
@@ -842,15 +860,10 @@ async function api(request, env, url, ctx) {
   }
   if (route === 'POST /api/reset') {
     const token = typeof body.token === 'string' && /^[a-f0-9]{64}$/.test(body.token) ? body.token : '', password = typeof body.password === 'string' ? body.password : '';
-    if (password.length < 8 || password.length > 200) return fail(400, 'Choose a password of at least 8 characters.');
+    if (!PASSWORD_OK(password)) return fail(400, PASSWORD_RULE);
     const row = token && await env.DB.prepare('SELECT user_id FROM resets WHERE token_hash = ? AND expires > ?').bind(await sha(token), Date.now()).first();
     if (!row) return fail(400, 'This reset link has expired or was already used. Ask for a new one.');
-    const salt = rand(16);
-    await env.DB.batch([
-      env.DB.prepare('UPDATE users SET salt = ?, hash = ?, fails = 0, locked_until = 0 WHERE id = ?').bind(salt, await hashPassword(password, salt), row.user_id),
-      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(row.user_id),
-      env.DB.prepare('DELETE FROM resets WHERE user_id = ?').bind(row.user_id),
-    ]);
+    await setPassword(env, row.user_id, password);
     return json({ ok: true });
   }
 
@@ -862,29 +875,29 @@ async function api(request, env, url, ctx) {
   }
   if (!user) return fail(401, 'Log in to continue.');
 
-  if (route === 'PUT /api/password') {
-    const cur = typeof body.current === 'string' ? body.current : '', next = typeof body.next === 'string' ? body.next : '';
-    if (!same(await hashPassword(cur, user.salt), user.hash)) return fail(403, 'Your current password is not right.');
-    if (next.length < 8 || next.length > 200) return fail(400, 'Choose a password of at least 8 characters.');
-    const salt = rand(16);
-    await env.DB.batch([
-      env.DB.prepare('UPDATE users SET salt = ?, hash = ? WHERE id = ?').bind(salt, await hashPassword(next, salt), user.id),
-      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),   // other devices are logged out; this one gets a fresh session
-    ]);
-    return json({ ok: true }, 200, { 'Set-Cookie': await startSession(env, user.id) });
+  /* Change password while logged in: the current password is asked for again. This device stays logged in; every other one is logged out. */
+  if (route === 'POST /api/password') {
+    if (user.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
+    if (!PASSWORD_OK(body.password)) return fail(400, PASSWORD_RULE);
+    if (typeof body.current !== 'string' || !same(await hashPassword(body.current, user.salt), user.hash)) { await strike(env, user); return fail(401, 'Your current password is not right.'); }
+    if (body.password === body.current) return fail(400, 'Choose a password different from your current one.');
+    const m = /(?:^|;\s*)dcc_session=([a-f0-9]{64})/.exec(request.headers.get('Cookie') || '');
+    await setPassword(env, user.id, body.password, m ? await sha(m[1]) : '');
+    return json({ ok: true });
   }
-  if (route === 'PUT /api/security') {   // set or change the security question; the current password is needed, as for a password change
-    if (!same(await hashPassword(typeof body.current === 'string' ? body.current : '', user.salt), user.hash)) return fail(403, 'Your current password is not right.');
+  if (route === 'PUT /api/security') {   // set or change the security question; the current password is asked for again
+    if (user.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
+    if (typeof body.current !== 'string' || !same(await hashPassword(body.current, user.salt), user.hash)) { await strike(env, user); return fail(401, 'Your current password is not right.'); }
     const sec = securityFields(body);
     if (sec.error) return fail(400, sec.error);
     const sqSalt = rand(16);
-    await env.DB.prepare('UPDATE users SET sq = ?, sq_salt = ?, sq_hash = ?, sq_fails = 0, sq_locked = 0 WHERE id = ?').bind(sec.question, sqSalt, await hashPassword(sec.answer, sqSalt), user.id).run();
+    await env.DB.prepare('UPDATE users SET sq = ?, sq_salt = ?, sq_hash = ?, sq_fails = 0, sq_locked = 0, fails = 0 WHERE id = ?').bind(sec.question, sqSalt, await hashPassword(sec.answer, sqSalt), user.id).run();
     return json({ ok: true, question: sec.question });
   }
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
     const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user);
-    return json({ ...profile(user), ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), connector: link ? link.created : null, areas: await summary(env, user.id),
+    return json({ ...profile(user), reset: resetMode(env), ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), connector: link ? link.created : null, areas: await summary(env, user.id),
       library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: await storage(env, user), owner,
       drive: owner ? { mode: DRIVE.mode, account: DRIVE.email, canConnect: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET), redirect: url.origin + '/api/google/callback' } : undefined });
   }
