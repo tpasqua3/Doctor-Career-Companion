@@ -372,8 +372,27 @@ async function voiceCopy(env, f) {
   const r = await fetch(f.from, { redirect: 'follow' });
   if (!r.ok || !r.body) throw new Error('source answered ' + r.status);
   const len = Number(r.headers.get('Content-Length')) || 0, opt = { httpMetadata: { contentType: f.type } };
+  if (len > 150e6) { try { await r.body.cancel(); } catch (e) {} return voiceCopyBig(env, f, len, opt); }
   if (len > 4e6 && !r.headers.get('Content-Encoding')) { const pipe = new FixedLengthStream(len); await Promise.all([r.body.pipeTo(pipe.writable), env.VOICE.put(f.key, pipe.readable, opt)]); }
   else await env.VOICE.put(f.key, await r.arrayBuffer(), opt);
+  return true;
+}
+/* A very large file is copied a few 32 MB pieces at a time, so no single request runs long: each call adds up to three pieces and
+   notes how far it got (in "<file>.parts"), and the call that adds the last piece finishes the file. Returns true once it is whole. */
+async function voiceCopyBig(env, f, len, opt) {
+  const PART = 32 * 1024 * 1024, note = f.key + '.parts', total = Math.ceil(len / PART);
+  const kept = await env.VOICE.get(note); let st = kept ? await kept.json() : null, up;
+  if (st && st.len === len) up = env.VOICE.resumeMultipartUpload(f.key, st.id);
+  else { up = await env.VOICE.createMultipartUpload(f.key, opt); st = { id: up.uploadId, len, parts: [] }; }
+  for (let did = 0; st.parts.length < total && did < 3; did++) {
+    const n = st.parts.length, a = n * PART, b = Math.min(len, a + PART) - 1;
+    const r = await fetch(f.from, { redirect: 'follow', headers: { Range: 'bytes=' + a + '-' + b } });
+    if (r.status !== 206) throw new Error('source answered ' + r.status + ' to a piece');
+    const part = await up.uploadPart(n + 1, await r.arrayBuffer());
+    st.parts.push({ partNumber: part.partNumber, etag: part.etag }); await env.VOICE.put(note, JSON.stringify(st));
+  }
+  if (st.parts.length < total) return false;
+  await up.complete(st.parts); await env.VOICE.delete(note); return true;
 }
 async function voiceFile(request, env, ctx, url) {
   if (request.method !== 'GET' && request.method !== 'HEAD') return fail(405, 'Not allowed.');
@@ -381,7 +400,10 @@ async function voiceFile(request, env, ctx, url) {
   if (!f) return fail(404, 'Not found.');
   if (!env.VOICE) return fail(503, 'The offline voice is not set up on this site.');
   let head = await env.VOICE.head(f.key);
-  if (!head) { const job = voiceCopy(env, f); ctx.waitUntil(job.catch(() => {})); try { await job; } catch (e) { console.log('voice: ' + f.key + ': ' + String(e && e.message || e)); return fail(502, 'That file could not be fetched just now. Try again.'); } head = await env.VOICE.head(f.key); }
+  if (!head) { const job = voiceCopy(env, f); ctx.waitUntil(job.catch(() => {})); let whole = false;
+    try { whole = await job; } catch (e) { console.log('voice: ' + f.key + ': ' + String(e && e.message || e)); return fail(502, 'That file could not be fetched just now. Try again. (' + String(e && e.message || e).slice(0, 120) + ')'); }
+    if (!whole) return json({ file: f.key, copying: true, error: 'This file is still being prepared. Try again in a minute.' }, 503, { 'Retry-After': '20' });
+    head = await env.VOICE.head(f.key); }
   if (!head) return fail(502, 'That file could not be kept. Try again.');
   if (url.searchParams.has('check')) return json({ file: f.key, bytes: head.size });
   const headers = { 'Content-Type': f.type, 'Content-Length': String(head.size), 'Cache-Control': 'public, max-age=31536000, immutable', ETag: head.httpEtag };
