@@ -527,7 +527,7 @@ const monthSoFar=()=>new Date().getDate();
    section being read can be lit on screen. A queue item is spoken text, a silent wait (thinking time before an answer), or a marker.
    Each piece is read by the natural voice when it can be (the server's free Cloudflare voice, asked for as an AI request whose job
    is "speak" and played as a sound clip). So that sound starts quickly, the first piece of every section is a single short sentence and later
-   pieces grow; the next three pieces and the opening piece of the next section are fetched while the current one plays, so neither
+   pieces grow; the next three pieces and the opening piece of the next section are prepared (by the natural voice or the offline one) while the current one plays, so neither
    reading on nor skipping a section waits. That voice has one daily
    allowance shared by everyone, so whenever it is used up, slow, unreachable or switched off in Settings, the piece is read by the
    device's own voice instead, and the natural voice is left alone for a while before it is tried again. */
@@ -600,7 +600,7 @@ const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:nu
     if(this.i>=this.q.length){this.on=false;drawPlayer();mark(-1);const d=this.done;this.done=null;if(d)d();return}
     const it=this.q[this.i],next=()=>{if(tok!==this.tok)return;this.i++;this.run()};mark(it.seg??-1);drawPlayer();
     if(it.wait){this.timer=setTimeout(next,it.wait);return}
-    hush();kokWake();if(kokOn())this.clip(it,tok,next,kokClip,1,()=>{},()=>{if(cloudOn())this.clip(it,tok,next,voiceClip,3,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)});
+    hush();kokWake();if(kokOn())this.clip(it,tok,next,kokClip,3,()=>{},()=>{if(cloudOn())this.clip(it,tok,next,voiceClip,3,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)});
     else if(cloudOn())this.clip(it,tok,next,voiceClip,3,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)},
   /* Play one piece as a sound clip from `get` (the offline voice or the server's voice), fetching `ahead` pieces in advance and the opening piece of the next section (where Skip lands); `other` reads it if that fails. */
   clip(it,tok,next,get,ahead,cloudBad,other){const cur=get(it.say);for(let k=this.i+1,n=0;k<this.q.length&&n<ahead;k++)if(this.q[k].say){n++;get(this.q[k].say).catch(()=>{})}
