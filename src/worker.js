@@ -345,6 +345,16 @@ const GTTS = [
   { id: 'neural2', voice: 'en-US-Neural2-F', free: 1e6 },
   { id: 'wavenet', voice: 'en-US-Wavenet-F', free: 4e6 },
 ];
+/* The Google voices a listener may pick in the app's Settings (kept in their record as prefs.gvoice), and whether each is a woman's
+   or a man's voice, so that the Neural2 and WaveNet kinds, which have their own names, follow the choice as closely as they can. */
+const GVOICES = { Aoede: 'F', Kore: 'F', Leda: 'F', Zephyr: 'F', Puck: 'M', Charon: 'M', Fenrir: 'M', Orus: 'M' };
+async function googleVoice(env, user, kind) {
+  let pick = '';
+  try { const row = await env.DB.prepare("SELECT json_extract(body, '$.prefs.gvoice') AS v FROM docs WHERE user_id = ? AND path = 'med/state'").bind(user.id).first(); if (row && GVOICES[row.v]) pick = row.v; } catch (e) {}
+  const man = GVOICES[pick] === 'M';
+  if (kind === 'chirp') return pick ? 'en-US-Chirp3-HD-' + pick : (env.GOOGLE_TTS_VOICE || 'en-US-Chirp3-HD-Aoede');
+  return kind === 'neural2' ? 'en-US-Neural2-' + (man ? 'D' : 'F') : 'en-US-Wavenet-' + (man ? 'D' : 'F');
+}
 async function googleUsage(env) {
   const { results } = await env.DB.prepare("SELECT provider, SUM(n) AS n FROM ai_usage WHERE day LIKE ? AND provider LIKE 'gtts-%' GROUP BY provider").bind(today().slice(0, 7) + '-%').all();
   return Object.fromEntries(results.map(r => [r.provider, r.n || 0]));
@@ -357,7 +367,7 @@ async function googleSpeak(env, user, text) {
     if ((used[key] || 0) + text.length > v.free * share) continue;
     try {
       const r = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': env.GOOGLE_TTS_KEY },
-        body: JSON.stringify({ input: { text }, voice: { languageCode: 'en-US', name: (v.id === 'chirp' && env.GOOGLE_TTS_VOICE) || v.voice }, audioConfig: { audioEncoding: 'MP3' } }), signal: AbortSignal.timeout(9000) });
+        body: JSON.stringify({ input: { text }, voice: { languageCode: 'en-US', name: await googleVoice(env, user, v.id) }, audioConfig: { audioEncoding: 'MP3' } }), signal: AbortSignal.timeout(9000) });
       if (!r.ok) { console.log('google voice ' + v.id + ': ' + r.status + ' ' + (await r.text()).slice(0, 200)); if (r.status === 429 || r.status >= 500) continue; return null; }
       const j = await r.json();
       if (!j || typeof j.audioContent !== 'string' || !j.audioContent) continue;
