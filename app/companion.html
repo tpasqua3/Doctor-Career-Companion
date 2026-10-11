@@ -538,11 +538,47 @@ let cloudOff=0,cloudFails=0,primed=false;const clips=new Map();
 function prime(){if(primed||!AUD||!AUD.paused)return;primed=true;try{AUD.src=SIL;const p=AUD.play();if(p&&p.catch)p.catch(e=>{if(e&&e.name==='NotAllowedError')primed=false})}catch(e){primed=false}}
 const cloudOn=()=>!!AUD&&st.prefs.voice!=='device'&&Date.now()>cloudOff&&(WEB||(LINKED&&!!MCP));
 const cloudBad=()=>{if(++cloudFails>=2){cloudOff=Date.now()+10*60e3;cloudFails=0}};
+const keep=(key,p)=>{clips.set(key,p);if(clips.size>40){const k=clips.keys().next().value,old=clips.get(k);clips.delete(k);old.then(u=>URL.revokeObjectURL(u),()=>{})}return p};
+/* The offline voice (website only): the Kokoro voice model, downloaded once to this device at the person's request and run here
+   by public/voice/worker.js, so it uses no data afterwards and has no daily limit. KOK.have is which size this device holds
+   ('q8' is the 92 MB one, 'fp32' the 326 MB one); the browser keeps the files, and may clear them if the device runs short of space. */
+const KOK={w:null,state:'off',have:'',pct:0,err:'',voices:[],wait:{},seq:0};
+try{KOK.have=localStorage.getItem('dcc:kokoro')||''}catch(e){}
+const kokCan=()=>WEB&&typeof Worker!=='undefined'&&typeof caches!=='undefined';
+const kokVoice=()=>{let v='';try{v=localStorage.getItem('dcc:kvoice')||''}catch(e){}return v||'af_heart'};
+const kokOn=()=>!!AUD&&st.prefs.voice==='offline'&&KOK.state==='ready';
+function kokStart(size){if(!kokCan()||KOK.state==='loading'||(KOK.state==='ready'&&KOK.size===size))return;kokStop();
+  let w;try{w=new Worker('/voice/worker.js',{type:'module'})}catch(e){KOK.state='err';KOK.err='This browser cannot run the offline voice.';return kokDraw()}
+  KOK.w=w;KOK.state='loading';KOK.size=size;KOK.pct=0;KOK.err='';
+  const fail=msg=>{if(KOK.w!==w)return;const first=!KOK.have;kokStop();KOK.state='err';KOK.err=msg;if(first&&st.prefs.voice==='offline'){st.prefs.voice='cloud';saveState()}kokDraw()};
+  w.onerror=()=>fail('The offline voice could not start on this device.');
+  w.onmessage=e=>{const m=e.data||{};if(KOK.w!==w)return;
+    if(m.progress){const p=Math.floor(m.progress.loaded/m.progress.total*100);if(p!==KOK.pct){KOK.pct=p;kokDraw()}}
+    else if(m.ready){KOK.state='ready';KOK.voices=m.voices||[];KOK.have=size;try{localStorage.setItem('dcc:kokoro',size)}catch(x){}if(S.tab==='settings'&&!S.busy)render();else kokDraw()}
+    else if(m.clip){const h=KOK.wait[m.clip.id];delete KOK.wait[m.clip.id];if(h)h.ok(URL.createObjectURL(new Blob([m.clip.wav],{type:'audio/wav'})))}
+    else if(m.error){if(m.load)return fail('The offline voice could not be loaded. '+(KOK.have?'It may have been cleared from this device; download it again.':'Check your connection and try again.'));const h=KOK.wait[m.id];delete KOK.wait[m.id];if(h)h.no({code:'offline_voice'})}};
+  w.postMessage({load:{dtype:size,device:size==='fp32'&&navigator.gpu?'webgpu':'wasm'}});kokDraw()}
+function kokStop(){if(KOK.w){try{KOK.w.terminate()}catch(e){}}Object.values(KOK.wait).forEach(h=>h.no({code:'offline_voice'}));KOK.w=null;KOK.wait={};KOK.state='off'}
+async function kokRemove(){kokStop();KOK.have='';KOK.voices=[];try{localStorage.removeItem('dcc:kokoro')}catch(e){}try{await caches.delete('transformers-cache');await caches.delete('kokoro-voices')}catch(e){}if(st.prefs.voice==='offline'){st.prefs.voice='cloud';saveState()}render()}
+/* A voice already on this device is started quietly when it is the chosen one; until it is ready the other voices read. */
+function kokWake(){if(kokCan()&&st.prefs.voice==='offline'&&KOK.have&&KOK.state==='off')kokStart(KOK.have)}
+function kokClip(text){const v=kokVoice(),key='k:'+v+':'+text;let p=clips.get(key);if(p)return p;
+  p=new Promise((ok,no)=>{if(KOK.state!=='ready')return no({code:'offline_voice'});const id=++KOK.seq;KOK.wait[id]={ok,no};KOK.w.postMessage({say:{id,text,voice:v}});setTimeout(()=>{if(KOK.wait[id]){delete KOK.wait[id];no({code:'slow'})}},90000)});
+  p.catch(()=>{clips.delete(key)});return keep(key,p)}
+function kokDraw(){const el=document.getElementById('kokbox');if(el)el.innerHTML=kokHtml()}
+function kokHtml(){if(!kokCan())return'';const sz=x=>x==='fp32'?'Full quality':'Standard',gpu=!!navigator.gpu;let h='';
+  if(KOK.state==='loading')h=`<span class="small">${KOK.have===KOK.size?'Starting the offline voice…':'Downloading the offline voice ('+sz(KOK.size)+')… '+KOK.pct+'%'}</span> <button class="btn sm" data-act="kokcancel">Cancel</button>`;
+  else if(KOK.have){h=`<span class="small">Offline voice on this device: <b>${sz(KOK.have)}</b>${KOK.state==='ready'?'':' (not started)'}.</span>`;
+    if(KOK.voices.length)h+=`<label class="small" style="display:block;margin:8px 0 4px">Offline voice <select data-kvoice aria-label="Offline voice">${KOK.voices.map(v=>`<option value="${esc(v.id)}"${v.id===kokVoice()?' selected':''}>${esc(v.name)} · ${esc(v.accent)} ${esc(String(v.gender||'').toLowerCase())}${v.grade?' · grade '+esc(v.grade):''}</option>`).join('')}</select></label>`;
+    h+=`<div class="row" style="margin-top:6px"><button class="btn sm" data-act="kokget" data-size="${KOK.have==='fp32'?'q8':'fp32'}">Switch to ${KOK.have==='fp32'?'Standard (92 MB)':'Full quality (326 MB)'}</button><button class="btn sm" data-act="kokremove">Remove from this device</button></div>`}
+  else h=`<div class="row"><button class="btn sm" data-act="kokget" data-size="q8">Download Standard (92 MB)</button><button class="btn sm" data-act="kokget" data-size="fp32">Download Full quality (326 MB)</button></div>`;
+  if(KOK.state==='err')h+=`<p class="small" style="color:var(--bad,#b23a2a)">${esc(KOK.err)}</p>`;
+  return h+`<p class="small muted">The offline voice is the most natural one. It is downloaded once and then runs on this device: no data used, no daily limit. Use Wi-Fi for the download. Standard suits most phones; Full quality sounds a little better and needs a recent phone or computer${gpu?'':' (this browser lacks the graphics support it relies on, so it would be slow here)'}. It can take a few seconds to prepare each passage, and on an iPhone add this app to your Home Screen first, or the phone may clear the download.</p>`}
 function voiceClip(text){let p=clips.get(text);if(p)return p;const b={input:text,job:'speak'};
   p=Promise.race([WEB?webSend(b):MCP.callTool(CONN,'ask_ai',b,{cache:false}).then(r=>{const j=r&&(r.payload??r.structuredContent);if(!j||j.error)throw{code:(j&&j.code)||'upstream_error'};return j}),new Promise((_,no)=>setTimeout(()=>no({code:'slow'}),15000))])
     .then(j=>{if(!j||typeof j.audio!=='string'||!j.audio)throw{code:'upstream_error'};cloudFails=0;const bin=atob(j.audio),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return URL.createObjectURL(new Blob([u],{type:j.type||'audio/mpeg'}))})
     .catch(e=>{clips.delete(text);if(e&&e.code==='rate_limited')cloudOff=Date.now()+30*60e3;else cloudBad();throw e});
-  clips.set(text,p);if(clips.size>40){const k=clips.keys().next().value,old=clips.get(k);clips.delete(k);old.then(u=>URL.revokeObjectURL(u),()=>{})}return p}
+  return keep(text,p)}
 const hush=()=>{try{if(TTS)speechSynthesis.cancel()}catch(e){}try{if(AUD)AUD.pause()}catch(e){}};
 let unlocked=false;function unlock(){prime();if(unlocked||!TTS)return;unlocked=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}
 const chunks=t=>{const out=[];let cur='';(String(t).replace(/\s+/g,' ').match(/[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$/g)||[]).forEach(s=>{if((cur+s).length>240&&cur){out.push(cur.trim());cur=''}cur+=s});if(cur.trim())out.push(cur.trim());return out};
@@ -552,11 +588,13 @@ const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:nu
     if(this.i>=this.q.length){this.on=false;drawPlayer();mark(-1);const d=this.done;this.done=null;if(d)d();return}
     const it=this.q[this.i],next=()=>{if(tok!==this.tok)return;this.i++;this.run()};mark(it.seg??-1);drawPlayer();
     if(it.wait){this.timer=setTimeout(next,it.wait);return}
-    hush();if(cloudOn())this.cloud(it,tok,next);else this.dev(it,tok,next)},
-  cloud(it,tok,next){const cur=voiceClip(it.say);for(let k=this.i+1,n=0;k<this.q.length&&n<2;k++)if(this.q[k].say){n++;voiceClip(this.q[k].say).catch(()=>{})}
-    cur.then(url=>{if(tok!==this.tok)return;AUD.onended=next;AUD.onerror=()=>{if(tok!==this.tok)return;cloudBad();this.dev(it,tok,next)};AUD.src=url;AUD.defaultPlaybackRate=AUD.playbackRate=st.prefs.rate;
-      const p=AUD.play();if(p&&p.catch)p.catch(e=>{if(tok!==this.tok)return;if(e&&e.name==='NotAllowedError'){primed=false;this.paused=true;this.tok++;drawPlayer();toast('Tap the play button below to start the audio.',6000)}else if(!e||e.name!=='AbortError'){cloudBad();this.dev(it,tok,next)}})},
-      ()=>{if(tok===this.tok)this.dev(it,tok,next)})},
+    hush();kokWake();if(kokOn())this.clip(it,tok,next,kokClip,1,()=>{},()=>{if(cloudOn())this.clip(it,tok,next,voiceClip,2,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)});
+    else if(cloudOn())this.clip(it,tok,next,voiceClip,2,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)},
+  /* Play one piece as a sound clip from `get` (the offline voice or the server's voice), fetching `ahead` pieces in advance; `other` reads it if that fails. */
+  clip(it,tok,next,get,ahead,cloudBad,other){const cur=get(it.say);for(let k=this.i+1,n=0;k<this.q.length&&n<ahead;k++)if(this.q[k].say){n++;get(this.q[k].say).catch(()=>{})}
+    cur.then(url=>{if(tok!==this.tok)return;AUD.onended=next;AUD.onerror=()=>{if(tok!==this.tok)return;cloudBad();other()};AUD.src=url;AUD.defaultPlaybackRate=AUD.playbackRate=st.prefs.rate;
+      const p=AUD.play();if(p&&p.catch)p.catch(e=>{if(tok!==this.tok)return;if(e&&e.name==='NotAllowedError'){primed=false;this.paused=true;this.tok++;drawPlayer();toast('Tap the play button below to start the audio.',6000)}else if(!e||e.name!=='AbortError'){cloudBad();other()}})},
+      ()=>{if(tok===this.tok)other()})},
   dev(it,tok,next){if(!TTS){this.timer=setTimeout(next,Math.max(1500,it.say.length*55/st.prefs.rate));return}
     try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(it.say);if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}else u.lang='en-US';u.rate=st.prefs.rate;u.onend=next;let begun=false;u.onstart=()=>{begun=true};if(this.i===0)this.timer=setTimeout(()=>{if(tok===this.tok&&!begun&&!speechSynthesis.speaking){this.paused=true;this.tok++;drawPlayer();toast('Tap the play button below to start the audio.',6000)}},3000);u.onerror=e=>{if(e.error!=='interrupted'&&e.error!=='canceled')next()};speechSynthesis.speak(u)}catch(e){next()}},
   toggle(){if(!this.on)return;this.paused=!this.paused;if(this.paused){this.tok++;clearTimeout(this.timer);hush();drawPlayer()}else{prime();this.run()}},
@@ -1358,7 +1396,7 @@ function voiceSelect(){if(!TTS)return'';const vs=speechSynthesis.getVoices().fil
 function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h1></div>
   <div class="card"><h3>About you</h3><label class="f">Used to pitch every lesson and plan<textarea id="about">${esc(p.about)}</textarea></label><div class="row"><button class="btn" data-act="saveabout">Save</button></div></div>
   <div class="card"><h3>Audio</h3><div class="plain"><span class="eyebrow">Reading speed</span>${segBtns('rate',[[.85,'0.85×'],[1,'1×'],[1.15,'1.15×'],[1.3,'1.3×'],[1.5,'1.5×']],p.rate)}</div>
-   <div class="plain"><span class="eyebrow">Voice</span>${segBtns('voice',[['cloud','Natural voice'],['device','This device\'s voice']],p.voice==='device'?'device':'cloud')}${voiceSelect()}<span class="small muted">The natural voice is free and has one daily allowance shared by everyone using the app. When that is used up, or the natural voice cannot be reached, lessons are read in this device's voice, chosen here.</span></div>
+   <div class="plain"><span class="eyebrow">Voice</span>${segBtns('voice',[...(kokCan()&&KOK.have?[['offline','Offline voice']]:[]),['cloud','Natural voice'],['device','This device\'s voice']],p.voice==='device'?'device':p.voice==='offline'&&kokCan()&&KOK.have?'offline':'cloud')}${voiceSelect()}<span class="small muted">The natural voice is free and has one daily allowance shared by everyone using the app. When that is used up, or the natural voice cannot be reached, lessons are read in this device's voice, chosen here.</span>${kokCan()?`<div id="kokbox" style="margin-top:10px">${kokHtml()}</div>`:''}</div>
    <div class="plain"><span class="eyebrow">After each lesson</span>${segBtns('passive',[[true,'Read the check questions aloud, pause, then give the answer'],[false,'Stop after the lesson']],p.passive)}<span class="small muted">Questions heard hands-free are not scored. Tap an answer on screen to score it.</span></div></div>
   <div class="card"><h3>Lengths</h3><p class="small muted">Minutes are at 1× speed, at about 135 spoken words a minute; a faster reading speed shortens them. One lesson can run up to 60 minutes. Past about 14 minutes it is written and fact-checked in parts, which keeps it accurate but takes a few minutes to prepare. For longer listening still, lengthen the session and it plays more lessons in a row.</p>
    <div class="plain"><span class="eyebrow">One lesson, in minutes</span><div class="row">${[['short','High-yield'],['std','Standard'],['deep','Deep dive']].map(([k,n])=>`<label class="f" style="min-width:90px">${n}<input type="number" min="2" max="60" inputmode="numeric" data-len="${k}" id="len-${k}" value="${LEN[k].min}" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px;width:100%"></label>`).join('')}</div></div>
@@ -1435,6 +1473,9 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='cnew'){const sc=S.cscope,ts=sc.startsWith('top:')?[TOP[sc.slice(4)]]:ranked().filter(r=>inScope(r.t,sc)).slice(0,2).map(r=>r.t);
     return run('Claude is writing cards on '+ts.map(t=>t.name).join(' and ')+'…',async()=>{let made=[];for(const t of ts)made=made.concat(await genCards(t,ts.length>1?5:10));if(!made.length)throw{code:'upstream_error',message:'No new cards passed the accuracy check. Try again.'};startDeck(made,'New: '+ts.map(t=>t.name).join(', '))})}
   if(a==='ptoggle')return P.toggle();if(a==='pnext')return P.jump(1);if(a==='pprev')return P.jump(-1);
+  if(a==='kokget'){st.prefs.voice='offline';saveState();kokStart(b.dataset.size==='fp32'?'fp32':'q8');return}
+  if(a==='kokcancel'){const had=KOK.have;kokStop();if(!had&&st.prefs.voice==='offline'){st.prefs.voice='cloud';saveState()}render();return}
+  if(a==='kokremove'){kokRemove();return}
   if(a==='pstop'){P.stop();if(S.session)S.session.waiting=false;return}
   if(a==='prate'){const r=[.85,1,1.15,1.3,1.5],i=r.indexOf(st.prefs.rate);st.prefs.rate=r[(i+1)%r.length];saveState();if(P.on&&!P.paused){P.tok++;P.run()}drawPlayer();return}
   if(a==='up'){if(S.tab==='career')S.goal=null;else if(S.topic)S.topic=null;else if(S.sec)S.sec=null;else S.track=null;S.err='';render();return}
@@ -1513,6 +1554,7 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='restoreok'){const R=S.restore;if(!R||R.err)return;P.stop(true);endAct();clearTimeout(timers.state);timers.state=null;Object.entries(R.docs).forEach(([n,body])=>put(n,clone(body)));CS=null;S.restore=null;S.lesson=null;S.quiz=null;S.deck=null;S.session=null;loadState();render();toast('Restored '+R.n+' items.',5000);return}
 });
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&e.target.id==='askin'){e.preventDefault();const t=e.target.value;e.target.value='';sendChat(t)}if(e.key==='Escape'&&S.askOpen){S.askOpen=false;drawAsk()}});
+document.addEventListener('change',e=>{if(e.target.dataset&&'kvoice' in e.target.dataset){try{localStorage.setItem('dcc:kvoice',e.target.value)}catch(x){}if(KOK.state==='ready'&&!P.on){prime();P.load([{say:'This is the voice that will read your lessons.'}],'Voice sample','')}}});
 document.addEventListener('change',e=>{if(e.target.dataset&&'dvoice' in e.target.dataset){try{localStorage.setItem('dcc:dvoice',e.target.value)}catch(x){}pickVoice();if(TTS&&!P.on){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('This is the voice that will read your lessons.');if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}u.rate=st.prefs.rate;speechSynthesis.speak(u)}catch(x){}}}});
 document.addEventListener('change',e=>{if(e.target.dataset&&'ai' in e.target.dataset){if(e.target.dataset.ai==='teach'){TEACH=e.target.value;try{localStorage.setItem('dcc:teach',TEACH)}catch(x){}}else{AIP=e.target.value;try{localStorage.setItem('dcc:ai',AIP)}catch(x){}}drawAsk();drawTeach();if(S.tab==='settings'&&!S.busy)render();return}
   if(e.target.dataset&&e.target.dataset.libf){const L=clone(libList()),x=L[Number(e.target.dataset.i)];if(x){x[e.target.dataset.libf]=e.target.value.trim();st.prefs.libs=L;saveState()}return}
