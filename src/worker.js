@@ -391,6 +391,24 @@ async function sayList(env, user) {
   try { const row = await env.DB.prepare("SELECT json_extract(body, '$.says') AS s FROM docs WHERE user_id = ? AND path = 'med/state'").bind(user.id).first();
     const a = row && row.s ? JSON.parse(row.s) : []; return Array.isArray(a) ? a : []; } catch (e) { return []; }
 }
+/* The site owner's list is the central one: it is used for every account. Anyone else's list applies to their own account only,
+   on top of the owner's, and wins where both give the same word (respell keeps the first entry it meets for a word and skips
+   entries that are switched off, so a person's own entries go first). */
+async function ownerId(env) {
+  if (!env.OWNER_EMAIL) return null;
+  try { const r = await env.DB.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(String(env.OWNER_EMAIL).trim().toLowerCase()).first(); return r ? r.id : null; } catch (e) { return null; }
+}
+async function sayFor(env, user) {
+  const mine = await sayList(env, user), o = await ownerId(env);
+  return !o || o === user.id ? mine : mine.concat(await sayList(env, { id: o }));
+}
+/* What the app shows about it: whether this account is the owner, and for everyone else the central entries in use. */
+async function siteSays(env, user) {
+  const o = await ownerId(env);
+  if (!o || o === user.id) return { owner: !!o, list: [] };
+  const list = (await sayList(env, { id: o })).filter(x => x && x.on !== false && typeof x.w === 'string' && typeof x.s === 'string' && x.w.trim() && x.s.trim()).slice(0, 500).map(x => ({ w: x.w.trim().toLowerCase().slice(0, 60), s: x.s.trim().slice(0, 120) }));
+  return { owner: false, list };
+}
 function respell(text, list) {
   const map = new Map();
   for (const x of Array.isArray(list) ? list : []) {
@@ -411,7 +429,7 @@ async function speak(env, user, input, only) {
   if (only !== 'cf') {
     const g = await googleSpeak(env, user, text).catch(() => null);
     if (g) return g;
-    text = respell(text, await sayList(env, user)).slice(0, 900);
+    text = respell(text, await sayFor(env, user)).slice(0, 900);
   }
   if (!env.AI) return { status: 429, error: 'The natural voice is not available on this site.' };
   const cap = Number(env.TTS_DAILY_CHARS) || 400000;
@@ -1107,7 +1125,7 @@ async function api(request, env, url, ctx) {
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
     const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user);
-    return json({ ...profile(user), reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), connector: link ? link.created : null, areas: await summary(env, user.id),
+    return json({ ...profile(user), reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), says: await siteSays(env, user), connector: link ? link.created : null, areas: await summary(env, user.id),
       library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: await storage(env, user), owner,
       drive: owner ? { mode: DRIVE.mode, account: DRIVE.email, canConnect: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET), redirect: url.origin + '/api/google/callback' } : undefined });
   }
@@ -1329,7 +1347,7 @@ async function mcpServer(request, env, token, ctx) {
     if (name === 'ai_providers' || name === 'ask_ai' || name === 'storage_status') {
       const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return bad('This account no longer exists.');
       if (name === 'storage_status') return out(await storage(env, u));
-      if (name === 'ai_providers') { const H = await hierarchy(env); return out({ providers: aiList(env, await aiUsed(env, uid), H), hierarchy: chart(env, H) }); }
+      if (name === 'ai_providers') { const H = await hierarchy(env); return out({ providers: aiList(env, await aiUsed(env, uid), H), hierarchy: chart(env, H), says: await siteSays(env, u) }); }
       const r = a.job === 'speak' || a.job === 'speak_cf' ? await speak(env, u, a.input, a.job === 'speak_cf' ? 'cf' : '') : await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true, chat: a.chat === true, job: String(a.job || ''), avoid: String(a.avoid || '') });
       return r.status === 200 ? out({ ...r, status: undefined }) : out({ error: r.error, code: r.status === 429 ? 'rate_limited' : 'upstream_error' });
     }
