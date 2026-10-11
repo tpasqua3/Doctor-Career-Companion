@@ -89,6 +89,7 @@ td.n,th.n{text-align:right;font-family:var(--num);font-variant-numeric:tabular-n
 .lesson{font-family:var(--read);font-size:1.06rem;line-height:1.7;max-width:66ch}
 .lesson section{padding:10px 12px;margin-inline:-12px;border-radius:8px;display:flex;flex-direction:column;gap:6px}
 .lesson section[data-now="1"]{background:var(--teal-soft)}
+::highlight(now){background-color:var(--teal);color:var(--teal-ink)}
 .lesson h3{font-size:1.02rem}
 ul.pts{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:5px}
 /* questions */
@@ -600,7 +601,7 @@ const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:nu
   load(items,title,sub,done){this.stop(true);this.q=[];items.forEach(it=>{if(it.say)chunks(it.say).forEach(c=>this.q.push({say:c,seg:it.seg}));else this.q.push(it)});this.i=0;this.title=title;this.sub=sub||'';this.done=done||null;this.on=true;this.paused=false;this.run()},
   run(){clearTimeout(this.timer);const tok=++this.tok;if(!this.on||this.paused)return drawPlayer();
     if(this.i>=this.q.length){this.on=false;drawPlayer();mark(-1);const d=this.done;this.done=null;if(d)d();return}
-    const it=this.q[this.i],next=()=>{if(tok!==this.tok)return;this.i++;this.run()};mark(it.seg??-1);drawPlayer();
+    const it=this.q[this.i],next=()=>{if(tok!==this.tok)return;this.i++;this.run()};mark(it.seg??-1,it.say);drawPlayer();
     if(it.wait){this.timer=setTimeout(next,it.wait);return}
     hush();kokWake();if(kokOn())this.clip(it,tok,next,kokClip,3,()=>{},()=>{if(cloudOn())this.clip(it,tok,next,voiceClip,3,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)});
     else if(cloudOn())this.clip(it,tok,next,voiceClip,3,cloudBad,()=>this.dev(it,tok,next));else this.dev(it,tok,next)},
@@ -617,7 +618,26 @@ const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:nu
     if(n>0){while(i<this.q.length&&this.q[i].seg===seg)i++}else{while(i>0&&this.q[i-1].seg===seg)i--;if(i===this.i&&i>0){const s2=this.q[i-1].seg;i--;while(i>0&&this.q[i-1].seg===s2)i--}}
     this.i=i;this.tok++;hush();kokTrim(this.q[i]&&this.q[i].say);this.paused=false;this.run()},
   stop(quiet){this.tok++;clearTimeout(this.timer);kokTrim();this.on=false;this.paused=false;this.done=null;hush();if(!quiet){mark(-1);drawPlayer()}}};
-function mark(seg){document.querySelectorAll('[data-seg]').forEach(el=>{const on=String(seg)===el.dataset.seg;if(on&&el.dataset.now!=='1'&&P.on)el.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});el.dataset.now=on?'1':''})}
+/* What is being read is shown twice: the section it belongs to is tinted, and inside it the piece being spoken right now is marked
+   and kept in view, so the page follows the voice through a long section. The piece is found by its words in the section's text
+   and marked with the browser's highlight feature (no change to the page itself); where a browser lacks it, the section tint and
+   the scrolling still work. Scrolling by hand is respected for a few seconds before the page follows the voice again. */
+let pieceAt={seg:null,pos:0},handScroll=0;
+['wheel','touchmove'].forEach(ev=>addEventListener(ev,()=>{handScroll=Date.now()},{passive:true}));
+function pieceRange(seg,text){const el=document.querySelector('[data-seg="'+String(seg).replace(/"/g,'')+'"]');if(!el||!text)return null;
+  const w=document.createTreeWalker(el,NodeFilter.SHOW_TEXT),at=[];let flat='',n;
+  while((n=w.nextNode())){const t=n.nodeValue;if(flat&&!flat.endsWith(' ')){flat+=' ';at.push(null)}
+    for(let i=0;i<t.length;i++){if(/\s/.test(t[i])){if(!flat.endsWith(' ')){flat+=' ';at.push([n,i])}}else{flat+=t[i];at.push([n,i])}}}
+  const find=x=>{if(!x)return -1;const from=pieceAt.seg===seg?pieceAt.pos:0,i=flat.indexOf(x,from);return i>=0?i:flat.indexOf(x)};
+  let needle=String(text).replace(/\s+/g,' ').trim(),i=find(needle);if(i<0){needle=needle.replace(/[.!?]+$/,'');i=find(needle)}if(i<0)return null;
+  let a=i,b=i+needle.length-1;while(a<b&&!at[a])a++;while(b>a&&!at[b])b--;if(!at[a]||!at[b])return null;
+  pieceAt={seg,pos:i+needle.length};const r=document.createRange();r.setStart(at[a][0],at[a][1]);r.setEnd(at[b][0],at[b][1]+1);return r}
+function mark(seg,text){const hl=typeof CSS!=='undefined'&&CSS.highlights&&typeof Highlight!=='undefined';let r=null;
+  try{if(hl)CSS.highlights.delete('now');if(P.on&&text&&seg!=null&&seg!==-1)r=pieceRange(seg,text);if(r&&hl)CSS.highlights.set('now',new Highlight(r))}catch(e){r=null}
+  if(seg===-1||seg==null)pieceAt={seg:null,pos:0};
+  const calm=matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth';
+  document.querySelectorAll('[data-seg]').forEach(el=>{const on=String(seg)===el.dataset.seg;if(on&&el.dataset.now!=='1'&&P.on&&!r)el.scrollIntoView({block:el.offsetHeight>innerHeight*.6?'start':'center',behavior:calm});el.dataset.now=on?'1':''});
+  if(r&&Date.now()-handScroll>6000){try{const b=r.getBoundingClientRect(),top=innerHeight*.16,bot=innerHeight*.58;if(b.height&&(b.top<top||b.bottom>bot))scrollBy({top:b.top-innerHeight*.3,behavior:calm})}catch(e){}}}
 const IC={play:'<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',pause:'<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>',prev:'<svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zm3 7 10 7V5z"/></svg>',next:'<svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5v14l10-7z"/></svg>',stop:'<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>'};
 function drawPlayer(){const el=$('#player');$('#fab').dataset.up=P.on?'1':'';if(!P.on){el.hidden=true;return}el.hidden=false;const p=pct(P.i,P.q.length);
   el.innerHTML=`<div class="in"><div class="row between" style="flex-wrap:nowrap"><div style="min-width:0"><div class="t">${esc(P.title)}</div><div class="tiny muted">${esc(P.sub)}${P.q[P.i]&&P.q[P.i].wait?' · thinking time':''}</div></div><span class="tiny num muted">${p}%</span></div>
@@ -1184,7 +1204,7 @@ function drawTeach(){const el=$('#teachpick');if(el)el.innerHTML=aiPick('teach',
 function render(){drawTeach(); $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
   /* A screen that fails to draw says so, instead of leaving the last tab's content under the new tab's name. */
   let v;try{v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,history:vHistory,learn:vLearn,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])()}catch(e){console.error(e);v=`<div class="err">This screen could not be shown: ${esc(String((e&&e.message)||e).slice(0,160))}. Send this message to Claude.</div>`}
-  $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();drawAsk();hydrateFigs();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1)}
+  $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();drawAsk();hydrateFigs();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1,P.q[P.i].say)}
 const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="small muted">${/lesson/.test(S.busy)?'Writing a lesson takes about a minute. '+(st.prefs.auto?'It starts playing as soon as it is ready; keep this screen open.':'It opens as text as soon as it is ready.'):''}</p><p class="tiny muted">${st.prefs.audit?'Everything is written, then fact-checked by a second review pass before you see or hear it.':''}</p></div>`:'';
 const modeRow=()=>`<div class="plain"><span class="eyebrow">When the lesson is ready</span>${segBtns('auto',[[true,'Listen: play it aloud'],[false,'Read: show the text']],st.prefs.auto)}<span class="small muted">${st.prefs.auto?'Audio starts by itself and the text follows along on screen. Controls sit at the bottom.':'The lesson opens as text. A Listen button on it plays the audio whenever you want.'}</span></div>`;
 /* How many questions to write: one number, asked for wherever a set is started, remembered between visits. */
