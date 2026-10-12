@@ -346,18 +346,25 @@ const GTTS = [
   { id: 'wavenet', voice: 'en-US-Wavenet-F', free: 4e6 },
 ];
 /* The Google voices a listener may pick in the app's Settings (kept in their record as prefs.gvoice), and whether each is a woman's
-   or a man's voice, so that the Neural2 and WaveNet kinds, which have their own names, follow the choice as closely as they can. */
+   or a man's voice, so that the other kinds, which have their own names, follow the choice as closely as they can. GVOICES are the
+   Chirp 3 HD voices; WAVENET are the WaveNet ones, picked as 'Wavenet-<letter>'. */
 const GVOICES = { Aoede: 'F', Kore: 'F', Leda: 'F', Zephyr: 'F', Puck: 'M', Charon: 'M', Fenrir: 'M', Orus: 'M' };
+const WAVENET = { A: 'M', B: 'M', C: 'F', D: 'M', E: 'F', F: 'F', G: 'F', H: 'F', I: 'M', J: 'M' };
+const gvoiceOk = v => typeof v === 'string' && (!!GVOICES[v] || /^Wavenet-[A-J]$/.test(v));
+/* Only the site owner (OWNER_EMAIL) may use the costlier Google kinds (Chirp 3 HD, Neural2), whose free monthly allowances are small
+   and shared by the whole site; every other account reads with WaveNet, which has the largest allowance, then Cloudflare, then the device. */
+const googleKinds = (env, user) => isOwner(env, user) ? GTTS : GTTS.filter(x => x.id === 'wavenet');
 /* prefs.gtier is the listener's choice of model: '' (best available), one of the Google kinds to start from, or 'melo' for the
    Cloudflare voice only. A chosen Google kind still gives way to the next once its free allowance for the month is spent. */
 async function googlePrefs(env, user) {
   try { const row = await env.DB.prepare("SELECT json_extract(body, '$.prefs.gvoice') AS v, json_extract(body, '$.prefs.gtier') AS t FROM docs WHERE user_id = ? AND path = 'med/state'").bind(user.id).first();
-    return { pick: row && GVOICES[row.v] ? row.v : '', tier: row && typeof row.t === 'string' ? row.t : '' }; } catch (e) { return { pick: '', tier: '' }; }
+    return { pick: row && gvoiceOk(row.v) ? row.v : '', tier: row && typeof row.t === 'string' ? row.t : '' }; } catch (e) { return { pick: '', tier: '' }; }
 }
 function googleVoice(env, pick, kind) {
-  const man = GVOICES[pick] === 'M';
-  if (kind === 'chirp') return pick ? 'en-US-Chirp3-HD-' + pick : (env.GOOGLE_TTS_VOICE || 'en-US-Chirp3-HD-Aoede');
-  return kind === 'neural2' ? 'en-US-Neural2-' + (man ? 'D' : 'F') : 'en-US-Wavenet-' + (man ? 'D' : 'F');
+  const wn = /^Wavenet-[A-J]$/.test(pick), man = (wn ? WAVENET[pick.slice(8)] : GVOICES[pick]) === 'M';
+  if (kind === 'chirp') return GVOICES[pick] ? 'en-US-Chirp3-HD-' + pick : man ? 'en-US-Chirp3-HD-Charon' : (env.GOOGLE_TTS_VOICE || 'en-US-Chirp3-HD-Aoede');
+  if (kind === 'neural2') return 'en-US-Neural2-' + (man ? 'D' : 'F');
+  return 'en-US-' + (wn ? pick : 'Wavenet-' + (man ? 'D' : 'F'));
 }
 async function googleUsage(env) {
   const { results } = await env.DB.prepare("SELECT provider, SUM(n) AS n FROM ai_usage WHERE day LIKE ? AND provider LIKE 'gtts-%' GROUP BY provider").bind(today().slice(0, 7) + '-%').all();
@@ -368,7 +375,8 @@ async function googleSpeak(env, user, text) {
   const prefs = await googlePrefs(env, user);
   if (prefs.tier === 'melo') return null;
   const used = await googleUsage(env), share = Math.min(1, Math.max(0, Number(env.GOOGLE_TTS_SHARE) || 0.95));
-  for (const v of GTTS.slice(Math.max(0, GTTS.findIndex(x => x.id === prefs.tier)))) {
+  const kinds = googleKinds(env, user);
+  for (const v of kinds.slice(Math.max(0, kinds.findIndex(x => x.id === prefs.tier)))) {
     const key = 'gtts-' + v.id;
     if ((used[key] || 0) + text.length > v.free * share) continue;
     try {
@@ -385,8 +393,9 @@ async function googleSpeak(env, user, text) {
 }
 /* Pronunciations. The Cloudflare voice reads plain text only and gets some words wrong, drug names above all. Each account keeps a
    list in its record (`says` in med/state: { w: the word, s: how to spell it so the voice says it right, on }), edited in the app's
-   Settings. Just before a passage goes to the Cloudflare voice, each listed word is swapped for its respelling: whole words only,
-   any capitalisation, a plural s carried over. The Google voices and the text on screen are never touched. */
+   Settings. Just before a passage goes to any voice (Google, Cloudflare, and on the device the offline and device voices, which
+   swap the words in the app itself), each listed word is swapped for its respelling: whole words only, any capitalisation, a plural
+   s carried over. The text on screen is never touched. */
 async function sayList(env, user) {
   /* The list has its own document (med/says, {list}); an older record keeps it inside med/state as `says`. */
   try { const row = await env.DB.prepare("SELECT json_extract(body, '$.list') AS s FROM docs WHERE user_id = ? AND path = 'med/says'").bind(user.id).first();
@@ -444,9 +453,9 @@ async function speak(env, user, input, only) {
   let text = String(typeof input === 'string' ? input : '').replace(/\s+/g, ' ').trim().slice(0, 600);
   if (!text) return { status: 400, error: 'Nothing to read.' };
   if (only !== 'cf') {
+    text = respell(text, await sayFor(env, user)).slice(0, 900);
     const g = await googleSpeak(env, user, text).catch(() => null);
     if (g) return g;
-    text = respell(text, await sayFor(env, user)).slice(0, 900);
   }
   if (!env.AI) return { status: 429, error: 'The natural voice is not available on this site.' };
   const cap = Number(env.TTS_DAILY_CHARS) || 400000;

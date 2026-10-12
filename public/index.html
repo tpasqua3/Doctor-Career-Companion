@@ -463,6 +463,17 @@ const SAYS0=[['apixaban','uh pix uh ban'],['rivaroxaban','riv uh rox uh ban'],['
 /* SITE: what the server says about the central list (see siteSays in src/worker.js). The owner's own list is the central one. */
 let SITE={owner:false,list:[]};const siteSeen=j=>{if(j&&j.says&&Array.isArray(j.says.list))SITE={owner:!!j.says.owner,list:j.says.list}};
 const sayClean=v=>String(v||'').replace(/\s+/g,' ').trim();
+/* The same swap the server makes (respell in src/worker.js), for the voices that run on the device itself (the device's voice and the
+   offline voice): the listener's own entries in use first, then the owner's central list. The text on screen is not changed. */
+function sayFix(text){const map=new Map(),multi=[];
+  (st.says||[]).filter(x=>x&&x.on!==false).concat(SITE.owner?[]:SITE.list).forEach(x=>{if(!x||typeof x.w!=='string'||typeof x.s!=='string')return;const w=sayClean(x.w).toLowerCase(),s=sayClean(x.s);
+    if(w&&s&&w.length<=60&&s.length<=120&&!map.has(w)){map.set(w,s);if(/[^a-z0-9]/.test(w))multi.push(w)}});
+  if(!map.size)return text;text=String(text||'');
+  if(multi.length){const re=new RegExp('(^|[^A-Za-z0-9])('+multi.sort((a,b)=>b.length-a.length).map(w=>w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/ /g,'\\s+')).join('|')+')(s?)(?![A-Za-z0-9])','gi');
+    text=text.replace(re,(m,pre,w,s)=>{const to=map.get(w.toLowerCase().replace(/\s+/g,' '));return to?pre+'\u0000'+to+s+'\u0001':m})}
+  text=text.replace(/\u0000[^\u0001]*\u0001|[A-Za-z0-9]+/g,m=>{if(m.charCodeAt(0)===0)return m;const l=m.toLowerCase();let to=map.get(l);if(to)return to;
+    if(l.length>3&&l.endsWith('s')&&(to=map.get(l.slice(0,-1))))return to+'s';return m});
+  return text.replace(/[\u0000\u0001]/g,'')}
 /* A change to the list. Passages already prepared as sound are kept, except those that contain one of the changed words (`words`;
    none given means the whole list changed). Throwing them all away made the app ask the voice for several passages at once after
    every edit, which is what tipped it into the device voice. The clip in the player right now is never pulled from under it. */
@@ -799,7 +810,7 @@ async function kokFind(){if(kokSought||!kokCan())return;kokSought=true;
   try{const c=await caches.open('transformers-cache'),urls=(await c.keys()).map(r=>r.url),has=n=>urls.some(u=>u.endsWith('/onnx/'+n)),size=has('model_quantized.onnx')?'q8':has('model.onnx')?'fp32':'';
     if(size&&!KOK.have&&KOK.state==='off'){KOK.have=size;try{localStorage.setItem('dcc:kokoro',size)}catch(e){}kokDraw();kokWake()}}catch(e){}}
 function kokClip(text){const v=kokVoice(),key='k:'+v+':'+text;let p=clips.get(key);if(p)return p;
-  p=new Promise((ok,no)=>{if(KOK.state!=='ready')return no({code:'offline_voice'});const id=++KOK.seq;KOK.wait[id]={ok,no,key};KOK.w.postMessage({say:{id,text,voice:v}});setTimeout(()=>{if(KOK.wait[id]){delete KOK.wait[id];no({code:'slow'})}},90000)});
+  p=new Promise((ok,no)=>{if(KOK.state!=='ready')return no({code:'offline_voice'});const id=++KOK.seq;KOK.wait[id]={ok,no,key};KOK.w.postMessage({say:{id,text:sayFix(text),voice:v}});setTimeout(()=>{if(KOK.wait[id]){delete KOK.wait[id];no({code:'slow'})}},90000)});
   p.catch(()=>{clips.delete(key)});return keep(key,p)}
 /* When the listener skips or stops, passages still waiting their turn in the offline voice are no longer wanted. The voice makes one
    passage at a time, so they are withdrawn (all but `keepText`, the one about to be read) to let the wanted passage go next. */
@@ -903,7 +914,7 @@ const P={q:[],i:0,on:false,paused:false,title:'',sub:'',tok:0,timer:null,done:nu
       const p=AUD.play();if(p&&p.catch)p.catch(e=>{if(tok!==this.tok)return;if(e&&e.name==='NotAllowedError'){primed=false;this.paused=true;this.tok++;drawPlayer();toast('Tap the play button below to start the audio.',6000)}else if(!e||e.name!=='AbortError'){cloudBad();other()}})},
       ()=>{if(tok===this.tok)other()})},
   dev(it,tok,next){this.by='device';drawPlayer();if(!TTS){this.timer=setTimeout(next,Math.max(1500,it.say.length*55/st.prefs.rate));return}
-    try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(it.say);if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}else u.lang='en-US';u.rate=st.prefs.rate;u.onend=next;let begun=false;u.onstart=()=>{begun=true};if(this.i===0)this.timer=setTimeout(()=>{if(tok===this.tok&&!begun&&!speechSynthesis.speaking){this.paused=true;this.tok++;drawPlayer();toast('Tap the play button below to start the audio.',6000)}},3000);u.onerror=e=>{if(e.error!=='interrupted'&&e.error!=='canceled')next()};speechSynthesis.speak(u)}catch(e){next()}},
+    try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(sayFix(it.say));if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}else u.lang='en-US';u.rate=st.prefs.rate;u.onend=next;let begun=false;u.onstart=()=>{begun=true};if(this.i===0)this.timer=setTimeout(()=>{if(tok===this.tok&&!begun&&!speechSynthesis.speaking){this.paused=true;this.tok++;drawPlayer();toast('Tap the play button below to start the audio.',6000)}},3000);u.onerror=e=>{if(e.error!=='interrupted'&&e.error!=='canceled')next()};speechSynthesis.speak(u)}catch(e){next()}},
   toggle(){if(!this.on)return;this.paused=!this.paused;if(this.paused){this.tok++;clearTimeout(this.timer);hush();drawPlayer()}else{prime();this.run()}},
   jump(n){if(!this.on)return;const seg=this.q[this.i]&&this.q[this.i].seg;let i=this.i;
     if(n>0){while(i<this.q.length&&this.q[i].seg===seg)i++}else{while(i>0&&this.q[i-1].seg===seg)i--;if(i===this.i&&i>0){const s2=this.q[i-1].seg;i--;while(i>0&&this.q[i-1].seg===s2)i--}}
@@ -1736,9 +1747,15 @@ function vCareer(){
    The choice is kept in the record (prefs.gvoice), where the server reads it, so it is the same on the website and inside Claude. */
 const GVOICES=[['Aoede','woman'],['Kore','woman'],['Leda','woman'],['Zephyr','woman'],['Puck','man'],['Charon','man'],['Fenrir','man'],['Orus','man']];
 const GTIERS=[['','Automatic (best available)'],['chirp','Google Chirp 3 HD'],['neural2','Google Neural2'],['wavenet','Google WaveNet'],['melo','Cloudflare MeloTTS']];
+/* WaveNet voices (picked as prefs.gvoice 'Wavenet-<letter>'). Only the site owner is offered Chirp 3 HD and Neural2, whose free monthly
+   allowances are small and shared by everyone; every other account reads with WaveNet (see googleKinds in src/worker.js). */
+const WVOICES=[['A','man'],['B','man'],['C','woman'],['D','man'],['E','woman'],['F','woman'],['G','woman'],['H','woman'],['I','man'],['J','man']];
 const ENGINE={'google-chirp':'Google Chirp 3 HD','google-neural2':'Google Neural2','google-wavenet':'Google WaveNet',cloudflare:'Cloudflare MeloTTS',offline:'Offline voice',device:'Device voice'};
 const engineOf=new Map();
-function gvoiceSelect(){const want=st.prefs.gvoice||'',tier=st.prefs.gtier||'';return `<label class="small" style="display:block;margin:8px 0 4px">Natural voice model <select data-gtier aria-label="Natural voice model">${GTIERS.map(v=>`<option value="${v[0]}"${v[0]===tier?' selected':''}>${v[1]}</option>`).join('')}</select></label><span class="small muted" style="display:block">Automatic starts with the best Google voice and steps down as each free monthly allowance is used. The player shows which one is reading.</span>`+`<label class="small" style="display:block;margin:8px 0 4px">Natural voice (Google) <select data-gvoice aria-label="Natural voice from Google"><option value="">Automatic (Aoede)</option>${GVOICES.map(v=>`<option value="${v[0]}"${v[0]===want?' selected':''}>${v[0]} · ${v[1]}</option>`).join('')}</select></label>`}
+function gvoiceSelect(){const own=SITE.owner,tiers=own?GTIERS:GTIERS.filter(v=>!v[0]||v[0]==='wavenet'||v[0]==='melo'),
+  wv=WVOICES.map(v=>['Wavenet-'+v[0],'WaveNet '+v[0]+' · '+v[1]]),gv=own?GVOICES.map(v=>[v[0],v[0]+' · '+v[1]]).concat(wv):wv;
+  let tier=st.prefs.gtier||'',want=st.prefs.gvoice||'';if(!tiers.some(v=>v[0]===tier))tier='';if(!gv.some(v=>v[0]===want))want='';
+  return `<label class="small" style="display:block;margin:8px 0 4px">Natural voice model <select data-gtier aria-label="Natural voice model">${tiers.map(v=>`<option value="${v[0]}"${v[0]===tier?' selected':''}>${v[1]}</option>`).join('')}</select></label><span class="small muted" style="display:block">${own?'Automatic starts with the best Google voice and steps down as each free monthly allowance is used.':'Automatic reads with Google WaveNet while its free monthly allowance lasts, then the Cloudflare voice.'} The player shows which one is reading.</span>`+`<label class="small" style="display:block;margin:8px 0 4px">Natural voice (Google) <select data-gvoice aria-label="Natural voice from Google"><option value="">${own?'Automatic (Aoede)':'Automatic (WaveNet F)'}</option>${gv.map(v=>`<option value="${v[0]}"${v[0]===want?' selected':''}>${v[1]}</option>`).join('')}</select></label>`}
 function voiceSelect(){if(!TTS)return'';const vs=speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang||''));if(!vs.length)return'';let want='';try{want=localStorage.getItem('dcc:dvoice')||''}catch(e){}
   return `<label class="small" style="display:block;margin:8px 0 4px">This device's voice <select data-dvoice aria-label="This device's voice"><option value="">Automatic</option>${vs.map(v=>`<option value="${esc(v.name)}"${v.name===want?' selected':''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select></label>`}
 function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h1></div>
