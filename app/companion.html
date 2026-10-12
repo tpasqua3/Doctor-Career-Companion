@@ -172,6 +172,27 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 .sug button:hover{border-color:var(--teal)}
 .sug .sugre{flex:none;width:38px;height:38px;padding:0;display:grid;place-items:center;background:var(--teal-soft);color:var(--teal);border-color:transparent}
 .sug .sugre svg{width:19px;height:19px;fill:currentColor}
+/* The Pronunciation test pop-up (Settings): a sheet over a dimmed page, the word tester on top and the whole list below it as a
+   table that scrolls inside the sheet. Each row: a check for "sounds right as written", the word and its speaker, the respelling and
+   its speaker, and a check for "the respelling sounds right". A respelling the AI suggested and nobody has confirmed yet is dashed. */
+.saypop{position:fixed;inset:0;z-index:16;background:rgba(0,0,0,.42);display:flex;align-items:flex-end;justify-content:center}
+.saypop[hidden]{display:none}
+.saysheet{--fa:100%;width:min(680px,100%);height:min(92%,880px);background:var(--paper);border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:10px;padding:14px 14px calc(12px + env(safe-area-inset-bottom,0px))}
+@media (min-width:720px){.saypop{align-items:center}.saysheet{border-radius:16px;height:min(86%,880px)}}
+.saysheet .sugbox{flex:none}
+.saysheet .pfind{flex:none;padding:8px 10px}
+.prow{display:grid;grid-template-columns:34px 34px minmax(0,1fr) minmax(0,1fr) 34px 34px;gap:5px;align-items:center;flex:none}
+.prow.fcols span{font-size:.68rem;text-align:center}.prow.fcols span.l{text-align:left}
+.prow input[type=text]{padding:7px 8px;min-width:0}
+.prow[data-off] input[data-pf="s"]{color:var(--muted)}
+.prow[data-sug] input[data-pf="s"]{border-style:dashed;border-color:var(--teal);color:var(--teal);font-style:italic}
+.prow[data-wait] input[data-pf="s"]::placeholder{color:var(--teal)}
+.prow[data-hit]{animation:phit 1.6s ease-out}
+@keyframes phit{from{background:var(--teal-soft)}to{background:transparent}}
+.pok{width:34px;height:34px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--muted);cursor:pointer;display:grid;place-items:center;padding:0}
+.pok svg{width:17px;height:17px;fill:currentColor}.pok:hover{color:var(--good);border-color:var(--good)}
+.pkey{display:flex;flex-wrap:wrap;gap:4px 14px;flex:none}
+@media (pointer:coarse){.saysheet input[type=text]{font-size:16px}}
 /* The Pronunciation guide sits where the Ask panel does, lower right, over about half the screen, so the lesson text stays in view above it.
    --fa is how solid it is (the See-through slider): the panel and its boxes thin out, the words in it stay sharp. */
 .flagpop{--fa:100%;position:fixed;right:0;bottom:0;z-index:12;width:min(440px,100%);height:min(50%,460px);min-height:210px;display:flex;flex-direction:column;gap:8px;background:color-mix(in srgb,var(--paper) var(--fa),transparent);border:1px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0;box-shadow:0 -6px 24px rgba(0,0,0,.2);padding:12px 14px 10px}
@@ -203,6 +224,7 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 <button class="fab" id="fab" data-act="askopen" aria-label="Ask the study companion">Ask</button>
 <div class="askp" id="askp" role="dialog" aria-label="Study companion" hidden></div>
 <div class="flagpop" id="flagpop" hidden></div>
+<div class="saypop" id="saypop" role="dialog" aria-modal="true" aria-label="Pronunciation test" hidden></div>
 <div class="toast" id="toast" hidden></div>
 <script>
 'use strict';
@@ -466,14 +488,15 @@ function sugFill(){sugLoad();const no=sugTaken();SUG.now=SUG.now.filter(w=>!no.h
   const round=()=>{take(SUG.d,2);take(SUG.m,1);take(SAYP0,5);take(SUG.d,5);take(SUG.m,5)};round();if(SUG.now.length<5&&SUG.skip.size){SUG.skip.clear();round()}}
 function sugHtml(){sugFill();return `<div class="sugbox" id="sugbox"><span class="eyebrow">Word tester · likely misses</span>
    <div class="sug">${SUG.now.map(w=>`<button data-act="sugtap" data-w="${esc(w)}">${esc(w)}</button>`).join('')||'<span class="small muted">No more words to suggest just now.</span>'}<button class="sugre" data-act="sugmore" aria-label="Show five other words" title="Show five other words"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg></button></div>
-   <span class="tiny muted">Tap a word to hear the Cloudflare voice say it. It goes to the top of the list below: type a respelling if it sounds wrong, or remove it if it sounds right. Words come from your lessons and library, with drug names and terms from across internal medicine. The round arrow shows five others.</span></div>`}
+   <span class="tiny muted">Tap a word to hear the Cloudflare voice say it; it goes to the top of the table with a suggested respelling. Words come from your lessons, library and across internal medicine. The arrow shows five others.</span></div>`}
 function drawSug(){const el=$('#sugbox');if(el)el.outerHTML=sugHtml()}
 const sayTried=w=>{w=sayClean(w).toLowerCase();if(!w)return;const L=A(st.saytry).filter(x=>x!==w);L.push(w);st.saytry=L.slice(-3000)};
-/* A bubble was tapped: the word becomes the newest entry, the voice reads it as written, and another word takes its place. */
-function sugTap(w){w=sayClean(w).toLowerCase();if(!w)return;sayTried(w);SUG.now=SUG.now.filter(x=>x!==w);const L=(st.says||[]).filter(x=>sayClean(x.w).toLowerCase()!==w);st.says=[{w,s:''},...L];saveState();render();
-  const c=$('#sayscard');if(c)c.scrollIntoView({block:'start'});const el=document.getElementById('say-s-0');if(el)el.focus({preventScroll:true});
-  const b=document.querySelector('[data-act="sayplay"][data-k="w"][data-i="0"]');if(b)sayTry(w,b);sugTop()}
-function sugMore(){SUG.now.forEach(w=>SUG.skip.add(w));SUG.now=[];drawSug();sugTop()}
+/* A bubble was tapped: the word becomes the newest row of the Pronunciation test table with the AI's suggested respelling (or one
+   on its way), the voice reads the word as written, and another word takes its place. */
+function sugTap(w){w=sayClean(w).toLowerCase();if(!w)return;sayTried(w);SUG.now=SUG.now.filter(x=>x!==w);const L=(st.says||[]).filter(x=>sayClean(x.w).toLowerCase()!==w);
+  const x={w,s:''};st.says=[x,...L];guessFill(x);saveState();if(!SP.open)return spOpen(w);SP.q='';SP.hit=w;drawSay();drawSug();
+  const b=document.querySelector('#saylist [data-i="0"] [data-act="pph"][data-k="w"]');if(b)sayTry(w,b);guessAhead();sugTop()}
+function sugMore(){SUG.now.forEach(w=>SUG.skip.add(w));SUG.now=[];drawSug();guessAhead();sugTop()}
 /* When few found words are left, an assistant is asked for forty more around one curriculum topic. With a library connected, that
    topic's chapter is read first (which is itself harvested) and its terms are handed over to choose from. Never while a lesson plays. */
 async function sugTop(){sugLoad();const no=sugTaken(),left=[...SUG.d,...SUG.m].filter(w=>!no.has(w)&&!SUG.skip.has(w)).length;
@@ -482,16 +505,90 @@ async function sugTop(){sugLoad();const no=sugTaken(),left=[...SUG.d,...SUG.m].f
     if(LIB()&&st.prefs.lib&&st.libx){const had=new Set([...SUG.d,...SUG.m]);try{await libRef(t)}catch(e){}found=[...SUG.d,...SUG.m].filter(w=>!had.has(w)&&!no.has(w)).slice(0,120)}
     const r=await askJ('notes',`You are helping test a text-to-speech voice that reads medical lessons aloud and stumbles on medical vocabulary. Area: ${t.sec.name}, around the topic "${t.name}".${found.length?` These terms were found in the reference chapter for it: ${found.join(', ')}.`:''} List 40 terms that such a voice is most likely to mispronounce: generic drug names first, then diseases and syndromes, organisms, eponyms, anatomy, procedures and laboratory tests.${found.length?' Take the likeliest from the chapter terms and add others from the same area.':''} Real terms only, spelled correctly, one to three words each, written out in full with no abbreviations. Leave out everyday words and all of these, which are already covered: ${[...no].slice(-250).join(', ')||'none'}. Reply with JSON only, in this shape: {"words":["term","term"]}`,'quick');
     A(r&&r.words).map(w=>sayClean(w).toLowerCase().replace(/[^a-z' -]/g,'')).filter(w=>/^[a-z][a-z' -]{3,39}$/.test(w)&&w.split(' ').length<=3&&!SAYSTOP.test(w)).slice(0,60).forEach(w=>SUG.d.add(w));sugKeep()}
-  catch(e){}SUG.busy=false;if(SUG.now.length<5&&S.tab==='settings'&&!S.busy){sugFill();drawSug()}}
-function saysHtml(){const L=st.says||[],todo=L.filter(x=>!sayClean(x.s)).length,on=L.filter(x=>x.on!==false&&sayClean(x.s)).length;
-  return `<div class="card" id="sayscard"><h3>Pronunciations</h3><p class="small muted">The Cloudflare voice gets some words wrong, drug names most of all. List a word here with a spelling that makes the voice say it right, and that voice will use your spelling from then on. The text on screen and the Google voices are not changed.</p>
+  catch(e){}SUG.busy=false;if(SUG.now.length<5&&SP.open){sugFill();drawSug();guessAhead()}}
+function saysHtml(){const L=st.says||[],todo=L.filter(x=>sayClean(x.w)&&!sayClean(x.s)).length,on=L.filter(x=>x.on!==false&&sayClean(x.s)).length,sg=L.filter(sayPending).length,off=L.filter(x=>x.on===false&&sayClean(x.s)).length-sg,G=guessStats();
+  return `<div class="card" id="sayscard"><h3>Pronunciations</h3><p class="small muted">The Cloudflare voice gets some words wrong, drug names most of all. List a word with a spelling that makes the voice say it right, and that voice will use your spelling from then on. The text on screen and the Google voices are not changed.</p>
    ${SITE.owner?'<p class="note">You are the site owner, so this is the central list: what you set here is used for every account.</p>':SITE.list.length?`<p class="note">The site already corrects ${SITE.list.length} word${SITE.list.length>1?'s':''} for everyone. What you add here applies to your account only, and your spelling wins where both list the same word.</p><details><summary class="small" style="cursor:pointer;font-weight:600">See the site's list</summary><div class="small" style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 12px;padding-top:8px">${SITE.list.map(x=>`<span>${esc(x.w)}</span><span class="muted">${esc(x.s)}</span>`).join('')}</div></details>`:'<p class="small muted">What you add here applies to your account only.</p>'}
-   <p class="small"><span class="chip good">${on} in use</span> ${todo?`<span class="chip warn">${todo} need${todo>1?'':'s'} a respelling</span> `:''}${L.length-on-todo?`<span class="chip off">${L.length-on-todo} off</span>`:''}</p>
-   ${sugHtml()}
-   <div class="row"><button class="btn pri" data-act="sayadd">Add a word</button></div>
-   ${L.map((x,i)=>`<div class="sayrow"><div class="row" style="align-items:flex-end"><label class="f">Word<input type="text" data-sayf="w" data-i="${i}" id="say-w-${i}" value="${esc(x.w||'')}" autocapitalize="off" autocomplete="off" spellcheck="false"></label><label class="f">Say it as<input type="text" data-sayf="s" data-i="${i}" id="say-s-${i}" value="${esc(x.s||'')}" placeholder="spelled the way it sounds" autocapitalize="off" autocomplete="off" spellcheck="false"></label></div>
-    <div class="row"><button class="btn sm" data-act="sayplay" data-k="w" data-i="${i}">Hear it as written</button><button class="btn sm" data-act="sayplay" data-k="s" data-i="${i}">Hear the respelling</button><span style="flex:1"></span><button class="btn sm" data-act="sayon" data-i="${i}" aria-pressed="${x.on!==false&&!!sayClean(x.s)}">${!sayClean(x.s)?'No respelling yet':x.on!==false?'In use':'Off'}</button><button class="btn sm" data-act="saydel" data-i="${i}">${sayClean(x.w)&&!sayClean(x.s)?'Sounds right, remove':'Remove'}</button></div></div>`).join('')}
-   <p class="small muted">Spell it the way it sounds, in short everyday words with spaces between the parts, for example <b>uh pix uh ban</b>. Press Hear the respelling, change it until it sounds right, then leave it In use. The starter entries are guesses and are off until you have heard them. To fix words while you listen, choose Cloudflare MeloTTS as the natural voice model above and tap the check mark in the player when a word sounds wrong: the Pronunciation guide opens over the lesson, and the passage is read again when you close it.</p></div>`}
+   <p class="small"><span class="chip good">${on} in use</span> ${sg?`<span class="chip warn">${sg} suggestion${sg>1?'s':''} to hear</span> `:''}${todo?`<span class="chip warn">${todo} need${todo>1?'':'s'} a respelling</span> `:''}${off>0?`<span class="chip off">${off} off</span>`:''}</p>
+   ${G.n?`<p class="small muted">AI respellings kept as suggested: <b>${G.ok} of ${G.n}</b>${G.n>=10?` (${Math.round(100*G.ok/G.n)}%)`:''}.</p>`:''}
+   <div class="row"><button class="btn pri" data-act="spopen">Pronunciation test</button></div>
+   <p class="small muted">The test opens the word tester and your whole list as a table. To fix words while you listen, choose Cloudflare MeloTTS as the natural voice model above and tap the check mark in the player when a word sounds wrong.</p></div>`}
+/* ---------- The Pronunciation test pop-up ----------
+   Opened from Settings (and from "Full list" in the player's guide). The word tester sits on top; below it the whole list as a table,
+   newest first, with an empty row at the top for typing a word in. Changes save as they are typed. Two checks per row:
+   - left, "sounds right as written": the voice already says the word right, so the row is removed and that is noted (r:'asis');
+   - right, "the respelling sounds right": the respelling is used from then on. When it is the AI's suggestion unchanged, that is
+     noted as a correct guess (r:'ok'); when the listener changed the suggestion first, what they changed it to is noted (r:'edit').
+   Those notes (st.saylearn, kept in the record) and the list itself are what the AI studies before suggesting the next respellings,
+   so its guesses follow the listener's own way of spelling sounds. Suggestions are off until confirmed, so an unheard guess is never
+   used in a lesson. SP = {open, q: the find box, hit: a word to flash}. */
+const SP={open:false,q:'',hit:''};
+const sayPending=x=>!!(x&&x.g&&x.on===false&&sayClean(x.s)===x.g);
+const guessStats=()=>{const L=A(st.saylearn).filter(x=>x.r==='ok'||x.r==='edit');return{n:L.length,ok:L.filter(x=>x.r==='ok').length}};
+function sayLearn(x,r){const w=sayClean(x.w).toLowerCase();if(!w)return;const L=A(st.saylearn).filter(y=>y.w!==w);L.push({w,g:x.g||'',s:sayClean(x.s),r,t:Date.now()});st.saylearn=L.slice(-1500)}
+function spRow(x,i){const pend=sayPending(x),off=x.on===false&&!pend,wait=!sayClean(x.s)&&GU.wait.has(sayClean(x.w).toLowerCase());
+  return `<div class="prow" data-i="${i}"${off?' data-off="1"':''}${pend?' data-sug="1"':''}${wait?' data-wait="1"':''}${SP.hit&&SP.hit===sayClean(x.w).toLowerCase()?' data-hit="1"':''}><button class="pok" data-act="pasis" aria-label="Sounds right as written" title="Sounds right as written">${IC.flag}</button><button class="fsp" data-act="pph" data-k="w" aria-label="Hear it as written" title="Hear it as written">${IC.spk}</button><input type="text" data-pf="w" value="${esc(x.w||'')}" placeholder="word" aria-label="Before: the word as written" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><input type="text" data-pf="s" value="${esc(x.s||'')}" placeholder="${wait?'suggesting…':'say it as'}" aria-label="After: how to say it" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button class="fsp" data-act="pph" data-k="s" aria-label="Hear the respelling" title="Hear the respelling">${IC.spk}</button><button class="fck" data-act="pon" aria-pressed="${x.on!==false&&!!sayClean(x.s)}" aria-label="The respelling sounds right" title="The respelling sounds right">${IC.flag}</button></div>`}
+const spNew=()=>`<div class="prow" data-i="new"><span></span><span></span><input type="text" data-pf="w" placeholder="new word" aria-label="Type a new word" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><span class="tiny muted" style="padding-left:4px">a respelling is suggested</span><span></span><span></span></div>`;
+function spRows(){const q=SP.q.toLowerCase(),L=st.says||[];const out=[];L.forEach((x,i)=>{if(q&&!sayClean(x.w).toLowerCase().includes(q)&&!sayClean(x.s).toLowerCase().includes(q))return;out.push(spRow(x,i))});
+  return (q?'':spNew())+(out.join('')||(q?'<p class="small muted">No word matches.</p>':''))}
+function drawSay(){const el=$('#saypop');if(!SP.open){el.hidden=true;el.innerHTML='';document.body.style.overflow='';return}
+  const L=st.says||[],G=guessStats(),sg=L.filter(sayPending).length;
+  if(el.hidden||!el.innerHTML){el.hidden=false;document.body.style.overflow='hidden';
+    el.innerHTML=`<div class="saysheet"><div class="row between" style="flex-wrap:nowrap;flex:none"><h3>Pronunciation test</h3><button class="btn sm pri" data-act="spclose">Done</button></div>
+     <div id="spsug"></div>
+     <input type="search" class="pfind" id="spfind" placeholder="Find a word in your list" aria-label="Find a word" autocapitalize="off" autocomplete="off" spellcheck="false">
+     <div class="prow fcols eyebrow" style="flex:none"><span title="Sounds right as written">OK</span><span></span><span class="l">Before</span><span class="l">After</span><span></span><span title="The respelling sounds right">Use</span></div>
+     <div class="flist" id="saylist"></div>
+     <div class="pkey tiny muted" id="spfoot"></div></div>`;
+    $('#spsug').innerHTML=sugHtml()}
+  $('#saylist').innerHTML=spRows();
+  $('#spfoot').innerHTML=`<span><b>OK</b>: sounds right as written · <b>Use</b>: the respelling sounds right · dashed: AI suggestion to hear${sg?` (${sg})`:''}</span><span>${L.filter(x=>x.on!==false&&sayClean(x.s)).length} in use${G.n?` · AI suggestions kept ${G.ok} of ${G.n}`:''} · clear a word to remove it · ${SITE.owner?'used for every account':'your account only'}</span>`;
+  if(SP.hit){const h=$('#saylist [data-hit]');if(h)h.scrollIntoView({block:'nearest'});SP.hit=''}}
+function spOpen(hit){if(P.on&&!P.paused)P.toggle();SP.open=true;SP.q='';SP.hit=hit||'';drawSay();guessAhead();sugTop();
+  if(hit){const b=document.querySelector('#saylist [data-i="0"] [data-act="pph"][data-k="w"]');if(b)sayTry(hit,b)}}
+/* Done: rows left blank are dropped and the list is saved at once, since the server is where the words are swapped. */
+function spClose(){sayTok++;const n=(st.says||[]).length;st.says=(st.says||[]).filter(x=>sayClean(x.w));clearTimeout(timers.state);timers.state=null;put('state',st);if(SP.touched)clipDrop([...SP.touched]);SP.touched=null;
+  SP.open=false;drawSay();if(S.tab==='settings'&&!S.busy)render()}
+const spTouch=w=>{(SP.touched||(SP.touched=new Set())).add(sayClean(w).toLowerCase())};
+const spEntry=row=>row&&row.dataset.i!=='new'?(st.says||[])[Number(row.dataset.i)]:null;
+function spMark(row,x){const pend=sayPending(x);if(x.on===false&&!pend)row.dataset.off='1';else delete row.dataset.off;if(pend)row.dataset.sug='1';else delete row.dataset.sug;delete row.dataset.wait;
+  row.querySelector('[data-pf="s"]').placeholder='say it as';row.querySelector('.fck').setAttribute('aria-pressed',String(x.on!==false&&!!sayClean(x.s)))}
+/* Typing. The empty top row becomes a real entry at its first character. A respelling typed by hand is used at once, as before. */
+function spType(inp){const row=inp.closest('.prow');if(!row)return;let x=spEntry(row);const f=inp.dataset.pf,v=sayClean(inp.value).slice(0,f==='w'?60:120);
+  if(!x){if(!v)return;x={w:v.toLowerCase(),s:''};st.says=[x,...(st.says||[])];spTouch(x.w);saveState();drawSay();const ni=document.querySelector('#saylist [data-i="0"] [data-pf="w"]');if(ni){ni.focus();try{ni.setSelectionRange(ni.value.length,ni.value.length)}catch(e){}}return}
+  spTouch(x.w);x[f]=f==='w'?v.toLowerCase():v;spTouch(x.w);if(f==='s'){if(v&&(!x.g||v!==x.g))x.on=true;if(!v&&x.g)x.on=false}spMark(row,x);saveState()}
+/* A word was finished (typed in, or changed): note it as tried, and ask for a respelling if it has none. A respelling the listener
+   changed away from the AI's suggestion is noted as a correction once they leave the box. */
+function spDone(inp){const row=inp.closest('.prow'),x=spEntry(row);if(!x)return;
+  if(inp.dataset.pf==='w'){sayTried(x.w);if(!sayClean(x.s)&&sayClean(x.w)){guessFill(x);row.dataset.wait='1';inp.closest('.prow').querySelector('[data-pf="s"]').placeholder='suggesting…'}return}
+  if(x.g&&sayClean(x.s)&&sayClean(x.s)!==x.g){sayLearn(x,'edit');saveState()}}
+/* ---------- The AI's respellings ----------
+   GU.have: suggestions fetched this visit, by word; GU.wait: words being asked about. guessAhead asks in one go for the five words on
+   show in the tester, so a tap is usually answered at once. The question carries the listener's own list (their solutions), the
+   AI's past guesses they kept or changed, and words the voice already says right, newest first, and asks for respellings in the
+   same style. It runs as the "notes" job, the same housekeeping job the tester already uses, so the AI order is not touched. */
+const GU={have:new Map(),wait:new Set()};
+function guessPrompt(words){const L=(st.says||[]).filter(x=>sayClean(x.w)&&sayClean(x.s)&&x.on!==false&&!sayPending(x)),seen=new Set(),pairs=[];
+  L.concat(SITE.owner?[]:SITE.list).forEach(x=>{const w=sayClean(x.w).toLowerCase();if(seen.has(w)||pairs.length>=140)return;seen.add(w);pairs.push(w+' → '+sayClean(x.s))});
+  const lr=A(st.saylearn).slice().reverse(),eds=lr.filter(x=>x.r==='edit'&&x.g&&x.s).slice(0,40),asis=lr.filter(x=>x.r==='asis').slice(0,50).map(x=>x.w),G=guessStats();
+  const start=pairs.length<6?SAYS0.map(x=>x[0]+' → '+x[1]):[];
+  return `You write respellings that make a simple text-to-speech voice (Cloudflare MeloTTS, which only reads ordinary English letters) say medical words correctly. A physician corrects the respellings by ear, and the ones they keep show what works for this voice. Study them closely and copy their conventions exactly: how words are split into parts, how each sound is spelled, how stressed and unstressed syllables are written, and spacing.
+${pairs.length?`The listener's respellings, which they confirmed by ear (word → respelling):\n${pairs.join('\n')}`:''}${start.length?`\nStarting examples the app ships with (not yet confirmed by the listener):\n${start.join('\n')}`:''}
+${eds.length?`Earlier AI suggestions the listener corrected (word: suggested → what they changed it to). Learn from what they changed:\n${eds.map(x=>x.w+': '+x.g+' → '+x.s).join('\n')}`:''}
+${asis.length?`Words this voice already says right as written, so similar spelling patterns need little or no change: ${asis.join(', ')}`:''}
+${G.n?`So far ${G.ok} of ${G.n} AI suggestions were kept unchanged.`:''}
+Now write one respelling for each of these words: ${words.join(', ')}.
+Use lowercase letters and spaces only, with each spoken part as a short everyday-looking chunk. Keep any part the voice would already say right as it is. Reply with JSON only, in this shape: {"says":[{"w":"word","s":"respelling"}]}`}
+async function guessAsk(words){words=[...new Set(words.map(w=>sayClean(w).toLowerCase()).filter(w=>w&&!GU.have.has(w)&&!GU.wait.has(w)))].slice(0,8);if(!words.length||!SAMPLE)return;
+  words.forEach(w=>GU.wait.add(w));
+  try{const r=await askJ('notes',guessPrompt(words),'quick');A(r&&r.says).forEach(y=>{const w=sayClean(y&&y.w).toLowerCase(),v=sayClean(y&&y.s).toLowerCase().replace(/[^a-z' -]/g,'').replace(/\s+/g,' ').trim().slice(0,120);if(w&&v&&words.includes(w))GU.have.set(w,v)})}catch(e){}
+  words.forEach(w=>GU.wait.delete(w));guessPut()}
+/* Put arrived suggestions into rows that still have no respelling. Rows on screen are updated in place, so typing is not disturbed. */
+function guessPut(){let any=false;(st.says||[]).forEach((x,i)=>{const w=sayClean(x.w).toLowerCase();if(sayClean(x.s)||!GU.have.has(w))return;x.g=GU.have.get(w);x.s=x.g;x.on=false;any=true;
+    const row=SP.open&&document.querySelector('#saylist [data-i="'+i+'"]');if(row){row.querySelector('[data-pf="s"]').value=x.s;spMark(row,x)}});
+  if(any)saveState();if(SP.open)document.querySelectorAll('#saylist [data-wait]').forEach(r=>{const x=spEntry(r);if(x&&!GU.wait.has(sayClean(x.w).toLowerCase())){delete r.dataset.wait;r.querySelector('[data-pf="s"]').placeholder='say it as'}})}
+function guessFill(x){const w=sayClean(x.w).toLowerCase();if(!w)return;if(GU.have.has(w)){x.g=GU.have.get(w);x.s=x.g;x.on=false;return}guessAsk([w])}
+function guessAhead(){if(SP.open)guessAsk(SUG.now)}
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
 function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(!Array.isArray(st.says))st.says=SAYS0.map(x=>({w:x[0],s:x[1],on:false}));/* Once per account: the guideline collection (kept beside the syllabus, with its registry) joins the libraries as a second source. Removing it in Settings sticks. */
   if(!st.prefs.glLib){st.prefs.glLib=1;const L=libRows().filter(x=>x.name);if(!L.some(x=>x.role==='guideline'||/guideline/i.test(x.name)))st.prefs.libs=[...L,{name:'Guidelines and Backend',role:'guideline',year:''}]}
@@ -1714,9 +1811,18 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='pflagw')return flagWord(b.dataset.w);
   if(a==='pflagh'){const row=b.closest('.frow'),el=row&&row.querySelector('[data-ff="'+(b.dataset.k==='w'?'w':'s')+'"]');return sayTry(sayClean(el&&el.value),b)}
   if(a==='pflagon'){const row=b.closest('.frow'),x=flagEntry(row);if(!x||!sayClean(x.s))return toast('Type how it should be said first.');x.on=x.on===false;flagMark(row,x);P.flag.dirty=true;P.flag.touched.add(x.w);saveState();return}
-  if(a==='pflagall'){flagClose(false);S.tab='settings';render();const c=$('#sayscard');if(c)c.scrollIntoView({block:'start'});return}
+  if(a==='pflagall'){flagClose(false);return spOpen()}
   if(a==='sayadd'){st.says=[{w:'',s:''},...(st.says||[])];saveState();render();const el=document.getElementById('say-w-0');if(el)el.focus();return}
   if(a==='sugtap')return sugTap(b.dataset.w);
+  if(a==='spopen')return spOpen();
+  if(a==='spclose')return spClose();
+  if(a==='pph'){const row=b.closest('.prow'),el=row&&row.querySelector('[data-pf="'+(b.dataset.k==='w'?'w':'s')+'"]');return sayTry(sayClean(el&&el.value),b)}
+  if(a==='pon'){const row=b.closest('.prow'),x=spEntry(row);if(!x||!sayClean(x.s))return toast('Type how it should be said first.');
+    if(sayPending(x)){x.on=true;sayLearn(x,'ok');toast('Kept. That counts toward the next suggestions.')}else{x.on=x.on===false;if(x.on&&x.g&&sayClean(x.s)!==x.g)sayLearn(x,'edit')}
+    spTouch(x.w);spMark(row,x);saveState();return}
+  if(a==='pasis'){const row=b.closest('.prow'),i=Number(row&&row.dataset.i),x=(st.says||[])[i];if(!x)return;
+    if(sayClean(x.s)&&x.on!==false&&!sayPending(x)&&!confirm('Remove the respelling for "'+x.w+'"? The voice will read it as written.'))return;
+    sayLearn(x,'asis');sayTried(x.w);spTouch(x.w);const L=(st.says||[]).slice();L.splice(i,1);st.says=L;saveState();drawSay();drawSug();toast('Noted: "'+x.w+'" sounds right as written.');return}
   if(a==='sugmore')return sugMore();
   if(a==='saydel'){const L=(st.says||[]).slice(),gone=L.splice(Number(b.dataset.i),1)[0];st.says=L;if(gone)sayTried(gone.w);saysChanged([gone&&gone.w]);render();return}
   if(a==='sayon'){const x=(st.says||[])[Number(b.dataset.i)];if(!x)return;if(!sayClean(x.s))return toast('Give it a respelling first.');x.on=x.on===false;saysChanged([x.w]);render();return}
@@ -1800,6 +1906,12 @@ document.addEventListener('click',async e=>{unlock();
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&e.target.id==='askin'){e.preventDefault();const t=e.target.value;e.target.value='';sendChat(t)}if(e.key==='Escape'&&S.askOpen){S.askOpen=false;drawAsk()}});
 document.addEventListener('keydown',e=>{if(!P.flag)return;if(e.key==='Escape')return flagClose(true);const t=e.target;if(e.key!=='Enter'||!t.dataset||!t.dataset.ff)return;e.preventDefault();
   const row=t.closest('.frow'),to=t.dataset.ff==='w'?row.querySelector('[data-ff="s"]'):$('#flag-list [data-r="new"] [data-ff="w"]');if(to){to.focus();to.scrollIntoView({block:'nearest'})}});
+document.addEventListener('input',e=>{const t=e.target;if(!SP.open||!t||!t.closest||!t.closest('#saypop'))return;
+  if(t.id==='spfind'){SP.q=sayClean(t.value);$('#saylist').innerHTML=spRows();return}if(t.dataset&&t.dataset.pf)spType(t)});
+document.addEventListener('change',e=>{const t=e.target;if(SP.open&&t&&t.dataset&&t.dataset.pf&&t.closest('#saypop'))spDone(t)});
+document.addEventListener('keydown',e=>{if(!SP.open)return;if(e.key==='Escape'){e.preventDefault();return spClose()}const t=e.target;if(e.key!=='Enter'||!t.dataset||!t.dataset.pf)return;e.preventDefault();
+  const row=t.closest('.prow'),to=t.dataset.pf==='w'?row.querySelector('[data-pf="s"]'):null;if(to)to.focus();else t.blur()});
+document.addEventListener('click',e=>{if(SP.open&&e.target&&e.target.id==='saypop')spClose()});
 document.addEventListener('input',e=>{const t=e.target;if(!P.flag||!t||!t.closest||!t.closest('#flagpop'))return;
   if(t.id==='flag-op'){$('#flagpop').style.setProperty('--fa',t.value+'%');try{localStorage.setItem('dcc:flagop',t.value)}catch(x){}return}
   if(t.dataset&&t.dataset.ff)flagType(t)});
