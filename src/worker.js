@@ -447,6 +447,37 @@ function respell(text, list) {
   });
   return text.replace(/[\u0000\u0001]/g, '');
 }
+/* ---------- Guarding the pronunciation list ----------
+   The list (med/says) and the AI's notes about it (med/saylog) are built by hand over many hours, and every copy of the app (the
+   website, the app inside Claude, the copy inside Life OS, another phone) saves the whole list at once. A copy that was opened
+   earlier and still holds an older, shorter list would otherwise replace the longer one. So a save may remove at most a few words
+   at a time (removing a word in the app removes one); anything more and the missing words are put back. Before each save the list
+   as it stood is also kept as that day's copy (bak/says-<day>, bak/saylog-<day>, holding the longest version seen that day), which
+   the app never loads and nothing overwrites with a shorter list. */
+const SAY_DROP_MAX = 3;
+const sayKey = x => x && typeof x.w === 'string' ? x.w.replace(/\s+/g, ' ').trim().toLowerCase() : '';
+async function guardSays(env, uid, path, obj) {
+  if (path !== 'med/says' && path !== 'med/saylog') return obj;
+  let old = null;
+  try { const row = await env.DB.prepare('SELECT body FROM docs WHERE user_id = ? AND path = ?').bind(uid, path).first(); old = row ? JSON.parse(row.body) : null; } catch (e) { old = null; }
+  if (!old || typeof old !== 'object') return obj;
+  const size = o => path === 'med/says' ? (Array.isArray(o.list) ? o.list.length : 0) : (Array.isArray(o.learn) ? o.learn.length : 0) + (Array.isArray(o.tried) ? o.tried.length : 0);
+  try {
+    const bak = 'bak/' + path.slice(4) + '-' + today(), b = await env.DB.prepare('SELECT body FROM docs WHERE user_id = ? AND path = ?').bind(uid, bak).first();
+    let had = -1; try { had = b ? size(JSON.parse(b.body)) : -1; } catch (e) { }
+    if (size(old) >= had) await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(uid, bak, JSON.stringify(old), new Date().toISOString()).run();
+  } catch (e) { console.log('says backup: ' + String(e && e.message || e).slice(0, 200)); }
+  const keep = (was, now, key) => {
+    if (!Array.isArray(was)) return now;
+    now = Array.isArray(now) ? now : [];
+    const have = new Set(now.map(key)), gone = was.filter(x => key(x) && !have.has(key(x)));
+    return gone.length > SAY_DROP_MAX ? now.concat(gone) : now;
+  };
+  const out = Object.assign({}, obj);
+  if (path === 'med/says') out.list = keep(old.list, obj.list, sayKey);
+  else { out.learn = keep(old.learn, obj.learn, sayKey); out.tried = keep(old.tried, obj.tried, x => typeof x === 'string' ? x.trim().toLowerCase() : ''); }
+  return out;
+}
 /* `only` is 'cf' for the Settings play buttons: the Cloudflare voice reads the text exactly as given, so a respelling can be heard
    and compared with the word as written. */
 async function speak(env, user, input, only) {
@@ -1266,8 +1297,9 @@ async function api(request, env, url, ctx) {
   if (url.pathname === '/api/doc' && (request.method === 'PUT' || request.method === 'DELETE')) {
     const path = url.searchParams.get('path') || '';
     if (!PATH_OK.test(path)) return fail(400, 'Bad path.');
+    if (request.method === 'DELETE' && (path === 'med/says' || path === 'med/saylog')) return fail(400, 'The pronunciation list is not deleted as a whole.');
     if (request.method === 'DELETE') { await env.DB.prepare('DELETE FROM docs WHERE user_id = ? AND path = ?').bind(user.id, path).run(); syncSoon(env, ctx, user.id); return json({ ok: true }); }
-    const text = JSON.stringify(body); if (text.length > MAX_DOC) return fail(413, 'That is too large to save.');
+    const text = JSON.stringify(await guardSays(env, user.id, path, body)); if (text.length > MAX_DOC) return fail(413, 'That is too large to save.');
     await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(user.id, path, text, new Date().toISOString()).run();
     syncSoon(env, ctx, user.id);
     return json({ ok: true });
@@ -1387,11 +1419,12 @@ async function mcpServer(request, env, token, ctx) {
     if (!PATH_OK.test(path)) return bad('That is not a valid document path. It must start with the area, like med/state.');
     if (name === 'save_doc') {
       if (!a.body || typeof a.body !== 'object' || Array.isArray(a.body)) return bad('The document must be an object.');
-      const body = JSON.stringify(a.body); if (body.length > MAX_DOC) return bad('That document is too large to save.');
+      const body = JSON.stringify(await guardSays(env, uid, path, a.body)); if (body.length > MAX_DOC) return bad('That document is too large to save.');
       await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(uid, path, body, new Date().toISOString()).run();
       syncSoon(env, ctx, uid);
       return out({ ok: true });
     }
+    if (name === 'delete_doc' && (path === 'med/says' || path === 'med/saylog')) return bad('The pronunciation list is not deleted as a whole.');
     if (name === 'delete_doc') { await env.DB.prepare('DELETE FROM docs WHERE user_id = ? AND path = ?').bind(uid, path).run(); syncSoon(env, ctx, uid); return out({ ok: true }); }
     return err(-32602, 'Unknown tool');
   };
