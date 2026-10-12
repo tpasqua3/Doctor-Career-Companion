@@ -536,7 +536,7 @@ async function runAI(env, user, { input, tier, provider, account, chat, job, avo
     if ((used[id] || 0) >= cap) { capped++; notes.push(`${PNAME[id]} has used today's ${cap} requests for your account`); continue; }
     let out = { text: '', model: '' };
     try { out = await SERVICE[id].run(env, messages, tier, account ? accountTools(env, user) : null); }
-    catch (e) { console.error(e); notes.push(PNAME[id] + (e.busy ? ' is over its limit right now' : ' did not answer')); continue; }
+    catch (e) { console.error(e); notes.push(PNAME[id] + (e.busy ? ' is over its limit right now' : ' did not answer') + (isOwner(env, user) ? ' [' + String(e && e.message || e).slice(0, 300) + ']' : '')); continue; }
     if (!out.text) { notes.push(PNAME[id] + ' did not answer'); continue; }
     await env.DB.prepare('INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, ?, 1) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + 1').bind(user.id, today(), id).run();
     used[id] = (used[id] || 0) + 1;
