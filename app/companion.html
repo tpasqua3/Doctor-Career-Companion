@@ -457,7 +457,8 @@ function sayHarvest(text){let n=0;(String(text||'').match(/[A-Za-z][a-z]{6,27}/g
 /* Once per visit: the words found on earlier visits, then whatever this account's lessons, cards and questions hold. */
 function sugLoad(){if(SUG.ready)return;SUG.ready=true;try{const c=JSON.parse(localStorage.getItem('dcc:saypool'))||{};A(c.d).forEach(w=>typeof w==='string'&&SUG.d.add(w));A(c.m).forEach(w=>typeof w==='string'&&SUG.m.add(w))}catch(e){}
   try{Object.keys(docs).forEach(k=>{if(/^(les|cards|bank)_/.test(k))sayHarvest(JSON.stringify(docs[k]))})}catch(e){}}
-const sugTaken=()=>{const no=new Set();(st.says||[]).forEach(x=>no.add(sayClean(x.w).toLowerCase()));SITE.list.forEach(x=>no.add(x.w));A(st.saytry).forEach(w=>no.add(w));return no};
+/* Words never offered: on the list, on the site's list, or tried before. A word's plural and singular count as the same word. */
+const sugTaken=()=>{const no=new Set(),add=w=>{w=sayClean(w).toLowerCase();if(!w)return;no.add(w);no.add(w+'s');if(w.length>4&&w.endsWith('s'))no.add(w.slice(0,-1))};(st.says||[]).forEach(x=>add(x.w));SITE.list.forEach(x=>add(x.w));A(st.saytry).forEach(add);return no};
 /* Five to show: two from the found drug names, one from the found terms, the rest from the starter list, topped up from wherever
    words are left. Words passed over with the round arrow wait until everything else has been shown. */
 function sugFill(){sugLoad();const no=sugTaken();SUG.now=SUG.now.filter(w=>!no.has(w));SUG.now.forEach(w=>no.add(w));
@@ -1717,7 +1718,7 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='sayadd'){st.says=[{w:'',s:''},...(st.says||[])];saveState();render();const el=document.getElementById('say-w-0');if(el)el.focus();return}
   if(a==='sugtap')return sugTap(b.dataset.w);
   if(a==='sugmore')return sugMore();
-  if(a==='saydel'){const L=(st.says||[]).slice(),gone=L.splice(Number(b.dataset.i),1)[0];st.says=L;if(gone&&!sayClean(gone.s))sayTried(gone.w);saysChanged([gone&&gone.w]);render();return}
+  if(a==='saydel'){const L=(st.says||[]).slice(),gone=L.splice(Number(b.dataset.i),1)[0];st.says=L;if(gone)sayTried(gone.w);saysChanged([gone&&gone.w]);render();return}
   if(a==='sayon'){const x=(st.says||[])[Number(b.dataset.i)];if(!x)return;if(!sayClean(x.s))return toast('Give it a respelling first.');x.on=x.on===false;saysChanged([x.w]);render();return}
   if(a==='sayplay'){const el=document.getElementById('say-'+b.dataset.k+'-'+b.dataset.i);return sayTry(sayClean(el&&el.value),b)}
   if(a==='prate'){const r=[.85,1,1.15,1.3,1.5],i=r.indexOf(st.prefs.rate);st.prefs.rate=r[(i+1)%r.length];saveState();if(P.on&&!P.paused){P.tok++;P.run()}drawPlayer();return}
