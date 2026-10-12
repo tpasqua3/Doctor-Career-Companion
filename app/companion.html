@@ -527,7 +527,7 @@ const sayPending=x=>!!(x&&x.g&&x.on===false&&sayClean(x.s)===x.g);
 const guessStats=()=>{const L=A(st.saylearn).filter(x=>x.r==='ok'||x.r==='edit');return{n:L.length,ok:L.filter(x=>x.r==='ok').length}};
 function sayLearn(x,r){const w=sayClean(x.w).toLowerCase();if(!w)return;const L=A(st.saylearn).filter(y=>y.w!==w);L.push({w,g:x.g||'',s:sayClean(x.s),r,t:Date.now()});st.saylearn=L.slice(-1500)}
 function spRow(x,i){const pend=sayPending(x),off=x.on===false&&!pend,wait=!sayClean(x.s)&&GU.wait.has(sayClean(x.w).toLowerCase());
-  return `<div class="prow" data-i="${i}"${off?' data-off="1"':''}${pend?' data-sug="1"':''}${wait?' data-wait="1"':''}${SP.hit&&SP.hit===sayClean(x.w).toLowerCase()?' data-hit="1"':''}><button class="pok" data-act="pasis" aria-label="Sounds right as written" title="Sounds right as written">${IC.flag}</button><button class="fsp" data-act="pph" data-k="w" aria-label="Hear it as written" title="Hear it as written">${IC.spk}</button><input type="text" data-pf="w" value="${esc(x.w||'')}" placeholder="word" aria-label="Before: the word as written" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><input type="text" data-pf="s" value="${esc(x.s||'')}" placeholder="${wait?'suggesting…':'say it as'}" aria-label="After: how to say it" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button class="fsp" data-act="pph" data-k="s" aria-label="Hear the respelling" title="Hear the respelling">${IC.spk}</button><button class="fck" data-act="pon" aria-pressed="${x.on!==false&&!!sayClean(x.s)}" aria-label="The respelling sounds right" title="The respelling sounds right">${IC.flag}</button></div>`}
+  return `<div class="prow" data-i="${i}"${off?' data-off="1"':''}${pend?' data-sug="1"':''}${wait?' data-wait="1"':''}${SP.hit&&SP.hit===sayClean(x.w).toLowerCase()?' data-hit="1"':''}><button class="pok" data-act="pasis" aria-label="Sounds right as written" title="Sounds right as written">${IC.flag}</button><button class="fsp" data-act="pph" data-k="w" aria-label="Hear it as written" title="Hear it as written">${IC.spk}</button><input type="text" data-pf="w" value="${esc(x.w||'')}" placeholder="word" aria-label="Before: the word as written" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><input type="text" data-pf="s" value="${esc(x.s||'')}" placeholder="${wait?'suggesting…':!sayClean(x.s)&&GU.fail.has(sayClean(x.w).toLowerCase())?'AI busy: type one, or tap the word again':'say it as'}" aria-label="After: how to say it" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button class="fsp" data-act="pph" data-k="s" aria-label="Hear the respelling" title="Hear the respelling">${IC.spk}</button><button class="fck" data-act="pon" aria-pressed="${x.on!==false&&!!sayClean(x.s)}" aria-label="The respelling sounds right" title="The respelling sounds right">${IC.flag}</button></div>`}
 const spNew=()=>`<div class="prow" data-i="new"><span></span><span></span><input type="text" data-pf="w" placeholder="new word" aria-label="Type a new word" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><span class="tiny muted" style="padding-left:4px">a respelling is suggested</span><span></span><span></span></div>`;
 function spRows(){const q=SP.q.toLowerCase(),L=st.says||[];const out=[];L.forEach((x,i)=>{if(q&&!sayClean(x.w).toLowerCase().includes(q)&&!sayClean(x.s).toLowerCase().includes(q))return;out.push(spRow(x,i))});
   return (q?'':spNew())+(out.join('')||(q?'<p class="small muted">No word matches.</p>':''))}
@@ -567,7 +567,7 @@ function spDone(inp){const row=inp.closest('.prow'),x=spEntry(row);if(!x)return;
    show in the tester, so a tap is usually answered at once. The question carries the listener's own list (their solutions), the
    AI's past guesses they kept or changed, and words the voice already says right, newest first, and asks for respellings in the
    same style. It runs as the "notes" job, the same housekeeping job the tester already uses, so the AI order is not touched. */
-const GU={have:new Map(),wait:new Set()};
+const GU={have:new Map(),wait:new Set(),fail:new Set()};
 function guessPrompt(words){const L=(st.says||[]).filter(x=>sayClean(x.w)&&sayClean(x.s)&&x.on!==false&&!sayPending(x)),seen=new Set(),pairs=[];
   L.concat(SITE.owner?[]:SITE.list).forEach(x=>{const w=sayClean(x.w).toLowerCase();if(seen.has(w)||pairs.length>=140)return;seen.add(w);pairs.push(w+' → '+sayClean(x.s))});
   const lr=A(st.saylearn).slice().reverse(),eds=lr.filter(x=>x.r==='edit'&&x.g&&x.s).slice(0,40),asis=lr.filter(x=>x.r==='asis').slice(0,50).map(x=>x.w),G=guessStats();
@@ -579,14 +579,18 @@ ${asis.length?`Words this voice already says right as written, so similar spelli
 ${G.n?`So far ${G.ok} of ${G.n} AI suggestions were kept unchanged.`:''}
 Now write one respelling for each of these words: ${words.join(', ')}.
 Use lowercase letters and spaces only, with each spoken part as a short everyday-looking chunk. Keep any part the voice would already say right as it is. Reply with JSON only, in this shape: {"says":[{"w":"word","s":"respelling"}]}`}
-async function guessAsk(words){words=[...new Set(words.map(w=>sayClean(w).toLowerCase()).filter(w=>w&&!GU.have.has(w)&&!GU.wait.has(w)))].slice(0,8);if(!words.length||!SAMPLE)return;
+async function guessAsk(words){words=[...new Set(words.map(w=>sayClean(w).toLowerCase()).filter(w=>w&&!GU.have.has(w)&&!GU.wait.has(w)))].slice(0,8);if(!words.length)return;if(!SAMPLE){words.forEach(w=>GU.fail.add(w));return guessPut()}words.forEach(w=>GU.fail.delete(w));
   words.forEach(w=>GU.wait.add(w));
-  try{const r=await askJ('notes',guessPrompt(words),'quick');A(r&&r.says).forEach(y=>{const w=sayClean(y&&y.w).toLowerCase(),v=sayClean(y&&y.s).toLowerCase().replace(/[^a-z' -]/g,'').replace(/\s+/g,' ').trim().slice(0,120);if(w&&v&&words.includes(w))GU.have.set(w,v)})}catch(e){}
-  words.forEach(w=>GU.wait.delete(w));guessPut()}
+  /* Housekeeping first, as before. Its services (Gemini, DeepSeek) run out of daily allowance, so when it gives nothing the same
+     question goes as an ordinary chat request, which the Cloudflare AI may answer; the site's AI order itself is not changed. */
+  const take=r=>{let n=0;A(r&&(r.says||r.words||r.respellings)).concat(Array.isArray(r)?r:[]).forEach(y=>{const w=sayClean(y&&(y.w||y.word)).toLowerCase(),v=sayClean(y&&(y.s||y.respelling||y.say)).toLowerCase().replace(/[^a-z' -]/g,'').replace(/\s+/g,' ').trim().slice(0,120);if(w&&v&&words.includes(w)&&!GU.have.has(w)){GU.have.set(w,v);n++}});return n};
+  const q=guessPrompt(words);let got=0;try{got=take(await askJ('notes',q,'quick'))}catch(e){}
+  if(got<words.length){try{take(await askJ('chat',q,'quick'))}catch(e){}}
+  words.forEach(w=>{GU.wait.delete(w);if(!GU.have.has(w))GU.fail.add(w)});guessPut()}
 /* Put arrived suggestions into rows that still have no respelling. Rows on screen are updated in place, so typing is not disturbed. */
 function guessPut(){let any=false;(st.says||[]).forEach((x,i)=>{const w=sayClean(x.w).toLowerCase();if(sayClean(x.s)||!GU.have.has(w))return;x.g=GU.have.get(w);x.s=x.g;x.on=false;any=true;
     const row=SP.open&&document.querySelector('#saylist [data-i="'+i+'"]');if(row){row.querySelector('[data-pf="s"]').value=x.s;spMark(row,x)}});
-  if(any)saveState();if(SP.open)document.querySelectorAll('#saylist [data-wait]').forEach(r=>{const x=spEntry(r);if(x&&!GU.wait.has(sayClean(x.w).toLowerCase())){delete r.dataset.wait;r.querySelector('[data-pf="s"]').placeholder='say it as'}})}
+  if(any)saveState();if(SP.open)document.querySelectorAll('#saylist [data-wait]').forEach(r=>{const x=spEntry(r),w=x&&sayClean(x.w).toLowerCase();if(x&&!GU.wait.has(w)){delete r.dataset.wait;r.querySelector('[data-pf="s"]').placeholder=GU.fail.has(w)&&!sayClean(x.s)?'AI busy: type one, or tap the word again':'say it as'}})}
 function guessFill(x){const w=sayClean(x.w).toLowerCase();if(!w)return;if(GU.have.has(w)){x.g=GU.have.get(w);x.s=x.g;x.on=false;return}guessAsk([w])}
 function guessAhead(){if(SP.open)guessAsk(SUG.now)}
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
@@ -1816,7 +1820,7 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='sugtap')return sugTap(b.dataset.w);
   if(a==='spopen')return spOpen();
   if(a==='spclose')return spClose();
-  if(a==='pph'){const row=b.closest('.prow'),el=row&&row.querySelector('[data-pf="'+(b.dataset.k==='w'?'w':'s')+'"]');return sayTry(sayClean(el&&el.value),b)}
+  if(a==='pph'){const row=b.closest('.prow'),el=row&&row.querySelector('[data-pf="'+(b.dataset.k==='w'?'w':'s')+'"]'),x=spEntry(row);if(b.dataset.k==='w'&&x&&!sayClean(x.s)&&!GU.wait.has(sayClean(x.w).toLowerCase())){guessFill(x);if(!sayClean(x.s)){row.dataset.wait='1';row.querySelector('[data-pf="s"]').placeholder='suggesting…'}else spMark(row,x),row.querySelector('[data-pf="s"]').value=x.s}return sayTry(sayClean(el&&el.value),b)}
   if(a==='pon'){const row=b.closest('.prow'),x=spEntry(row);if(!x||!sayClean(x.s))return toast('Type how it should be said first.');
     if(sayPending(x)){x.on=true;sayLearn(x,'ok');toast('Kept. That counts toward the next suggestions.')}else{x.on=x.on===false;if(x.on&&x.g&&sayClean(x.s)!==x.g)sayLearn(x,'edit')}
     spTouch(x.w);spMark(row,x);saveState();return}
