@@ -406,7 +406,7 @@ async function sayFor(env, user) {
 async function siteSays(env, user) {
   const o = await ownerId(env);
   if (!o || o === user.id) return { owner: !!o, list: [] };
-  const list = (await sayList(env, { id: o })).filter(x => x && x.on !== false && typeof x.w === 'string' && typeof x.s === 'string' && x.w.trim() && x.s.trim()).slice(0, 500).map(x => ({ w: x.w.trim().toLowerCase().slice(0, 60), s: x.s.trim().slice(0, 120) }));
+  const list = (await sayList(env, { id: o })).filter(x => x && x.on !== false && typeof x.w === 'string' && typeof x.s === 'string' && x.w.trim() && x.s.trim()).slice(0, 2000).map(x => ({ w: x.w.trim().toLowerCase().slice(0, 60), s: x.s.trim().slice(0, 120) }));
   return { owner: false, list };
 }
 function respell(text, list) {
@@ -414,7 +414,7 @@ function respell(text, list) {
   for (const x of Array.isArray(list) ? list : []) {
     if (!x || x.on === false || typeof x.w !== 'string' || typeof x.s !== 'string') continue;
     const w = x.w.replace(/\s+/g, ' ').trim().toLowerCase(), s = x.s.replace(/\s+/g, ' ').trim();
-    if (w && s && w.length <= 60 && s.length <= 120 && !map.has(w) && map.size < 500) map.set(w, s);
+    if (w && s && w.length <= 60 && s.length <= 120 && !map.has(w) && map.size < 2000) map.set(w, s);
   }
   if (!map.size) return text;
   const words = [...map.keys()].sort((a, b) => b.length - a.length).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
