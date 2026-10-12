@@ -425,7 +425,15 @@ function send(n,m,b,t){pending++;syncNote();
   return primary(m,n,b).then(()=>{jdone(n,t);wait=4000},e=>{const c=e&&e.code;if(c==='invalid_argument'||c==='tool_error'&&/too large|not a valid/i.test(e.message||'')){jdone(n,t);toast('Could not save '+n+': '+(e.message||c),6000)}else again()})
     .finally(()=>{pending--;syncNote()})}
 function flush(){if(pending)return;jkeys().forEach(n=>{const j=jget(n);if(j)send(n,j.m,j.b,j.t)})}
-function put(name,obj){obj._t=Date.now();const b=clone(obj);docs[name]=obj;cacheDocs();
+/* The pronunciation list grows into the thousands, so it is not kept inside "state" (one record has a size limit): the list is
+   saved as its own document "says" ({list}) and the AI's notes as "saylog" ({learn, tried}). In memory they stay on st as before.
+   Each is sent only when it has changed. An older record that still has the list inside "state" is moved over on its next save. */
+const SAYSIG={};
+function putIf(name,body){const g=JSON.stringify(body);if(SAYSIG[name]===g&&docs[name])return;SAYSIG[name]=g;put0(name,body)}
+function put(name,obj){if(name!=='state'||obj!==st)return put0(name,obj);
+  putIf('says',{v:1,list:A(st.says)});putIf('saylog',{v:1,learn:A(st.saylearn),tried:A(st.saytry)});
+  const o=Object.assign({},st);delete o.says;delete o.saylearn;delete o.saytry;o.sayDoc=1;return put0('state',o)}
+function put0(name,obj){obj._t=Date.now();const b=clone(obj);docs[name]=obj;cacheDocs();
   if(!DB&&!LINKED){try{localStorage.setItem(LS,JSON.stringify(docs))}catch(e){}return}
   const t=jset(name,'PUT',b);send(name,'PUT',b,t);if(LINKED&&DB)DB.doc(COLL+'/'+name).set(b).catch(()=>{})}
 function del(name){delete docs[name];cacheDocs();if(!DB&&!LINKED){try{localStorage.setItem(LS,JSON.stringify(docs))}catch(e){}return}
@@ -490,7 +498,7 @@ function sugHtml(){sugFill();return `<div class="sugbox" id="sugbox"><span class
    <div class="sug">${SUG.now.map(w=>`<button data-act="sugtap" data-w="${esc(w)}">${esc(w)}</button>`).join('')||'<span class="small muted">No more words to suggest just now.</span>'}<button class="sugre" data-act="sugmore" aria-label="Show five other words" title="Show five other words"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg></button></div>
    <span class="tiny muted">Tap a word to hear the Cloudflare voice say it; it goes to the top of the table with a suggested respelling. Words come from your lessons, library and across internal medicine. The arrow shows five others.</span></div>`}
 function drawSug(){const el=$('#sugbox');if(el)el.outerHTML=sugHtml()}
-const sayTried=w=>{w=sayClean(w).toLowerCase();if(!w)return;const L=A(st.saytry).filter(x=>x!==w);L.push(w);st.saytry=L.slice(-3000)};
+const sayTried=w=>{w=sayClean(w).toLowerCase();if(!w)return;const L=A(st.saytry).filter(x=>x!==w);L.push(w);st.saytry=L.slice(-12000)};
 /* A bubble was tapped: the word becomes the newest row of the Pronunciation test table with the AI's suggested respelling (or one
    on its way), the voice reads the word as written, and another word takes its place. */
 function sugTap(w){w=sayClean(w).toLowerCase();if(!w)return;sayTried(w);SUG.now=SUG.now.filter(x=>x!==w);const L=(st.says||[]).filter(x=>sayClean(x.w).toLowerCase()!==w);
@@ -522,15 +530,16 @@ function saysHtml(){const L=st.says||[],todo=L.filter(x=>sayClean(x.w)&&!sayClea
    Those notes (st.saylearn, kept in the record) and the list itself are what the AI studies before suggesting the next respellings,
    so its guesses follow the listener's own way of spelling sounds. Suggestions are off until confirmed, so an unheard guess is never
    used in a lesson. SP = {open, q: the find box, hit: a word to flash}. */
-const SP={open:false,q:'',hit:''};
+const SP={open:false,q:'',hit:'',n:150};
 const sayPending=x=>!!(x&&x.g&&x.on===false&&sayClean(x.s)===x.g);
 const guessStats=()=>{const L=A(st.saylearn).filter(x=>x.r==='ok'||x.r==='edit');return{n:L.length,ok:L.filter(x=>x.r==='ok').length}};
-function sayLearn(x,r){const w=sayClean(x.w).toLowerCase();if(!w)return;const L=A(st.saylearn).filter(y=>y.w!==w);L.push({w,g:x.g||'',s:sayClean(x.s),r,t:Date.now()});st.saylearn=L.slice(-1500)}
+function sayLearn(x,r){const w=sayClean(x.w).toLowerCase();if(!w)return;const L=A(st.saylearn).filter(y=>y.w!==w);L.push({w,g:x.g||'',s:sayClean(x.s),r,t:Date.now()});st.saylearn=L.slice(-4000)}
 function spRow(x,i){const pend=sayPending(x),off=x.on===false&&!pend,wait=!sayClean(x.s)&&GU.wait.has(sayClean(x.w).toLowerCase());
   return `<div class="prow" data-i="${i}"${off?' data-off="1"':''}${pend?' data-sug="1"':''}${wait?' data-wait="1"':''}${SP.hit&&SP.hit===sayClean(x.w).toLowerCase()?' data-hit="1"':''}><button class="pok" data-act="pasis" aria-label="Sounds right as written" title="Sounds right as written">${IC.flag}</button><button class="fsp" data-act="pph" data-k="w" aria-label="Hear it as written" title="Hear it as written">${IC.spk}</button><input type="text" data-pf="w" value="${esc(x.w||'')}" placeholder="word" aria-label="Before: the word as written" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><input type="text" data-pf="s" value="${esc(x.s||'')}" placeholder="${wait?'suggesting…':!sayClean(x.s)&&GU.fail.has(sayClean(x.w).toLowerCase())?'AI busy: type one, or tap the word again':'say it as'}" aria-label="After: how to say it" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><button class="fsp" data-act="pph" data-k="s" aria-label="Hear the respelling" title="Hear the respelling">${IC.spk}</button><button class="fck" data-act="pon" aria-pressed="${x.on!==false&&!!sayClean(x.s)}" aria-label="The respelling sounds right" title="The respelling sounds right">${IC.flag}</button></div>`}
 const spNew=()=>`<div class="prow" data-i="new"><span></span><span></span><input type="text" data-pf="w" placeholder="new word" aria-label="Type a new word" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><span class="tiny muted" style="padding-left:4px">a respelling is suggested</span><span></span><span></span></div>`;
-function spRows(){const q=SP.q.toLowerCase(),L=st.says||[];const out=[];L.forEach((x,i)=>{if(q&&!sayClean(x.w).toLowerCase().includes(q)&&!sayClean(x.s).toLowerCase().includes(q))return;out.push(spRow(x,i))});
-  return (q?'':spNew())+(out.join('')||(q?'<p class="small muted">No word matches.</p>':''))}
+/* Rows are drawn a page at a time (150, then "Show more"), so a list of thousands opens at once. */
+function spRows(){const q=SP.q.toLowerCase(),L=st.says||[];const out=[];let more=0;L.forEach((x,i)=>{if(q&&!sayClean(x.w).toLowerCase().includes(q)&&!sayClean(x.s).toLowerCase().includes(q))return;if(out.length>=SP.n){more++;return}out.push(spRow(x,i))});
+  return (q?'':spNew())+(out.join('')||(q?'<p class="small muted">No word matches.</p>':''))+(more?`<button class="btn sm" data-act="spmore" style="flex:none;align-self:center">Show ${Math.min(more,150)} more of ${more}</button>`:'')}
 function drawSay(){const el=$('#saypop');if(!SP.open){el.hidden=true;el.innerHTML='';document.body.style.overflow='';return}
   const L=st.says||[],G=guessStats(),sg=L.filter(sayPending).length;
   if(el.hidden||!el.innerHTML){el.hidden=false;document.body.style.overflow='hidden';
@@ -544,7 +553,7 @@ function drawSay(){const el=$('#saypop');if(!SP.open){el.hidden=true;el.innerHTM
   $('#saylist').innerHTML=spRows();
   $('#spfoot').innerHTML=`<span><b>OK</b>: sounds right as written · <b>Use</b>: the respelling sounds right · dashed: AI suggestion to hear${sg?` (${sg})`:''}</span><span>${L.filter(x=>x.on!==false&&sayClean(x.s)).length} in use${G.n?` · AI suggestions kept ${G.ok} of ${G.n}`:''} · clear a word to remove it · ${SITE.owner?'used for every account':'your account only'}</span>`;
   if(SP.hit){const h=$('#saylist [data-hit]');if(h)h.scrollIntoView({block:'nearest'});SP.hit=''}}
-function spOpen(hit){if(P.on&&!P.paused)P.toggle();SP.open=true;SP.q='';SP.hit=hit||'';drawSay();guessAhead();sugTop();
+function spOpen(hit){if(P.on&&!P.paused)P.toggle();SP.open=true;SP.q='';SP.n=150;SP.hit=hit||'';drawSay();guessAhead();sugTop();
   if(hit){const b=document.querySelector('#saylist [data-i="0"] [data-act="pph"][data-k="w"]');if(b)sayTry(hit,b)}}
 /* Done: rows left blank are dropped and the list is saved at once, since the server is where the words are swapped. */
 function spClose(){sayTok++;const n=(st.says||[]).length;st.says=(st.says||[]).filter(x=>sayClean(x.w));clearTimeout(timers.state);timers.state=null;put('state',st);if(SP.touched)clipDrop([...SP.touched]);SP.touched=null;
@@ -568,8 +577,13 @@ function spDone(inp){const row=inp.closest('.prow'),x=spEntry(row);if(!x)return;
    AI's past guesses they kept or changed, and words the voice already says right, newest first, and asks for respellings in the
    same style. It runs as the "notes" job, the same housekeeping job the tester already uses, so the AI order is not touched. */
 const GU={have:new Map(),wait:new Set(),fail:new Set()};
-function guessPrompt(words){const L=(st.says||[]).filter(x=>sayClean(x.w)&&sayClean(x.s)&&x.on!==false&&!sayPending(x)),seen=new Set(),pairs=[];
-  L.concat(SITE.owner?[]:SITE.list).forEach(x=>{const w=sayClean(x.w).toLowerCase();if(seen.has(w)||pairs.length>=140)return;seen.add(w);pairs.push(w+' → '+sayClean(x.s))});
+function guessPrompt(words){const L=(st.says||[]).filter(x=>sayClean(x.w)&&sayClean(x.s)&&x.on!==false&&!sayPending(x)).concat(SITE.owner?[]:SITE.list),seen=new Set(),pairs=[];
+  /* With thousands of entries only some fit in one question: first those that share a beginning or an ending with a word being
+     asked about (the same drug stem, the same suffix), longest match first, then the newest. */
+  const tw=words.map(w=>w.toLowerCase()),near=x=>{const w=sayClean(x.w).toLowerCase();let b=0;tw.forEach(t=>{let i=0;while(i<w.length&&i<t.length&&w[i]===t[i])i++;let j=0;while(j<w.length&&j<t.length&&w[w.length-1-j]===t[t.length-1-j])j++;b=Math.max(b,i>=3?i:0,j>=3?j:0)});return b};
+  const add=x=>{const w=sayClean(x.w).toLowerCase();if(seen.has(w)||tw.includes(w))return;seen.add(w);pairs.push(w+' → '+sayClean(x.s))};
+  L.map(x=>[near(x),x]).filter(y=>y[0]>=3).sort((a,b)=>b[0]-a[0]).slice(0,90).forEach(y=>add(y[1]));
+  L.slice(0,80).forEach(add);
   const lr=A(st.saylearn).slice().reverse(),eds=lr.filter(x=>x.r==='edit'&&x.g&&x.s).slice(0,40),asis=lr.filter(x=>x.r==='asis').slice(0,50).map(x=>x.w),G=guessStats();
   const start=pairs.length<6?SAYS0.map(x=>x[0]+' → '+x[1]):[];
   return `You write respellings that make a simple text-to-speech voice (Cloudflare MeloTTS, which only reads ordinary English letters) say medical words correctly. A physician corrects the respellings by ear, and the ones they keep show what works for this voice. Study them closely and copy their conventions exactly: how words are split into parts, how each sound is spelled, how stressed and unstressed syllables are written, and spacing.
@@ -594,7 +608,10 @@ function guessPut(){let any=false;(st.says||[]).forEach((x,i)=>{const w=sayClean
 function guessFill(x){const w=sayClean(x.w).toLowerCase();if(!w)return;if(GU.have.has(w)){x.g=GU.have.get(w);x.s=x.g;x.on=false;return}guessAsk([w])}
 function guessAhead(){if(SP.open)guessAsk(SUG.now)}
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
-function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(!Array.isArray(st.says))st.says=SAYS0.map(x=>({w:x[0],s:x[1],on:false}));/* Once per account: the guideline collection (kept beside the syllabus, with its registry) joins the libraries as a second source. Removing it in Settings sticks. */
+function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(docs.says&&Array.isArray(docs.says.list)){st.says=clone(docs.says.list);SAYSIG.says=JSON.stringify({v:1,list:st.says})}
+  if(docs.saylog){st.saylearn=A(clone(docs.saylog.learn));st.saytry=A(clone(docs.saylog.tried));SAYSIG.saylog=JSON.stringify({v:1,learn:st.saylearn,tried:st.saytry})}
+  if(docs.state&&Array.isArray(docs.state.says))setTimeout(()=>saveState(50),0);
+  if(!Array.isArray(st.says))st.says=SAYS0.map(x=>({w:x[0],s:x[1],on:false}));/* Once per account: the guideline collection (kept beside the syllabus, with its registry) joins the libraries as a second source. Removing it in Settings sticks. */
   if(!st.prefs.glLib){st.prefs.glLib=1;const L=libRows().filter(x=>x.name);if(!L.some(x=>x.role==='guideline'||/guideline/i.test(x.name)))st.prefs.libs=[...L,{name:'Guidelines and Backend',role:'guideline',year:''}]}
   if(st.prefs.examDate==null){const d=new Date();d.setMonth(d.getMonth()+8);st.prefs.examDate=dayStr(d)}  applyBlueprint();applyCustom();applyLens();
   Object.keys(docs).forEach(k=>{if(!k.startsWith('les_'))return;const L=docs[k];if(L&&L.id&&TOP[L.tid]&&Array.isArray(L.segs)&&!st.lessons.some(x=>x.id===L.id))st.lessons.push({id:L.id,tid:L.tid,title:L.title,len:L.len||'std',min:L.min,t:L.t||0,done:L.done||0})});st.lessons.sort((x,y)=>x.t-y.t);}
@@ -861,7 +878,7 @@ function flagClose(resume){const F=P.flag;sayTok++;let wait=0;if(F){const n=(st.
   /* The list is saved on the server, which is where the words are swapped, so the lesson waits a moment for the save before it reads on. */
   if(resume&&P.on&&P.paused){const go=()=>{if(P.on&&P.paused&&!P.flag){hush();P.toggle()}};if(wait)setTimeout(go,wait);else go()}}
 function flagOpen(){let from=P.i;for(let k=P.i-1;k>=0;k--){if(P.q[k]&&P.q[k].say){from=k;break}}
-  P.flag={words:flagWords(),rows:(st.says||[]).filter(x=>x.on!==false||!sayClean(x.s)).reverse(),dirty:false,touched:new Set(),from};if(P.on&&!P.paused)P.toggle();drawFlag()}
+  P.flag={words:flagWords(),rows:(st.says||[]).filter(x=>x.on!==false||!sayClean(x.s)).slice(0,150).reverse(),dirty:false,touched:new Set(),from};if(P.on&&!P.paused)P.toggle();drawFlag()}
 let unlocked=false;function unlock(){prime();if(unlocked||!TTS)return;unlocked=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}
 /* Text is cut into pieces at sentence ends (a full stop inside a number such as 0.5 is not one). The first piece of a passage is
    kept to about one sentence (140 characters), the second to 200 and the rest to 240, because a voice takes time in proportion to
@@ -1820,6 +1837,7 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='sugtap')return sugTap(b.dataset.w);
   if(a==='spopen')return spOpen();
   if(a==='spclose')return spClose();
+  if(a==='spmore'){SP.n+=150;const l=$('#saylist'),y=l.scrollTop;l.innerHTML=spRows();l.scrollTop=y;return}
   if(a==='pph'){const row=b.closest('.prow'),el=row&&row.querySelector('[data-pf="'+(b.dataset.k==='w'?'w':'s')+'"]'),x=spEntry(row);if(b.dataset.k==='w'&&x&&!sayClean(x.s)&&!GU.wait.has(sayClean(x.w).toLowerCase())){guessFill(x);if(!sayClean(x.s)){row.dataset.wait='1';row.querySelector('[data-pf="s"]').placeholder='suggesting…'}else spMark(row,x),row.querySelector('[data-pf="s"]').value=x.s}return sayTry(sayClean(el&&el.value),b)}
   if(a==='pon'){const row=b.closest('.prow'),x=spEntry(row);if(!x||!sayClean(x.s))return toast('Type how it should be said first.');
     if(sayPending(x)){x.on=true;sayLearn(x,'ok');toast('Kept. That counts toward the next suggestions.')}else{x.on=x.on===false;if(x.on&&x.g&&sayClean(x.s)!==x.g)sayLearn(x,'edit')}
@@ -1911,7 +1929,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&e.targe
 document.addEventListener('keydown',e=>{if(!P.flag)return;if(e.key==='Escape')return flagClose(true);const t=e.target;if(e.key!=='Enter'||!t.dataset||!t.dataset.ff)return;e.preventDefault();
   const row=t.closest('.frow'),to=t.dataset.ff==='w'?row.querySelector('[data-ff="s"]'):$('#flag-list [data-r="new"] [data-ff="w"]');if(to){to.focus();to.scrollIntoView({block:'nearest'})}});
 document.addEventListener('input',e=>{const t=e.target;if(!SP.open||!t||!t.closest||!t.closest('#saypop'))return;
-  if(t.id==='spfind'){SP.q=sayClean(t.value);$('#saylist').innerHTML=spRows();return}if(t.dataset&&t.dataset.pf)spType(t)});
+  if(t.id==='spfind'){SP.q=sayClean(t.value);SP.n=150;$('#saylist').innerHTML=spRows();return}if(t.dataset&&t.dataset.pf)spType(t)});
 document.addEventListener('change',e=>{const t=e.target;if(SP.open&&t&&t.dataset&&t.dataset.pf&&t.closest('#saypop'))spDone(t)});
 document.addEventListener('keydown',e=>{if(!SP.open)return;if(e.key==='Escape'){e.preventDefault();return spClose()}const t=e.target;if(e.key!=='Enter'||!t.dataset||!t.dataset.pf)return;e.preventDefault();
   const row=t.closest('.prow'),to=t.dataset.pf==='w'?row.querySelector('[data-pf="s"]'):null;if(to)to.focus();else t.blur()});

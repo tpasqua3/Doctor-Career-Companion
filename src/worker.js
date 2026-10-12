@@ -388,6 +388,9 @@ async function googleSpeak(env, user, text) {
    Settings. Just before a passage goes to the Cloudflare voice, each listed word is swapped for its respelling: whole words only,
    any capitalisation, a plural s carried over. The Google voices and the text on screen are never touched. */
 async function sayList(env, user) {
+  /* The list has its own document (med/says, {list}); an older record keeps it inside med/state as `says`. */
+  try { const row = await env.DB.prepare("SELECT json_extract(body, '$.list') AS s FROM docs WHERE user_id = ? AND path = 'med/says'").bind(user.id).first();
+    if (row && row.s) { const a = JSON.parse(row.s); if (Array.isArray(a)) return a; } } catch (e) { }
   try { const row = await env.DB.prepare("SELECT json_extract(body, '$.says') AS s FROM docs WHERE user_id = ? AND path = 'med/state'").bind(user.id).first();
     const a = row && row.s ? JSON.parse(row.s) : []; return Array.isArray(a) ? a : []; } catch (e) { return []; }
 }
@@ -406,20 +409,34 @@ async function sayFor(env, user) {
 async function siteSays(env, user) {
   const o = await ownerId(env);
   if (!o || o === user.id) return { owner: !!o, list: [] };
-  const list = (await sayList(env, { id: o })).filter(x => x && x.on !== false && typeof x.w === 'string' && typeof x.s === 'string' && x.w.trim() && x.s.trim()).slice(0, 2000).map(x => ({ w: x.w.trim().toLowerCase().slice(0, 60), s: x.s.trim().slice(0, 120) }));
+  const list = (await sayList(env, { id: o })).filter(x => x && x.on !== false && typeof x.w === 'string' && typeof x.s === 'string' && x.w.trim() && x.s.trim()).slice(0, SAY_MAX).map(x => ({ w: x.w.trim().toLowerCase().slice(0, 60), s: x.s.trim().slice(0, 120) }));
   return { owner: false, list };
 }
+/* Up to SAY_MAX words in use per account (the owner's central list counts separately). Single words are found by looking each
+   word of the text up in a table, which stays fast with thousands of entries; entries of two or three words use a pattern. */
+const SAY_MAX = 10000;
 function respell(text, list) {
-  const map = new Map();
+  const map = new Map(), multi = [];
   for (const x of Array.isArray(list) ? list : []) {
     if (!x || x.on === false || typeof x.w !== 'string' || typeof x.s !== 'string') continue;
     const w = x.w.replace(/\s+/g, ' ').trim().toLowerCase(), s = x.s.replace(/\s+/g, ' ').trim();
-    if (w && s && w.length <= 60 && s.length <= 120 && !map.has(w) && map.size < 2000) map.set(w, s);
+    if (w && s && w.length <= 60 && s.length <= 120 && !map.has(w) && map.size < SAY_MAX * 2) { map.set(w, s); if (/[^a-z0-9]/.test(w)) multi.push(w); }
   }
   if (!map.size) return text;
-  const words = [...map.keys()].sort((a, b) => b.length - a.length).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
-  const re = new RegExp("(?<![A-Za-z0-9])(" + words.join('|') + ")(s?)(?![A-Za-z0-9])", 'gi');
-  return text.replace(re, (m, w, s) => { const to = map.get(w.toLowerCase().replace(/\s+/g, ' ')); return to ? to + s : m; });
+  if (multi.length) {
+    const words = multi.sort((a, b) => b.length - a.length).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
+    const re = new RegExp("(?<![A-Za-z0-9])(" + words.join('|') + ")(s?)(?![A-Za-z0-9])", 'gi');
+    text = text.replace(re, (m, w, s) => { const to = map.get(w.toLowerCase().replace(/\s+/g, ' ')); return to ? '\u0000' + to + s + '\u0001' : m; });
+  }
+  /* Words already swapped above sit between \u0000 and \u0001 and are left alone; the markers are removed at the end. */
+  text = text.replace(/\u0000[^\u0001]*\u0001|[A-Za-z0-9]+/g, m => {
+    if (m.charCodeAt(0) === 0) return m;
+    const l = m.toLowerCase();let to = map.get(l);
+    if (to) return to;
+    if (l.length > 3 && l.endsWith('s') && (to = map.get(l.slice(0, -1)))) return to + 's';
+    return m;
+  });
+  return text.replace(/[\u0000\u0001]/g, '');
 }
 /* `only` is 'cf' for the Settings play buttons: the Cloudflare voice reads the text exactly as given, so a respelling can be heard
    and compared with the word as written. */
