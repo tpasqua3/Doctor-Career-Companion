@@ -421,9 +421,10 @@ let cacheT=null;function cacheDocs(){if(!WEB)return;clearTimeout(cacheT);cacheT=
 function primary(m,n,b){if(WEB)return webSave(m,n,b);if(LINKED)return MCP.callTool(CONN,m==='DELETE'?'delete_doc':'save_doc',m==='DELETE'?{path:AREA+'/'+n}:{path:AREA+'/'+n,body:b},{cache:false});
   if(DB)return m==='DELETE'?DB.doc(COLL+'/'+n).delete():DB.doc(COLL+'/'+n).set(b);return Promise.resolve()}
 function again(){clearTimeout(retryT);retryT=setTimeout(flush,wait);wait=Math.min(60000,wait*2)}
-function send(n,m,b,t){pending++;syncNote();
-  return primary(m,n,b).then(()=>{jdone(n,t);wait=4000},e=>{const c=e&&e.code;if(c==='invalid_argument'||c==='tool_error'&&/too large|not a valid/i.test(e.message||'')){jdone(n,t);toast('Could not save '+n+': '+(e.message||c),6000)}else again()})
-    .finally(()=>{pending--;syncNote()})}
+let sayFly=false;
+function send(n,m,b,t){if(n==='sayop'){if(sayFly)return Promise.resolve();sayFly=true}pending++;syncNote();
+  return primary(m,n,b).then(()=>{jdone(n,t);wait=4000;if(n==='sayop'&&jget(n))setTimeout(flush,250)},e=>{const c=e&&e.code;if(c==='invalid_argument'||c==='tool_error'&&/too large|not a valid/i.test(e.message||'')){jdone(n,t);toast('Could not save '+n+': '+(e.message||c),6000)}else again()})
+    .finally(()=>{pending--;if(n==='sayop')sayFly=false;syncNote()})}
 function flush(){if(pending)return;jkeys().forEach(n=>{const j=jget(n);if(j)send(n,j.m,j.b,j.t)})}
 /* The pronunciation list grows into the thousands, so it is not kept inside "state" (one record has a size limit): the list is
    saved as its own document "says" ({list}) and the AI's notes as "saylog" ({learn, tried}). In memory they stay on st as before.
@@ -431,18 +432,68 @@ function flush(){if(pending)return;jkeys().forEach(n=>{const j=jget(n);if(j)send
 const SAYSIG={};
 function putIf(name,body){const g=JSON.stringify(body);if(SAYSIG[name]===g&&docs[name])return;SAYSIG[name]=g;put0(name,body)}
 function put(name,obj){if(name!=='state'||obj!==st)return put0(name,obj);
-  putIf('says',{v:1,list:A(st.says)});putIf('saylog',{v:1,learn:A(st.saylearn),tried:A(st.saytry)});
-  const o=Object.assign({},st);delete o.says;delete o.saylearn;delete o.saytry;o.sayDoc=1;return put0('state',o)}
+  saySave();
+  const o=Object.assign({},st);delete o.says;delete o.saylearn;delete o.saytry;delete o.sayasis;o.sayDoc=1;return put0('state',o)}
+/* ---------- Pronunciation changes go to the server one word at a time ----------
+   With the account linked, the list is never sent whole. What changed since the list was last loaded (SB, the server's list as
+   this copy last saw it) is sent as instructions about single words (document "sayop", applied by applySayOps in src/worker.js),
+   so a copy opened earlier cannot overwrite words it never saw. The instructions wait in this browser's journal until the server
+   accepts them. st.sayasis holds the words checked as sounding right as written: kept for good and never offered again. */
+const SB={list:new Map(),learn:new Map(),tried:new Set(),asis:new Set()};
+const sayW=x=>sayClean(x&&typeof x==='object'?x.w:x).toLowerCase();
+const sayJ=x=>JSON.stringify([sayClean(x.s),x.g||'',x.on===false?0:x.on===true?1:2]);
+function sayBaseFrom(d){const L=A(d.says&&d.says.list),G=d.saylog||{};
+  SB.list=new Map();L.forEach(x=>{const w=sayW(x);if(w&&!SB.list.has(w))SB.list.set(w,sayJ(x))});
+  SB.learn=new Map(A(G.learn).filter(x=>sayW(x)).map(x=>[sayW(x),JSON.stringify([x.g||'',sayClean(x.s),x.r])]));
+  SB.tried=new Set(A(G.tried));SB.asis=new Set(A(G.asis))}
+function sayOps(){const ops=[],first=new Map();(st.says||[]).forEach(x=>{const w=sayW(x);if(w&&!first.has(w))first.set(w,x)});
+  [...first.entries()].reverse().forEach(([w,x])=>{if(SB.list.get(w)!==sayJ(x)){const y={w,s:sayClean(x.s)};if(x.g)y.g=x.g;if(x.on===false||x.on===true)y.on=x.on;ops.push({o:'put',x:y})}});
+  SB.list.forEach((j,w)=>{if(!first.has(w))ops.push({o:'del',w})});
+  A(st.saylearn).forEach(x=>{const w=sayW(x);if(w&&SB.learn.get(w)!==JSON.stringify([x.g||'',sayClean(x.s),x.r]))ops.push({o:'learn',x:{w,g:x.g||'',s:sayClean(x.s),r:x.r,t:x.t}})});
+  A(st.saytry).forEach(w=>{w=sayW(w);if(w&&!SB.tried.has(w))ops.push({o:'try',w})});
+  A(st.sayasis).forEach(w=>{w=sayW(w);if(w&&!SB.asis.has(w))ops.push({o:'asis',w})});
+  return ops}
+/* A word with a respelling in use is not also counted as sounding right as written. */
+const sayActive=x=>!!(x&&x.on!==false&&sayClean(x.s)&&!sayPending(x));
+function sayAsisTidy(){const act=new Set((st.says||[]).filter(sayActive).map(sayW));st.sayasis=[...new Set(A(st.sayasis).map(sayW).filter(w=>w&&!act.has(w)))]}
+function saySave(){sayAsisTidy();
+  if(!LINKED){putIf('says',{v:1,list:A(st.says)});putIf('saylog',{v:1,learn:A(st.saylearn),tried:A(st.saytry),asis:A(st.sayasis)});return}
+  const ops=sayOps();if(!ops.length)return;
+  docs.says=Object.assign({},docs.says,{v:1,list:clone(A(st.says))});docs.saylog=Object.assign({},docs.saylog,{v:1,learn:clone(A(st.saylearn)),tried:A(st.saytry).slice(),asis:A(st.sayasis).slice()});
+  sayBaseFrom(docs);cacheDocs();
+  const j=jget('sayop'),b={ops:A(j&&j.m==='PUT'&&j.b&&j.b.ops).concat(ops)},t=jset('sayop','PUT',b);send('sayop','PUT',b,t)}
+/* The same instructions applied to this copy's own documents, for changes still waiting in the journal when the page opens. */
+function sayApply(d,ops){const L=A(d.says&&d.says.list).slice(),G=Object.assign({learn:[],tried:[],asis:[]},d.saylog||{});let list=L,learn=A(G.learn).slice();const tried=new Set(A(G.tried)),asis=new Set(A(G.asis));
+  A(ops).forEach(op=>{if(!op)return;const w=sayW(op.x||op.w);if(!w)return;
+    if(op.o==='put'){const i=list.findIndex(y=>sayW(y)===w),x=Object.assign({},op.x,{w});if(i>=0)list[i]=x;else list.unshift(x);if(sayClean(x.s)&&x.on!==false)asis.delete(w)}
+    else if(op.o==='del')list=list.filter(y=>sayW(y)!==w);
+    else if(op.o==='learn'){learn=learn.filter(y=>sayW(y)!==w);learn.push(Object.assign({},op.x,{w}))}
+    else if(op.o==='try')tried.add(w);else if(op.o==='asis'){asis.add(w);tried.add(w)}});
+  d.says=Object.assign({},d.says,{v:1,list});d.saylog=Object.assign({},G,{v:1,learn,tried:[...tried],asis:[...asis]})}
+/* Fetch the newest list from the server (only the two pronunciation documents), so every copy works from the same list.
+   Skipped while this copy still has changes waiting to be accepted. Answers true when the list changed. */
+async function sayRefresh(){if(!LINKED||jget('sayop'))return false;
+  try{let d;if(WEB){const r=await fetch('/api/progress?area='+AREA+'&only=says,saylog',{cache:'no-store'});if(!r.ok)return false;d=(await r.json()).docs}
+    else{const r=await MCP.callTool(CONN,'load_progress',{area:AREA,since:0,only:['says','saylog']},{cache:false});const p=r&&r.payload;d=p&&(typeof p==='string'?JSON.parse(p):p).docs}
+    if(!d||jget('sayop')||timers.state)return false;const s=d[AREA+'/says'],l=d[AREA+'/saylog'];if(!s&&!l)return false;
+    const was=JSON.stringify([st.says,st.saylearn,st.saytry,st.sayasis]);if(s)docs.says=s;if(l)docs.saylog=l;sayLoad();cacheDocs();
+    return was!==JSON.stringify([st.says,st.saylearn,st.saytry,st.sayasis])}catch(e){return false}}
+/* Puts the list and its notes from this copy's documents onto st, and notes them as what the server has. */
+function sayLoad(){if(docs.says&&Array.isArray(docs.says.list)){st.says=clone(docs.says.list);SAYSIG.says=JSON.stringify({v:1,list:st.says})}
+  if(docs.saylog){st.saylearn=A(clone(docs.saylog.learn));st.saytry=A(clone(docs.saylog.tried));SAYSIG.saylog=JSON.stringify({v:1,learn:st.saylearn,tried:st.saytry,asis:A(docs.saylog.asis)})}
+  st.sayasis=[...new Set(A(docs.saylog&&docs.saylog.asis).concat(A(st.saylearn).filter(x=>x&&x.r==='asis').map(sayW)).filter(Boolean))];
+  sayBaseFrom(docs)}
 function put0(name,obj){obj._t=Date.now();const b=clone(obj);docs[name]=obj;cacheDocs();
   if(!DB&&!LINKED){try{localStorage.setItem(LS,JSON.stringify(docs))}catch(e){}return}
   const t=jset(name,'PUT',b);send(name,'PUT',b,t);if(LINKED&&DB)DB.doc(COLL+'/'+name).set(b).catch(()=>{})}
 function del(name){delete docs[name];cacheDocs();if(!DB&&!LINKED){try{localStorage.setItem(LS,JSON.stringify(docs))}catch(e){}return}
   const t=jset(name,'DELETE',null);send(name,'DELETE',null,t);if(LINKED&&DB)DB.doc(COLL+'/'+name).delete().catch(()=>{})}
-function overlay(){jkeys().forEach(n=>{const j=jget(n);if(!j)return;if(j.m==='DELETE')delete docs[n];else docs[n]=j.b})}
+function overlay(){jkeys().forEach(n=>{const j=jget(n);if(!j)return;if(n==='sayop'){if(j.b)sayApply(docs,j.b.ops);return}if(j.m==='DELETE')delete docs[n];else docs[n]=j.b})}
 addEventListener('online',()=>{wait=4000;flush()});
 const timers={};function later(name,fn,ms=700){clearTimeout(timers[name]);timers[name]=setTimeout(fn,ms)}
 function saveNow(){if(timers.state){clearTimeout(timers.state);timers.state=null;put('state',st)}}
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible'){saveNow();return}flush();pull()});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible'){saveNow();return}flush();pull();
+  sayRefresh().then(ch=>{if(!ch)return;if(SP.open&&!(document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#saypop')))drawSay();else if(!SP.open&&!P.flag)render()})});
 addEventListener('pagehide',()=>{endAct();if(timers.log){clearTimeout(timers.log);put('log',logDoc())}saveNow()});
 async function fetchServer(){if(WEB){const r=await fetch('/api/progress?area='+AREA,{cache:'no-store'});if(r.status===401){location.replace('/account.html?next=1');return null}if(!r.ok)return null;OFFLINE=false;return (await r.json()).docs}
   const r=await MCP.callTool(CONN,'load_progress',{area:AREA,since:0},{cache:false});const p=r&&r.payload;return p&&p.docs}
@@ -486,7 +537,7 @@ const saysChanged=words=>{saveState();clipDrop(words)};
    terms found in this account's own lessons, cards and questions and in every library chapter or guideline the app has read
    (sayHarvest); terms an assistant picks for one curriculum topic at a time, from that topic's library chapter when there is one
    (sugTop, job "notes"); and a starter list that ships with the app (SAYP0). A word already on the list, on the site's list, or
-   tried before (st.saytry, kept in the record) is not offered again. The found words are kept on this device only (dcc:saypool). */
+   tried before (st.saytry, kept in the record), or checked as sounding right as written (st.sayasis, kept for good) is not offered again. The found words are kept on this device only (dcc:saypool). */
 const SAYP0='acetazolamide adalimumab alendronate alirocumab alteplase amitriptyline anastrozole aripiprazole azathioprine azithromycin baricitinib bempedoic_acid bictegravir bisoprolol budesonide bumetanide buprenorphine bupropion canagliflozin candesartan carbamazepine cefepime ceftriaxone cephalexin cholestyramine cilostazol ciprofloxacin colchicine cyclophosphamide cyclosporine daptomycin dexamethasone diltiazem dolutegravir donepezil doxycycline dulaglutide duloxetine dupilumab edoxaban enoxaparin eplerenone ertapenem escitalopram etanercept evolocumab febuxostat fidaxomicin finerenone fluconazole fludrocortisone fondaparinux gabapentin glimepiride hydralazine hydroxychloroquine ibrutinib icosapent_ethyl idarucizumab infliximab ipratropium isosorbide_mononitrate ivabradine ketorolac lamotrigine levetiracetam levofloxacin linagliptin liraglutide lorazepam meropenem mesalamine methimazole methotrexate metolazone midodrine mirtazapine montelukast mycophenolate naltrexone nifedipine nitrofurantoin nortriptyline olanzapine omalizumab ondansetron oseltamivir oxcarbazepine pantoprazole pembrolizumab piperacillin tazobactam pioglitazone prasugrel pravastatin prednisone pregabalin propylthiouracil quetiapine ranolazine rifaximin risedronate rituximab romosozumab sertraline sitagliptin sotalol sulfasalazine sulfamethoxazole tacrolimus tamsulosin teriparatide tofacitinib topiramate torsemide trimethoprim umeclidinium upadacitinib ustekinumab valacyclovir valsartan vancomycin varenicline venlafaxine verapamil vericiguat warfarin zoledronic_acid achalasia acromegaly amyloidosis anaphylaxis ankylosing_spondylitis ascites atelectasis bronchiectasis cholangitis cholecystitis choledocholithiasis coccidioidomycosis cryoglobulinemia dermatomyositis diverticulitis dyspnea eosinophilia erythema_nodosum glomerulonephritis granulomatosis_with_polyangiitis hemochromatosis hemoptysis hepatosplenomegaly hidradenitis_suppurativa histoplasmosis hyperaldosteronism hyperkalemia hypertriglyceridemia hyponatremia ichthyosis leukocytoclastic lymphadenopathy mastocytosis myasthenia_gravis myelodysplastic nephrolithiasis onychomycosis osteomyelitis pancytopenia paresthesia pheochromocytoma pneumocystis polycythemia_vera polymyalgia_rheumatica pyelonephritis pyoderma_gangrenosum rhabdomyolysis sarcoidosis scleroderma spondyloarthritis steatohepatitis syringomyelia telangiectasia thrombocytopenia thyrotoxicosis xanthelasma aspergillus borrelia_burgdorferi clostridioides_difficile cryptococcus enterococcus haemophilus helicobacter_pylori klebsiella legionella pseudomonas_aeruginosa staphylococcus_aureus streptococcus_pneumoniae behcet brugada budd_chiari cheyne_stokes dupuytren guillain_barre hashimoto kussmaul osler_weber_rendu raynaud sjogren takayasu waldenstrom wolff_parkinson_white bronchoalveolar_lavage calprotectin cholangiopancreatography echocardiography electrophoresis esophagogastroduodenoscopy ferritin haptoglobin immunoglobulin paracentesis plasmapheresis polysomnography procalcitonin spirometry thoracentesis transesophageal troponin'.split(' ').map(w=>w.replace(/_/g,' '));
 /* How a word is recognised without a dictionary: the endings that generic drug names are built from, and the endings of clinical terms. */
 const SAYDRUG=/(?:mab|nib|ciclib|pril|sartan|statin|olol|dipine|gliflozin|gliptin|glutide|parin|xaban|gatran|grel|azole|cillin|penem|mycin|micin|cycline|oxacin|navir|gravir|buvir|ciclovir|cyclovir|mivir|lukast|terol|tropium|zepam|zolam|triptan|setron|oxetine|ptyline|pramine|peridone|apine|tidine|fibrate|semide|thiazide|lactone|phylline|caine|dronate|parib|limus|rubicin|platin|trexate|ercept|kinra|grastim|poetin|teplase|glitazone|afil|asone|solone|lamide|formin|zosin|profen|codone|morphone|barbital|prazole|vaptan|ciguat|gepant|stigmine|curonium|fentanil|thiouracil|purinol|uxostat)$|^(?:cef|ceph|sulfa)[a-z]{4,}$/;
@@ -499,7 +550,7 @@ function sayHarvest(text){let n=0;(String(text||'').match(/[A-Za-z][a-z]{6,27}/g
 function sugLoad(){if(SUG.ready)return;SUG.ready=true;try{const c=JSON.parse(localStorage.getItem('dcc:saypool'))||{};A(c.d).forEach(w=>typeof w==='string'&&SUG.d.add(w));A(c.m).forEach(w=>typeof w==='string'&&SUG.m.add(w))}catch(e){}
   try{Object.keys(docs).forEach(k=>{if(/^(les|cards|bank)_/.test(k))sayHarvest(JSON.stringify(docs[k]))})}catch(e){}}
 /* Words never offered: on the list, on the site's list, or tried before. A word's plural and singular count as the same word. */
-const sugTaken=()=>{const no=new Set(),add=w=>{w=sayClean(w).toLowerCase();if(!w)return;no.add(w);no.add(w+'s');if(w.length>4&&w.endsWith('s'))no.add(w.slice(0,-1))};(st.says||[]).forEach(x=>add(x.w));SITE.list.forEach(x=>add(x.w));A(st.saytry).forEach(add);return no};
+const sugTaken=()=>{const no=new Set(),add=w=>{w=sayClean(w).toLowerCase();if(!w)return;no.add(w);no.add(w+'s');if(w.length>4&&w.endsWith('s'))no.add(w.slice(0,-1))};(st.says||[]).forEach(x=>add(x.w));SITE.list.forEach(x=>add(x.w));A(st.saytry).forEach(add);A(st.sayasis).forEach(add);A(st.saylearn).forEach(x=>add(x&&x.w));return no};
 /* Five to show: two from the found drug names, one from the found terms, the rest from the starter list, topped up from wherever
    words are left. Words passed over with the round arrow wait until everything else has been shown. */
 function sugFill(){sugLoad();const no=sugTaken();SUG.now=SUG.now.filter(w=>!no.has(w));SUG.now.forEach(w=>no.add(w));
@@ -528,6 +579,7 @@ async function sugTop(){sugLoad();const no=sugTaken(),left=[...SUG.d,...SUG.m].f
 function saysHtml(){const L=st.says||[],todo=L.filter(x=>sayClean(x.w)&&!sayClean(x.s)).length,on=L.filter(x=>x.on!==false&&sayClean(x.s)).length,sg=L.filter(sayPending).length,off=L.filter(x=>x.on===false&&sayClean(x.s)).length-sg,G=guessStats();
   return `<div class="card" id="sayscard"><h3>Pronunciations</h3><p class="small muted">The voices get some words wrong, drug names most of all. List a word with a spelling that makes it sound right, and every voice (Google, Cloudflare, the offline voice and this device's voice) reads your spelling from then on. The text on screen is not changed.</p>
    ${SITE.owner?'<p class="note">You are the site owner, so this is the central list: what you set here is used for every account.</p>':SITE.list.length?`<p class="note">The site already corrects ${SITE.list.length} word${SITE.list.length>1?'s':''} for everyone. What you add here applies to your account only, and your spelling wins where both list the same word.</p><details><summary class="small" style="cursor:pointer;font-weight:600">See the site's list</summary><div class="small" style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 12px;padding-top:8px">${SITE.list.map(x=>`<span>${esc(x.w)}</span><span class="muted">${esc(x.s)}</span>`).join('')}</div></details>`:'<p class="small muted">What you add here applies to your account only.</p>'}
+   ${sayCountHtml()}
    <p class="small"><span class="chip good">${on} in use</span> ${sg?`<span class="chip warn">${sg} suggestion${sg>1?'s':''} to hear</span> `:''}${todo?`<span class="chip warn">${todo} need${todo>1?'':'s'} a respelling</span> `:''}${off>0?`<span class="chip off">${off} off</span>`:''}</p>
    ${G.n?`<p class="small muted">AI respellings kept as suggested: <b>${G.ok} of ${G.n}</b>${G.n>=10?` (${Math.round(100*G.ok/G.n)}%)`:''}.</p>`:''}
    <div class="row"><button class="btn pri" data-act="spopen">Pronunciation test</button></div>
@@ -543,6 +595,9 @@ function saysHtml(){const L=st.says||[],todo=L.filter(x=>sayClean(x.w)&&!sayClea
    used in a lesson. SP = {open, q: the find box, hit: a word to flash}. */
 const SP={open:false,q:'',hit:'',n:150};
 const sayPending=x=>!!(x&&x.g&&x.on===false&&sayClean(x.s)===x.g);
+/* Progress: every word checked by ear, either given a respelling that is now in use or confirmed as sounding right as written. */
+const sayCount=()=>{const act=new Set((st.says||[]).filter(sayActive).map(sayW)),asis=new Set(A(st.sayasis).map(sayW).filter(w=>w&&!act.has(w)));return{re:act.size,ok:asis.size,all:act.size+asis.size}};
+const sayCountHtml=()=>{const c=sayCount();return `<p class="small"><b style="font-size:1.05rem">${c.all.toLocaleString()} words checked</b> <span class="muted">· ${c.re.toLocaleString()} respelled · ${c.ok.toLocaleString()} sound right as written</span></p>`};
 const guessStats=()=>{const L=A(st.saylearn).filter(x=>x.r==='ok'||x.r==='edit');return{n:L.length,ok:L.filter(x=>x.r==='ok').length}};
 function sayLearn(x,r){const w=sayClean(x.w).toLowerCase();if(!w)return;const L=A(st.saylearn).filter(y=>y.w!==w);L.push({w,g:x.g||'',s:sayClean(x.s),r,t:Date.now()});st.saylearn=L.slice(-4000)}
 function spRow(x,i){const pend=sayPending(x),off=x.on===false&&!pend,wait=!sayClean(x.s)&&GU.wait.has(sayClean(x.w).toLowerCase());
@@ -555,16 +610,19 @@ function drawSay(){const el=$('#saypop');if(!SP.open){el.hidden=true;el.innerHTM
   const L=st.says||[],G=guessStats(),sg=L.filter(sayPending).length;
   if(el.hidden||!el.innerHTML){el.hidden=false;document.body.style.overflow='hidden';
     el.innerHTML=`<div class="saysheet"><div class="row between" style="flex-wrap:nowrap;flex:none"><h3>Pronunciation test</h3><button class="btn sm pri" data-act="spclose">Done</button></div>
+     <div id="spcount" style="flex:none"></div>
      <div id="spsug"></div>
      <input type="search" class="pfind" id="spfind" placeholder="Find a word in your list" aria-label="Find a word" autocapitalize="off" autocomplete="off" spellcheck="false">
      <div class="prow fcols eyebrow" style="flex:none"><span title="Sounds right as written">OK</span><span></span><span class="l">Before</span><span class="l">After</span><span></span><span title="The respelling sounds right">Use</span></div>
      <div class="flist" id="saylist"></div>
      <div class="pkey tiny muted" id="spfoot"></div></div>`;
     $('#spsug').innerHTML=sugHtml()}
-  $('#saylist').innerHTML=spRows();
-  $('#spfoot').innerHTML=`<span><b>OK</b>: sounds right as written · <b>Use</b>: the respelling sounds right · dashed: AI suggestion to hear${sg?` (${sg})`:''}</span><span>${L.filter(x=>x.on!==false&&sayClean(x.s)).length} in use${G.n?` · AI suggestions kept ${G.ok} of ${G.n}`:''} · clear a word to remove it · ${SITE.owner?'used for every account':'your account only'}</span>`;
+  $('#saylist').innerHTML=spRows();$('#spcount').innerHTML=sayCountHtml();
+  $('#spfoot').innerHTML=`<span><b>OK</b>: sounds right as written (also for a word you typed in) · <b>Use</b>: the respelling sounds right · dashed: AI suggestion to hear${sg?` (${sg})`:''}</span><span>${L.filter(x=>x.on!==false&&sayClean(x.s)).length} in use${G.n?` · AI suggestions kept ${G.ok} of ${G.n}`:''} · clear a word to remove it · ${SITE.owner?'used for every account':'your account only'}</span>`;
   if(SP.hit){const h=$('#saylist [data-hit]');if(h)h.scrollIntoView({block:'nearest'});SP.hit=''}}
 function spOpen(hit){if(P.on&&!P.paused)P.toggle();SP.open=true;SP.q='';SP.n=150;SP.hit=hit||'';drawSay();guessAhead();sugTop();
+  /* The newest list from the server, so this copy shows what every other copy has saved. */
+  if(!hit){saveNow();sayRefresh().then(ch=>{if(ch&&SP.open){const f=document.activeElement;if(!(f&&f.closest&&f.closest('#saylist')))drawSay();drawSug()}})}
   if(hit){const b=document.querySelector('#saylist [data-i="0"] [data-act="pph"][data-k="w"]');if(b)sayTry(hit,b)}}
 /* Done: rows left blank are dropped and the list is saved at once, since the server is where the words are swapped. */
 function spClose(){sayTok++;const n=(st.says||[]).length;st.says=(st.says||[]).filter(x=>sayClean(x.w));clearTimeout(timers.state);timers.state=null;put('state',st);if(SP.touched)clipDrop([...SP.touched]);SP.touched=null;
@@ -619,10 +677,13 @@ function guessPut(){let any=false;(st.says||[]).forEach((x,i)=>{const w=sayClean
 function guessFill(x){const w=sayClean(x.w).toLowerCase();if(!w)return;if(GU.have.has(w)){x.g=GU.have.get(w);x.s=x.g;x.on=false;return}guessAsk([w])}
 function guessAhead(){if(SP.open)guessAsk(SUG.now)}
 const saveState=(ms=700)=>later('state',()=>{timers.state=null;put('state',st)},ms);
-function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}if(docs.says&&Array.isArray(docs.says.list)){st.says=clone(docs.says.list);SAYSIG.says=JSON.stringify({v:1,list:st.says})}
-  if(docs.saylog){st.saylearn=A(clone(docs.saylog.learn));st.saytry=A(clone(docs.saylog.tried));SAYSIG.saylog=JSON.stringify({v:1,learn:st.saylearn,tried:st.saytry})}
-  if(docs.state&&Array.isArray(docs.state.says))setTimeout(()=>saveState(50),0);
-  if(!Array.isArray(st.says))st.says=SAYS0.map(x=>({w:x[0],s:x[1],on:false}));/* Once per account: the guideline collection (kept beside the syllabus, with its registry) joins the libraries as a second source. Removing it in Settings sticks. */
+function loadState(){st=blank();if(docs.state&&docs.state.v){st=Object.assign(blank(),clone(docs.state));st.prefs=Object.assign(blank().prefs,st.prefs||{})}
+  if(!Array.isArray(st.says)&&!(docs.says&&Array.isArray(docs.says.list)))st.says=SAYS0.map(x=>({w:x[0],s:x[1],on:false}));
+  {const keep={says:st.says,learn:st.saylearn,tried:st.saytry};sayLoad();
+    /* A record from before the list had its own document: what it held is sent to the server as single-word changes. */
+    if(!docs.says&&Array.isArray(keep.says))st.says=keep.says;if(!docs.saylog){if(Array.isArray(keep.learn))st.saylearn=keep.learn;if(Array.isArray(keep.tried))st.saytry=keep.tried;
+      st.sayasis=[...new Set(A(st.saylearn).filter(x=>x&&x.r==='asis').map(sayW).filter(Boolean))]}}
+  if((docs.state&&Array.isArray(docs.state.says))||(LINKED&&sayOps().length))setTimeout(()=>saveState(50),0);/* Once per account: the guideline collection (kept beside the syllabus, with its registry) joins the libraries as a second source. Removing it in Settings sticks. */
   if(!st.prefs.glLib){st.prefs.glLib=1;const L=libRows().filter(x=>x.name);if(!L.some(x=>x.role==='guideline'||/guideline/i.test(x.name)))st.prefs.libs=[...L,{name:'Guidelines and Backend',role:'guideline',year:''}]}
   if(st.prefs.examDate==null){const d=new Date();d.setMonth(d.getMonth()+8);st.prefs.examDate=dayStr(d)}  applyBlueprint();applyCustom();applyLens();
   Object.keys(docs).forEach(k=>{if(!k.startsWith('les_'))return;const L=docs[k];if(L&&L.id&&TOP[L.tid]&&Array.isArray(L.segs)&&!st.lessons.some(x=>x.id===L.id))st.lessons.push({id:L.id,tid:L.tid,title:L.title,len:L.len||'std',min:L.min,t:L.t||0,done:L.done||0})});st.lessons.sort((x,y)=>x.t-y.t);}
@@ -889,7 +950,8 @@ function flagClose(resume){const F=P.flag;sayTok++;let wait=0;if(F){const n=(st.
   /* The list is saved on the server, which is where the words are swapped, so the lesson waits a moment for the save before it reads on. */
   if(resume&&P.on&&P.paused){const go=()=>{if(P.on&&P.paused&&!P.flag){hush();P.toggle()}};if(wait)setTimeout(go,wait);else go()}}
 function flagOpen(){let from=P.i;for(let k=P.i-1;k>=0;k--){if(P.q[k]&&P.q[k].say){from=k;break}}
-  P.flag={words:flagWords(),rows:(st.says||[]).filter(x=>x.on!==false||!sayClean(x.s)).slice(0,150).reverse(),dirty:false,touched:new Set(),from};if(P.on&&!P.paused)P.toggle();drawFlag()}
+  P.flag={words:flagWords(),rows:(st.says||[]).filter(x=>x.on!==false||!sayClean(x.s)).slice(0,150).reverse(),dirty:false,touched:new Set(),from};if(P.on&&!P.paused)P.toggle();drawFlag();
+  saveNow();sayRefresh().then(ch=>{const F=P.flag;if(!ch||!F||F.dirty)return;F.words=flagWords();F.rows=(st.says||[]).filter(x=>x.on!==false||!sayClean(x.s)).slice(0,150).reverse();drawFlag()})}
 let unlocked=false;function unlock(){prime();if(unlocked||!TTS)return;unlocked=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}
 /* Text is cut into pieces at sentence ends (a full stop inside a number such as 0.5 is not one). The first piece of a passage is
    kept to about one sentence (140 characters), the second to 200 and the rest to 240, because a voice takes time in proportion to
@@ -1861,7 +1923,7 @@ document.addEventListener('click',async e=>{unlock();
     spTouch(x.w);spMark(row,x);saveState();return}
   if(a==='pasis'){const row=b.closest('.prow'),i=Number(row&&row.dataset.i),x=(st.says||[])[i];if(!x)return;
     if(sayClean(x.s)&&x.on!==false&&!sayPending(x)&&!confirm('Remove the respelling for "'+x.w+'"? The voice will read it as written.'))return;
-    sayLearn(x,'asis');sayTried(x.w);spTouch(x.w);const L=(st.says||[]).slice();L.splice(i,1);st.says=L;saveState();drawSay();drawSug();toast('Noted: "'+x.w+'" sounds right as written.');return}
+    sayLearn(x,'asis');sayTried(x.w);const aw=sayW(x);if(aw)st.sayasis=[...new Set(A(st.sayasis).concat(aw))];spTouch(x.w);const L=(st.says||[]).slice();L.splice(i,1);st.says=L;saveState();drawSay();drawSug();toast('Noted: "'+x.w+'" sounds right as written.');return}
   if(a==='sugmore')return sugMore();
   if(a==='saydel'){const L=(st.says||[]).slice(),gone=L.splice(Number(b.dataset.i),1)[0];st.says=L;if(gone)sayTried(gone.w);saysChanged([gone&&gone.w]);render();return}
   if(a==='sayon'){const x=(st.says||[])[Number(b.dataset.i)];if(!x)return;if(!sayClean(x.s))return toast('Give it a respelling first.');x.on=x.on===false;saysChanged([x.w]);render();return}

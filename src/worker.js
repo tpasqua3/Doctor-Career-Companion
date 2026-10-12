@@ -475,8 +475,51 @@ async function guardSays(env, uid, path, obj) {
   };
   const out = Object.assign({}, obj);
   if (path === 'med/says') out.list = keep(old.list, obj.list, sayKey);
-  else { out.learn = keep(old.learn, obj.learn, sayKey); out.tried = keep(old.tried, obj.tried, x => typeof x === 'string' ? x.trim().toLowerCase() : ''); }
+  else { const lk = x => typeof x === 'string' ? x.trim().toLowerCase() : ''; out.learn = keep(old.learn, obj.learn, sayKey); out.tried = keep(old.tried, obj.tried, lk);
+    /* Words checked as sounding right as written are never dropped by a whole-record save. */
+    if (Array.isArray(old.asis)) { const have = new Set(Array.isArray(obj.asis) ? obj.asis.map(lk) : []); out.asis = (Array.isArray(obj.asis) ? obj.asis : []).concat(old.asis.filter(w => lk(w) && !have.has(lk(w)))); } }
   return out;
+}
+/* ---------- Changing the pronunciation list one word at a time ----------
+   The app does not save the list as a whole. Each change is sent as a small instruction about one word, saved through the usual
+   save path as the document med/sayop ({ops}), which is never stored: the server applies the instructions to med/says and
+   med/saylog as they stand on the server. A copy of the app that was opened earlier therefore cannot replace words it never saw.
+     {o:'put', x:{w, s, g, on}}  add a word (newest first) or replace the entry with that word
+     {o:'del', w}                remove a word from the list
+     {o:'learn', x:{w, g, s, r, t}}  note what happened to the AI's suggestion for a word (one note per word)
+     {o:'try', w}                the word was tried, so the word tester does not offer it again
+     {o:'asis', w}               the voice says the word right as written: kept for good, never offered again, counted as checked
+   saylog.asis is the list of words checked as sounding right as written. */
+async function applySayOps(env, uid, ops) {
+  if (!Array.isArray(ops) || !ops.length) return { ok: true, n: 0 };
+  const read = async path => { try { const r = await env.DB.prepare('SELECT body FROM docs WHERE user_id = ? AND path = ?').bind(uid, path).first(); const o = r ? JSON.parse(r.body) : null; return o && typeof o === 'object' ? o : null; } catch (e) { return null; } };
+  const write = (path, o) => env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(uid, path, JSON.stringify(o), new Date().toISOString()).run();
+  const says = (await read('med/says')) || { v: 1, list: [] }, log = (await read('med/saylog')) || { v: 1, learn: [], tried: [], asis: [] };
+  let list = Array.isArray(says.list) ? says.list.slice() : [], learn = Array.isArray(log.learn) ? log.learn.slice() : [];
+  const tried = new Set((Array.isArray(log.tried) ? log.tried : []).filter(x => typeof x === 'string')), asis = new Set((Array.isArray(log.asis) ? log.asis : []).filter(x => typeof x === 'string'));
+  const lw = w => typeof w === 'string' ? w.replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 60) : '';
+  const str = (v, n) => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n) : '';
+  let a = 0, b = 0;
+  for (const op of ops.slice(0, 5000)) {
+    if (!op || typeof op !== 'object') continue;
+    if (op.o === 'put' && op.x && lw(op.x.w)) {
+      const w = lw(op.x.w), x = { w, s: str(op.x.s, 120) };
+      if (str(op.x.g, 120)) x.g = str(op.x.g, 120);
+      if (op.x.on === false) x.on = false; else if (op.x.on === true) x.on = true;
+      const i = list.findIndex(y => sayKey(y) === w);
+      if (i >= 0) list[i] = x; else { if (list.length >= SAY_MAX * 2) continue; list.unshift(x); }
+      if (x.s && x.on !== false) asis.delete(w);
+      a++;
+    } else if (op.o === 'del' && lw(op.w)) { const w = lw(op.w); list = list.filter(y => sayKey(y) !== w); a++; }
+    else if (op.o === 'learn' && op.x && lw(op.x.w)) {
+      const w = lw(op.x.w), x = { w, g: str(op.x.g, 120), s: str(op.x.s, 120), r: ['ok', 'edit', 'asis'].includes(op.x.r) ? op.x.r : 'edit', t: Number(op.x.t) || Date.now() };
+      learn = learn.filter(y => sayKey(y) !== w); learn.push(x); if (learn.length > 4000) learn = learn.slice(-4000); b++;
+    } else if (op.o === 'try' && lw(op.w)) { const w = lw(op.w); tried.delete(w); tried.add(w); b++; }
+    else if (op.o === 'asis' && lw(op.w)) { const w = lw(op.w); asis.add(w); tried.add(w); b++; }
+  }
+  if (a) { const o = await read('med/says'); if (o) await guardSays(env, uid, 'med/says', o); await write('med/says', Object.assign({}, says, { v: 1, list, _t: Date.now() })); }
+  if (b) { const o = await read('med/saylog'); if (o) await guardSays(env, uid, 'med/saylog', o); await write('med/saylog', Object.assign({}, log, { v: 1, learn, tried: [...tried].slice(-20000), asis: [...asis], _t: Date.now() })); }
+  return { ok: true, n: a + b };
 }
 /* `only` is 'cf' for the Settings play buttons: the Cloudflare voice reads the text exactly as given, so a respelling can be heard
    and compared with the word as written. */
@@ -1290,7 +1333,10 @@ async function api(request, env, url, ctx) {
   if (route === 'GET /api/progress') {
     const lang = url.searchParams.get('area') || 'med';
     if (!LANG_OK.test(lang)) return fail(400, 'Bad area.');
-    const { results } = await env.DB.prepare('SELECT path, body FROM docs WHERE user_id = ? AND path LIKE ?').bind(user.id, lang + '/%').all();
+    /* `only` (a comma-separated list of document names, e.g. says,saylog) returns just those, for the app's quick refresh of the pronunciation list. */
+    const only = (url.searchParams.get('only') || '').split(',').filter(n => /^[A-Za-z0-9_\-]{1,60}$/.test(n)).slice(0, 10).map(n => lang + '/' + n);
+    const { results } = only.length ? await env.DB.prepare('SELECT path, body FROM docs WHERE user_id = ? AND path IN (' + only.map(() => '?').join(',') + ')').bind(user.id, ...only).all()
+      : await env.DB.prepare('SELECT path, body FROM docs WHERE user_id = ? AND path LIKE ?').bind(user.id, lang + '/%').all();
     const docs = {}; for (const r of results) { try { docs[r.path] = JSON.parse(r.body); } catch { } }
     return json({ now: Date.now(), docs });
   }
@@ -1299,6 +1345,7 @@ async function api(request, env, url, ctx) {
     if (!PATH_OK.test(path)) return fail(400, 'Bad path.');
     if (request.method === 'DELETE' && (path === 'med/says' || path === 'med/saylog')) return fail(400, 'The pronunciation list is not deleted as a whole.');
     if (request.method === 'DELETE') { await env.DB.prepare('DELETE FROM docs WHERE user_id = ? AND path = ?').bind(user.id, path).run(); syncSoon(env, ctx, user.id); return json({ ok: true }); }
+    if (path === 'med/sayop') { const r = await applySayOps(env, user.id, body && body.ops); syncSoon(env, ctx, user.id); return json(r); }
     const text = JSON.stringify(await guardSays(env, user.id, path, body)); if (text.length > MAX_DOC) return fail(413, 'That is too large to save.');
     await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(user.id, path, text, new Date().toISOString()).run();
     syncSoon(env, ctx, user.id);
@@ -1353,8 +1400,8 @@ async function api(request, env, url, ctx) {
    A small Model Context Protocol server (JSON over HTTP POST). The token in the address is the only credential,
    so it is long, random, stored only as a hash, and can be replaced or switched off from the account page. */
 const MCP_TOOLS = [
-  { name: 'load_progress', description: "Load this physician's saved study and career record: the documents changed since `since` (milliseconds since 1970; 0 for everything), the list of every document path, and the server time to pass as `since` next time. `area` defaults to \"med\".",
-    inputSchema: { type: 'object', properties: { area: { type: 'string' }, since: { type: 'number' } } }, annotations: { readOnlyHint: true } },
+  { name: 'load_progress', description: "Load this physician's saved study and career record: the documents changed since `since` (milliseconds since 1970; 0 for everything), the list of every document path, and the server time to pass as `since` next time. `area` defaults to \"med\". `only` (a list of document names such as [\"says\", \"saylog\"]) returns just those documents, whenever they changed.",
+    inputSchema: { type: 'object', properties: { area: { type: 'string' }, since: { type: 'number' }, only: { type: 'array', items: { type: 'string' } } } }, annotations: { readOnlyHint: true } },
   { name: 'get_profile', description: "The account's first name, last name and email, and how much is saved.",
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
   { name: 'save_doc', description: "Save one document, replacing what was there. The path starts with the area, e.g. med/state or med/bank_cv.",
@@ -1395,7 +1442,8 @@ async function mcpServer(request, env, token, ctx) {
       const lang = String(a.area || 'med'); if (!LANG_OK.test(lang)) return bad('Give an area such as "med".');
       const since = Number(a.since) || 0, docs = {}, paths = [];
       const { results } = await env.DB.prepare('SELECT path, body, updated FROM docs WHERE user_id = ? AND path LIKE ?').bind(uid, lang + '/%').all();
-      for (const r of results) { paths.push(r.path); if (!since || Date.parse(r.updated) > since) { try { docs[r.path] = JSON.parse(r.body); } catch { } } }
+      const only = Array.isArray(a.only) ? new Set(a.only.filter(n => typeof n === 'string').slice(0, 10).map(n => lang + '/' + n)) : null;
+      for (const r of results) { paths.push(r.path); if (only ? only.has(r.path) : (!since || Date.parse(r.updated) > since)) { try { docs[r.path] = JSON.parse(r.body); } catch { } } }
       return out({ now: Date.now(), area: lang, paths, docs });
     }
     if (name === 'get_profile') {
@@ -1419,6 +1467,7 @@ async function mcpServer(request, env, token, ctx) {
     if (!PATH_OK.test(path)) return bad('That is not a valid document path. It must start with the area, like med/state.');
     if (name === 'save_doc') {
       if (!a.body || typeof a.body !== 'object' || Array.isArray(a.body)) return bad('The document must be an object.');
+      if (path === 'med/sayop') { const r = await applySayOps(env, uid, a.body.ops); syncSoon(env, ctx, uid); return out(r); }
       const body = JSON.stringify(await guardSays(env, uid, path, a.body)); if (body.length > MAX_DOC) return bad('That document is too large to save.');
       await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(uid, path, body, new Date().toISOString()).run();
       syncSoon(env, ctx, uid);
