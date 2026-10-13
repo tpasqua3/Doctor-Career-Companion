@@ -561,7 +561,7 @@ const sugTaken=()=>{const no=new Set(),add=w=>{w=sayClean(w).toLowerCase();if(!w
 function sugFill(){sugLoad();const no=sugTaken();SUG.now=SUG.now.filter(w=>!no.has(w));SUG.now.forEach(w=>no.add(w));
   const take=(src,k)=>{const f=[...src].filter(w=>!no.has(w)&&!SUG.skip.has(w));while(k-->0&&f.length&&SUG.now.length<5){const w=f.splice(Math.floor(Math.random()*f.length),1)[0];SUG.now.push(w);no.add(w)}};
   const sec=sugSec(),round=sec?()=>take(sugBy(sec),5):()=>{take(SUG.d,2);take(SUG.m,1);take(SAYP0,5);take(SUG.d,5);take(SUG.m,5)};round();if(SUG.now.length<5&&SUG.skip.size){SUG.skip.clear();round()}}
-function sugHtml(){sugFill();const sec=sugSec();return `<div class="sugbox" id="sugbox"><div class="row between" style="flex-wrap:wrap;gap:6px"><span class="eyebrow">Word tester · likely misses</span><select data-sugsec aria-label="Discipline to draw words from" style="width:auto;max-width:100%;padding:5px 8px;font-size:.85rem"><option value="">All disciplines</option>${sugSecs().map(x=>`<option value="${x.id}"${x.id===sec?' selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+function sugHtml(){sugFill();const sec=sugSec();return `<div class="sugbox" id="sugbox"><div class="row between" style="flex-wrap:wrap;gap:6px"><span class="eyebrow">Word tester · likely misses</span>${sayAISelect()}<select data-sugsec aria-label="Discipline to draw words from" style="width:auto;max-width:100%;padding:5px 8px;font-size:.85rem"><option value="">All disciplines</option>${sugSecs().map(x=>`<option value="${x.id}"${x.id===sec?' selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
    <div class="sug">${SUG.now.map(w=>`<button data-act="sugtap" data-w="${esc(w)}">${esc(w)}</button>`).join('')||(sec&&SUG.busy?`<span class="small muted">Looking for words in ${esc(SEC[sec].name)}…</span>`:'<span class="small muted">No more words to suggest just now.</span>')}<button class="sugre" data-act="sugmore" aria-label="Show five other words" title="Show five other words"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg></button></div>
    <span class="tiny muted">Tap a word to hear the Cloudflare voice say it; it goes to the top of the table with a suggested respelling. Words come from your lessons, library and across internal medicine; pick a discipline to draw only from its lessons, cards, questions and reference chapters. The arrow shows five others.</span></div>`}
 function drawSug(){const el=$('#sugbox');if(el)el.outerHTML=sugHtml()}
@@ -579,7 +579,7 @@ async function sugTop(){sugLoad();const no=sugTaken(),sec=sugSec(),left=(sec?[..
   if(sec)drawSug();
   try{const ts=sec?SEC[sec].t:Object.values(TOP).filter(t=>t.sec.track.id==='im'),t=ts[Math.floor(Math.random()*ts.length)];let found=[];
     if(LIB()&&st.prefs.lib&&st.libx){const had=new Set(sugBy(t.sec.id));SUG.tag=t.sec.id;try{await libRef(t)}catch(e){}SUG.tag='';found=[...sugBy(t.sec.id)].filter(w=>!had.has(w)&&!no.has(w)).slice(0,120)}
-    const r=await askJ('notes',`You are helping test a text-to-speech voice that reads medical lessons aloud and stumbles on medical vocabulary. Area: ${t.sec.name}, around the topic "${t.name}".${found.length?` These terms were found in the reference chapter for it: ${found.join(', ')}.`:''} List 40 terms that such a voice is most likely to mispronounce: generic drug names first, then diseases and syndromes, organisms, eponyms, anatomy, procedures and laboratory tests.${found.length?' Take the likeliest from the chapter terms and add others from the same area.':''} Real terms only, spelled correctly, one to three words each, written out in full with no abbreviations. Leave out everyday words and all of these, which are already covered: ${[...no].slice(-250).join(', ')||'none'}. Reply with JSON only, in this shape: {"words":["term","term"]}`,'quick');
+    const r=await askJ('notes',`You are helping test a text-to-speech voice that reads medical lessons aloud and stumbles on medical vocabulary. Area: ${t.sec.name}, around the topic "${t.name}".${found.length?` These terms were found in the reference chapter for it: ${found.join(', ')}.`:''} List 40 terms that such a voice is most likely to mispronounce: generic drug names first, then diseases and syndromes, organisms, eponyms, anatomy, procedures and laboratory tests.${found.length?' Take the likeliest from the chapter terms and add others from the same area.':''} Real terms only, spelled correctly, one to three words each, written out in full with no abbreviations. Leave out everyday words and all of these, which are already covered: ${[...no].slice(-250).join(', ')||'none'}. Reply with JSON only, in this shape: {"words":["term","term"]}`,'quick',sayAI());
     A(r&&r.words).map(w=>sayClean(w).toLowerCase().replace(/[^a-z' -]/g,'')).filter(w=>/^[a-z][a-z' -]{3,39}$/.test(w)&&w.split(' ').length<=3&&!SAYSTOP.test(w)).slice(0,60).forEach(w=>{SUG.d.add(w);if(sugBy(t.sec.id).size<1500)sugBy(t.sec.id).add(w)});sugKeep()}
   catch(e){}SUG.tag='';SUG.busy=false;if(SUG.now.length<5&&SP.open){sugFill();drawSug();guessAhead()}}
 function saysHtml(){const L=st.says||[],todo=L.filter(x=>sayClean(x.w)&&!sayClean(x.s)).length,on=L.filter(x=>x.on!==false&&sayClean(x.s)).length,sg=L.filter(sayPending).length,off=L.filter(x=>x.on===false&&sayClean(x.s)).length-sg,G=guessStats();
@@ -673,8 +673,8 @@ async function guessAsk(words){words=[...new Set(words.map(w=>sayClean(w).toLowe
   /* Housekeeping first, as before. Its services (Gemini, DeepSeek) run out of daily allowance, so when it gives nothing the same
      question goes as an ordinary chat request, which the Cloudflare AI may answer; the site's AI order itself is not changed. */
   const take=r=>{let n=0;A(r&&(r.says||r.words||r.respellings)).concat(Array.isArray(r)?r:[]).forEach(y=>{const w=sayClean(y&&(y.w||y.word)).toLowerCase(),v=sayClean(y&&(y.s||y.respelling||y.say)).toLowerCase().replace(/[^a-z' -]/g,'').replace(/\s+/g,' ').trim().slice(0,120);if(w&&v&&words.includes(w)&&!GU.have.has(w)){GU.have.set(w,v);n++}});return n};
-  const q=guessPrompt(words);let got=0;try{got=take(await askJ('notes',q,'quick'))}catch(e){}
-  if(got<words.length){try{take(await askJ('chat',q,'quick'))}catch(e){}}
+  const q=guessPrompt(words),pref=sayAI();let got=0;try{got=take(await askJ('notes',q,'quick',pref))}catch(e){}
+  if(got<words.length){try{take(await askJ('chat',q,'quick',pref))}catch(e){}}
   words.forEach(w=>{GU.wait.delete(w);if(!GU.have.has(w))GU.fail.add(w)});guessPut()}
 /* Put arrived suggestions into rows that still have no respelling. Rows on screen are updated in place, so typing is not disturbed. */
 function guessPut(){let any=false;(st.says||[]).forEach((x,i)=>{const w=sayClean(x.w).toLowerCase();if(sayClean(x.s)||!GU.have.has(w))return;x.g=GU.have.get(w);x.s=x.g;x.on=false;any=true;
@@ -1293,8 +1293,8 @@ const WROTE={};
    cards with how many the review removed. It is what a promotion or a demotion in the hierarchy should be judged on. */
 function tally(by,kind,x){if(!by||!x||(kind==='les'&&!x.done))return;const W=st.writers||(st.writers={}),w=W[by]||(W[by]={les:0,fix:0,flag:0,q:0,qd:0,c:0,cd:0});
   if(kind==='les'){w.les++;w.fix+=x.fixed||0;w.flag+=x.flagged||0}else{w[kind]+=x.n||0;w[kind+'d']+=x.dropped||0}saveState()}
-async function askJ(job,input,tier){if(!SAMPLE)throw{code:'unavailable'};const m=/^review:(\w+)$/.exec(job),o={modelTier:tier||'default',cache:false};
-  if(SAMPLE.aware){o.job=m?'review':job;if(m&&WROTE[m[1]])o.avoid=WROTE[m[1]]}const r=await SAMPLE.json(input,o);return r&&typeof r==='object'?clone(r):r}
+async function askJ(job,input,tier,prefer){if(!SAMPLE)throw{code:'unavailable'};const m=/^review:(\w+)$/.exec(job),o={modelTier:tier||'default',cache:false};
+  if(SAMPLE.aware){o.job=m?'review':job;if(m&&WROTE[m[1]])o.avoid=WROTE[m[1]];if(prefer)o.prefer=prefer}const r=await SAMPLE.json(input,o);return r&&typeof r==='object'?clone(r):r}
 /* `account` lets the answering service look up this account's own record and the library on the server while it writes (the Ask companion). */
 async function askText(input,tier,account){if(!SAMPLE)throw{code:'unavailable'};return (await SAMPLE(input,Object.assign({modelTier:tier||'default',cache:false},account&&SAMPLE.aware?{account:true,chat:true}:{}))).text}
 /* Which AI answers. On the website the server has several services (Gemini, Claude, DeepSeek, the Cloudflare stack) and the choice is sent with every
@@ -1327,10 +1327,10 @@ const webSend=async b=>{const r=await fetch('/api/ai',{method:'POST',headers:{'C
   if(r.status===401){location.replace('/account.html?next=1');throw{code:'session_expired'}}let j={};try{j=await r.json()}catch(e){}if(!r.ok)throw{code:r.status===429?'rate_limited':'upstream_error',message:j.error};return j};
 const mcpSend=async b=>{const r=await MCP.callTool(CONN,'ask_ai',b,{cache:false}),j=r&&(r.payload??r.structuredContent);if(!j||j.error||typeof j.text!=='string')throw{code:(j&&j.code)||'upstream_error',message:j&&j.error};return j};
 /* Inside Claude: Claude itself unless another service is picked, and Claude again if that service cannot answer. Pictures always go to Claude. */
-function routed(native,remote){const own=opt=>{const o=Object.assign({},opt);delete o.account;delete o.chat;delete o.job;delete o.avoid;return o},jobOf=opt=>(opt&&opt.job)||(opt&&opt.chat?'chat':'lesson');
+function routed(native,remote){const own=opt=>{const o=Object.assign({},opt);delete o.account;delete o.chat;delete o.job;delete o.avoid;delete o.prefer;return o},jobOf=opt=>(opt&&opt.job)||(opt&&opt.chat?'chat':'lesson');
   /* Does this request leave Claude for one of the website's services? Chat follows the chat choice. A review goes to whichever
      lead did not write the thing. Assistant jobs go to an assistant when one is there. Everything else follows "Teaching by". */
-  const far=opt=>{if(opt&&opt.images)return false;const job=jobOf(opt),others=AIS.filter(a=>a.id!=='claude');
+  const far=opt=>{if(opt&&opt.images)return false;if(opt&&opt.prefer==='claude')return false;const job=jobOf(opt),others=AIS.filter(a=>a.id!=='claude');
     if(job==='chat')return aiFor(true)!=='claude';
     if(job==='review'&&opt.avoid)return opt.avoid==='claude'&&others.some(a=>rank(a)===2);
     const J=HIER&&HIER.jobs.find(x=>x.id===job);if(J&&J.need==='assistant'&&others.some(a=>a.tier==='assistant'))return true;
@@ -1820,6 +1820,11 @@ const GTIERS=[['','Automatic (best available)'],['chirp','Google Chirp 3 HD'],['
 const WVOICES=[['A','man'],['B','man'],['C','woman'],['D','man'],['E','woman'],['F','woman'],['G','woman'],['H','woman'],['I','man'],['J','man']];
 const ENGINE={'google-chirp':'Google Chirp 3 HD','google-neural2':'Google Neural2','google-wavenet':'Google WaveNet',cloudflare:'Cloudflare MeloTTS',offline:'Offline voice',device:'Device voice'};
 const engineOf=new Map();
+/* Who writes pronunciation suggestions (the word tester's words and the suggested respellings). Automatic follows the site's order for
+   housekeeping jobs, which starts with the free services (Gemini and the like). Inside Claude it can be Claude itself, which then
+   counts toward the listener's own Claude plan. The choice is kept in the record; where Claude is not available it means Automatic. */
+const sayAI=()=>st.prefs.sayai==='claude'&&NATIVE?'claude':'';
+function sayAISelect(){if(!NATIVE)return'';return `<label class="tiny muted" style="display:flex;align-items:center;gap:6px">Suggestions by <select data-sayai aria-label="Which AI suggests words and respellings" style="width:auto;padding:5px 8px;font-size:.85rem"><option value="">Automatic (free services first)</option><option value="claude"${sayAI()?' selected':''}>Claude (your plan)</option></select></label>`}
 function gvoiceSelect(){const own=SITE.owner,tiers=own?GTIERS:GTIERS.filter(v=>!v[0]||v[0]==='wavenet'||v[0]==='melo'),
   wv=WVOICES.map(v=>['Wavenet-'+v[0],'WaveNet '+v[0]+' · '+v[1]]),gv=own?GVOICES.map(v=>[v[0],v[0]+' · '+v[1]]).concat(wv):wv;
   let tier=st.prefs.gtier||'',want=st.prefs.gvoice||'';if(!tiers.some(v=>v[0]===tier))tier='';if(!gv.some(v=>v[0]===want))want='';
@@ -2023,6 +2028,7 @@ document.addEventListener('input',e=>{const t=e.target;if(!P.flag||!t||!t.closes
   if(t.id==='flag-op'){$('#flagpop').style.setProperty('--fa',t.value+'%');try{localStorage.setItem('dcc:flagop',t.value)}catch(x){}return}
   if(t.dataset&&t.dataset.ff)flagType(t)});
 document.addEventListener('change',e=>{if(e.target.dataset&&'kvoice' in e.target.dataset){try{localStorage.setItem('dcc:kvoice',e.target.value)}catch(x){}if(KOK.state==='ready'&&!P.on){prime();P.load([{say:'This is the voice that will read your lessons.'}],'Voice sample','')}}});
+document.addEventListener('change',e=>{if(e.target.dataset&&'sayai' in e.target.dataset){st.prefs.sayai=e.target.value;saveState();toast(e.target.value?'Claude writes the suggestions from now on.':'Suggestions follow the site\'s order again.');return}});
 document.addEventListener('change',e=>{if(e.target.dataset&&'sugsec' in e.target.dataset){st.prefs.sugsec=e.target.value;saveState();SUG.now=[];SUG.skip.clear();SUG.at=0;drawSug();guessAhead();sugTop();return}});
 document.addEventListener('change',e=>{if(e.target.dataset&&('gvoice' in e.target.dataset||'gtier' in e.target.dataset)){st.prefs['gvoice' in e.target.dataset?'gvoice':'gtier']=e.target.value;saveState();clips.forEach(p=>p.then(u=>URL.revokeObjectURL(u),()=>{}));clips.clear();toast('Voice changed. It applies from the next passage.');return}
   if(e.target.dataset&&'dvoice' in e.target.dataset){try{localStorage.setItem('dcc:dvoice',e.target.value)}catch(x){}pickVoice();if(TTS&&!P.on){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('This is the voice that will read your lessons.');if(VOICE){u.voice=VOICE;u.lang=VOICE.lang}u.rate=st.prefs.rate;speechSynthesis.speak(u)}catch(x){}}}});
