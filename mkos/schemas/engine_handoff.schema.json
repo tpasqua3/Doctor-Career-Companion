@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/engine_handoff.schema.json",
+  "title": "Engine handoff",
+  "description": "ENGINE HANDOFF CONTRACT: no engine may consume undocumented output.",
+  "type": "object",
+  "properties": {
+    "engine": {
+      "type": "string"
+    },
+    "input_snapshot": {},
+    "output_snapshot": {},
+    "timestamp": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "confidence_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "validation_status": {
+      "type": "string"
+    },
+    "provenance_bundle": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "audit_record": {
+      "type": "object"
+    },
+    "governance_status": {
+      "enum": [
+        "draft",
+        "pending_validation",
+        "validated",
+        "approved",
+        "rejected",
+        "stopped"
+      ]
+    }
+  },
+  "required": [
+    "engine",
+    "input_snapshot",
+    "output_snapshot",
+    "timestamp",
+    "version",
+    "confidence_score",
+    "validation_status",
+    "provenance_bundle",
+    "audit_record",
+    "governance_status"
+  ]
+}

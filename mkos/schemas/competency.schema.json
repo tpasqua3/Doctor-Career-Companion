@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/competency.schema.json",
+  "title": "Competency",
+  "description": "COMPETENCY MODEL.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "facets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "difficulty_levels": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    }
+  },
+  "required": [
+    "id",
+    "name"
+  ]
+}

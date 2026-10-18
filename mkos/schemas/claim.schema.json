@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/claim.schema.json",
+  "title": "Claim",
+  "description": "A single stated fact (paraphrased) with provenance \u2014 the leaf of the PROVENANCE MODEL; facet items are claims attached to a concept facet.",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "statement": {
+      "type": "string",
+      "minLength": 5
+    },
+    "concept": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "Concept"
+    },
+    "facet_group": {
+      "type": "string"
+    },
+    "facet_key": {
+      "type": "string"
+    },
+    "cites": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "statement"
+  ]
+}

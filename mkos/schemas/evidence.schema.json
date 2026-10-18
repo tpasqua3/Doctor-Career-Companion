@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/evidence.schema.json",
+  "title": "Evidence object",
+  "description": "EVIDENCE FACETS / EVIDENCE CONFIDENCE.",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "evidence_kind": {
+      "enum": [
+        "landmark_trial",
+        "supporting_trial",
+        "negative_trial",
+        "meta_analysis",
+        "systematic_review",
+        "observational",
+        "registry",
+        "expert_opinion"
+      ]
+    },
+    "acronym": {
+      "type": "string"
+    },
+    "design": {
+      "type": "string"
+    },
+    "population": {
+      "type": "string"
+    },
+    "intervention": {
+      "type": "string"
+    },
+    "comparator": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "result": {
+      "type": "string"
+    },
+    "year": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "evidence_level": {
+      "type": "string"
+    },
+    "quality": {
+      "type": "object",
+      "properties": {
+        "strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "consistency": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "currency": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "generalizability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "external_validity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "internal_validity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "overall": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Concept"
+    }
+  },
+  "required": [
+    "evidence_kind"
+  ]
+}

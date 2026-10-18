@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/guideline.schema.json",
+  "title": "Guideline (family)",
+  "description": "A guideline as a concept: the family whose editions are Sources (Supersession Model).",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "responsible_orgs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "topic_key": {
+      "type": "string"
+    },
+    "editions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Source"
+    },
+    "current_edition": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "Source"
+    },
+    "focused_updates": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Source"
+    },
+    "covers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Concept"
+    }
+  },
+  "required": [
+    "responsible_orgs",
+    "topic_key",
+    "editions"
+  ]
+}

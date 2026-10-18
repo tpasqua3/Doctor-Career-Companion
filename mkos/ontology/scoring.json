@@ -1,0 +1,232 @@
+{
+  "id": "framework.scoring",
+  "type": "Framework",
+  "name": "Scoring, confidence and freshness",
+  "version": "1.0.0",
+  "status": "current",
+  "created_date": "2026-10-17",
+  "updated_date": "2026-10-17",
+  "supersedes": null,
+  "replaced_by": null,
+  "source_attribution": [
+    "MKOS V3 Canonical Architecture Specification + Knowledge Currency Principle + Universal Confidence, Uncertainty and Trust Model (Medical Training App Push, week of 10/17/2026)",
+    "MKOS Implementation Directive (10/17/2026)"
+  ],
+  "change_log": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-17",
+      "summary": "Initial default numbers for the six knowledge scores and the confidence rules."
+    }
+  ],
+  "note": "All scores are 0-100. These are defaults; PUT /api/mkos/admin/settings {path, value} overrides any number centrally without a code change.",
+  "knowledge_scores": [
+    "authority_score",
+    "evidence_score",
+    "citation_score",
+    "freshness_score",
+    "supersession_score",
+    "trust_score"
+  ],
+  "authority": {
+    "from": "source_classes.base_authority of the best supporting source",
+    "society_bonus": {
+      "ACC/AHA": 0,
+      "USPSTF": 0,
+      "note": "no per-society favoritism by default"
+    }
+  },
+  "freshness": {
+    "method": "exponential half-life from the source's publication date; a source with no newer edition never drops below floor_if_current",
+    "half_life_years": {
+      "default": 6,
+      "Guidelines": 5,
+      "MKSAP": 3,
+      "Board Blueprints": 2,
+      "Textbooks": 8,
+      "Review Articles": 4,
+      "Question Banks": 3,
+      "stable_basic_science": 25
+    },
+    "floor_if_current": 55,
+    "superseded_cap": 20,
+    "retired_cap": 5
+  },
+  "evidence_crosswalk": {
+    "ACC_AHA_LOE": {
+      "A": "A",
+      "B-R": "B-R",
+      "B-NR": "B-NR",
+      "C-LD": "C-LD",
+      "C-EO": "C-EO",
+      "B": "B-R",
+      "C": "C-EO"
+    },
+    "GRADE_certainty": {
+      "high": "A",
+      "moderate": "B-R",
+      "low": "C-LD",
+      "very low": "C-EO"
+    },
+    "USPSTF_grade_certainty": {
+      "A": "A",
+      "B": "B-R",
+      "C": "C-LD",
+      "D": "B-R",
+      "I": "C-EO"
+    },
+    "KDIGO": {
+      "1A": "A",
+      "2A": "A",
+      "1B": "B-R",
+      "2B": "B-R",
+      "1C": "C-LD",
+      "2C": "C-LD",
+      "1D": "C-EO",
+      "2D": "C-EO",
+      "Not Graded": "C-EO"
+    },
+    "GOLD_GINA_evidence": {
+      "A": "A",
+      "B": "B-R",
+      "C": "B-NR",
+      "D": "C-EO"
+    },
+    "unstated": "C-EO"
+  },
+  "recommendation_strength_crosswalk": {
+    "ACC_AHA_COR": {
+      "1": "strong",
+      "2a": "moderate",
+      "2b": "weak",
+      "3: No Benefit": "against_moderate",
+      "3: Harm": "against_strong"
+    },
+    "GRADE": {
+      "strong": "strong",
+      "conditional": "weak",
+      "weak": "weak"
+    },
+    "USPSTF": {
+      "A": "strong",
+      "B": "moderate",
+      "C": "weak",
+      "D": "against_moderate",
+      "I": "insufficient"
+    },
+    "KDIGO": {
+      "1": "strong",
+      "2": "weak"
+    }
+  },
+  "citation_score": {
+    "has_doi": 40,
+    "has_page_or_section_locator": 30,
+    "has_source_file": 20,
+    "citation_verified_against_pdf": 10
+  },
+  "supersession_score": {
+    "current": 100,
+    "modified": 80,
+    "superseded": 15,
+    "retired": 0
+  },
+  "trust_weights": {
+    "authority_score": 0.3,
+    "evidence_score": 0.2,
+    "citation_score": 0.15,
+    "freshness_score": 0.2,
+    "supersession_score": 0.15
+  },
+  "confidence_levels": [
+    {
+      "min": 90,
+      "level": "verified"
+    },
+    {
+      "min": 75,
+      "level": "high"
+    },
+    {
+      "min": 50,
+      "level": "medium"
+    },
+    {
+      "min": 0,
+      "level": "low"
+    }
+  ],
+  "ai_extraction_cap": 80,
+  "validated_bonus": 10,
+  "confidence_types": [
+    "authority",
+    "evidence",
+    "freshness",
+    "citation",
+    "validation",
+    "governance",
+    "trust",
+    "mastery",
+    "competency",
+    "retention",
+    "prediction",
+    "routing",
+    "generation"
+  ],
+  "propagation": {
+    "rule": "Confidence may decrease downstream. Confidence may not increase downstream without new evidence.",
+    "chain": [
+      "mastery",
+      "competency",
+      "recommendation",
+      "curriculum"
+    ],
+    "combine": "min"
+  },
+  "decay": {
+    "triggers": [
+      "Data Becomes Stale",
+      "Evidence Is Superseded",
+      "Guidelines Change",
+      "Learner Activity Declines",
+      "Signals Become Sparse"
+    ],
+    "knowledge_on_supersession": 0.25,
+    "learner_half_life_days": 45,
+    "sparse_signal_threshold": 3
+  },
+  "recovery": [
+    "New Evidence",
+    "New Validation",
+    "New Learner Interactions",
+    "New Assessments",
+    "New Guideline Verification",
+    "New Governance Review"
+  ],
+  "low_confidence": {
+    "threshold": 50,
+    "actions": [
+      "Reduce Priority",
+      "Decrease Recommendation Strength",
+      "Request Additional Data",
+      "Request Validation",
+      "Escalate To Governance",
+      "Increase Monitoring"
+    ]
+  },
+  "learner": {
+    "mastery_prior": 50,
+    "prior_weight": 2,
+    "confidence_saturation_n": 30,
+    "calibration_confident_rating": 4,
+    "misconception_trigger": "incorrect with self-rating >= calibration_confident_rating",
+    "curriculum_priority_weights": {
+      "knowledge_deficit": 0.3,
+      "retention_risk": 0.2,
+      "board_relevance": 0.25,
+      "competency_importance": 0.1,
+      "low_confidence": 0.15
+    }
+  },
+  "high_impact_requires_confidence": 60
+}

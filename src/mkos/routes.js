@@ -1,0 +1,70 @@
+// MKOS API (/api/mkos/*) and connector tools. One implementation (mkosCall) serves both, so the website and the app inside Claude
+// see the same thing. Reading knowledge is open to every signed-in account (it is central); learner state is the caller's own only;
+// administration (reviews, edits, settings, scans, cutover) is the owner's alone.
+import { mkInit, J, nowIso, setSetting, getSetting, audit, resetOverrides, fwGet } from './db.js';
+import { getObject, getObjects, query, history, putObject, setStatus } from './kb.js';
+import { neighbors } from './graph.js';
+import { conceptContext, routeRequest, curriculumPlan } from './adaptive.js';
+import { learnerSummary } from './learner.js';
+import { review, graphValidation, status, stopChecks } from './governance.js';
+import { queue } from './ingest.js';
+import { buildCompatRegistry, validateCutover, retireLegacy, rollbackCutover } from './cutover.js';
+import { mkTick } from './tick.js';
+import { FRAMEWORK, FRAMEWORK_HASH } from './framework.js';
+
+const OPS = {
+  // ---- open to every account
+  status: { owner: false, run: async (env, u, a, x) => x.owner ? { framework_hash: FRAMEWORK_HASH, ...(await status(env)) } : { framework_hash: FRAMEWORK_HASH, objects: (await status(env)).objects } },
+  search: { owner: false, run: async (env, u, a) => ({ results: (await query(env, { q: a.q, type: a.type, types: a.types, specialty: a.specialty, include_history: !!a.include_history, limit: Math.min(100, Number(a.limit) || 25), offset: Number(a.offset) || 0 }))
+    .map((o) => ({ id: o.id, type: o.type, name: o.name, status: o.status, governance: o.governance_status, trust: o.scores?.trust_score, confidence: o.confidence?.confidence_score, specialty: o.specialty, version: o.version })) }) },
+  object: { owner: false, run: async (env, u, a) => { const o = await getObject(env, String(a.id || '')); if (!o) return { error: 'not found' };
+    if (o.store?.user_scope === 'user' && o.data?.user && !a._owner && !String(o.id).includes('u' + String(u.id).replace(/[^a-z0-9]/gi, '').slice(0, 10).toLowerCase())) return { error: 'not found' };
+    return { object: o, history: a.history ? await history(env, o.id) : undefined, neighbors: a.neighbors ? await neighbors(env, o.id, { include_history: !!a.include_history, limit: 200 }) : undefined, stop_the_line: await stopChecks(env, o) }; } },
+  context: { owner: false, run: async (env, u, a) => (await conceptContext(env, String(a.id || ''), { include_history: !!a.include_history })) || { error: 'not found' } },
+  route: { owner: false, run: async (env, u, a) => routeRequest(env, u.id, String(a.q || ''), { include_history: !!a.include_history }) },
+  learner: { owner: false, run: async (env, u, a) => ({ states: await learnerSummary(env, u.id, { level: a.level || null, limit: Math.min(200, Number(a.limit) || 50) }) }) },
+  plan: { owner: false, run: async (env, u, a) => curriculumPlan(env, u.id, { limit: Math.min(30, Number(a.limit) || 12), exam: a.exam === 'cert' ? 'cert' : 'lka' }) },
+  refresh_me: { owner: false, run: async (env, u) => { await queue(env, 'assets', u.id, {}, 4); return { queued: true }; } },
+  // ---- owner
+  events: { owner: true, run: async (env, u, a) => ({ events: (await env.DB.prepare('SELECT * FROM mk_events ORDER BY created DESC LIMIT ?').bind(Math.min(200, Number(a.limit) || 50)).all()).results.map((r) => ({ ...r, detail: J(r.detail), impact: J(r.impact) })) }) },
+  jobs: { owner: true, run: async (env, u, a) => ({ jobs: (await env.DB.prepare("SELECT id, kind, subject, state, tries, priority, note, updated FROM mk_jobs WHERE state != 'done' ORDER BY priority, id LIMIT ?").bind(Math.min(300, Number(a.limit) || 100)).all()).results }) },
+  audit: { owner: true, run: async (env, u, a) => ({ audit: (await env.DB.prepare(a.id ? 'SELECT * FROM mk_audit WHERE object_id = ? ORDER BY id DESC LIMIT 100' : 'SELECT * FROM mk_audit ORDER BY id DESC LIMIT 100').bind(...(a.id ? [a.id] : [])).all()).results }) },
+  review: { owner: true, run: async (env, u, a) => review(env, String(a.id || ''), a.result, { actor: 'owner:' + u.email, note: String(a.note || '') }) },
+  edit: { owner: true, run: async (env, u, a) => { const o = a.object; if (!o || !o.id) return { error: 'object with id required' }; const prev = await getObject(env, o.id);
+    const next = { ...(prev || {}), ...o, provenance: [...(prev?.provenance || []), { source_id: (o.source_id || prev?.source_id || 'src.owner'), method: 'owner_edit', at: nowIso(), agent: u.email }] };
+    return putObject(env, next, { actor: 'owner:' + u.email, summary: String(a.summary || 'owner edit'), part: a.part || 'minor', strict: true }); } },
+  set_status: { owner: true, run: async (env, u, a) => setStatus(env, String(a.id || ''), a.status, { actor: 'owner:' + u.email, replaced_by: a.replaced_by || null, reason: String(a.reason || '') }) },
+  settings: { owner: true, run: async (env, u, a) => { if (!a.path) return { error: 'path required' }; const before = fwGet(String(a.path)); await setSetting(env, 'fw:' + a.path, a.value == null ? null : JSON.stringify(a.value)); resetOverrides(); await audit(env, 'owner:' + u.email, 'setting', 'fw:' + a.path, JSON.stringify(before), JSON.stringify(a.value)); return { ok: true, path: a.path, default: before, value: a.value }; } },
+  rescan: { owner: true, run: async (env) => { await setSetting(env, 'scan', null); await setSetting(env, 'scan_last_complete', null); return { ok: true, note: 'A full library sweep starts on the next run.' }; } },
+  requeue: { owner: true, run: async (env, u, a) => { await env.DB.prepare("UPDATE mk_jobs SET state = 'queued', tries = 0, not_before = 0 WHERE state = 'failed' AND (? = '' OR kind = ?)").bind(a.kind || '', a.kind || '').run(); return { ok: true }; } },
+  tick: { owner: true, run: async (env, u, a, x) => mkTick(env, x.deps, x.roots) },
+  graph_validation: { owner: true, run: async (env) => graphValidation(env) },
+  compat_registry: { owner: true, run: async (env) => (await buildCompatRegistry(env)) || { error: 'legacy registry not imported yet' } },
+  cutover_validate: { owner: true, run: async (env, u, a, x) => validateCutover(env, x.deps, { learnerDocs: await x.deps.userDocs(u.id, ['med/libreg', 'med/les_', 'med/bank_', 'med/cards_']) }) },
+  cutover_retire: { owner: true, run: async (env, u, a, x) => retireLegacy(env, x.deps, { actor: 'owner:' + u.email, confirm: a.confirm === true }) },
+  cutover_rollback: { owner: true, run: async (env, u, a, x) => rollbackCutover(env, x.deps, { actor: 'owner:' + u.email }) },
+  framework: { owner: false, run: async () => ({ framework_hash: FRAMEWORK_HASH, versions: Object.fromEntries(Object.entries(FRAMEWORK.frameworks).map(([k, v]) => [k, v.version])), ontology: FRAMEWORK.frameworks.ontology }) },
+};
+
+// x: {owner: bool, deps, roots}
+export async function mkosCall(env, user, op, args, x) {
+  const d = OPS[op]; if (!d) return { status: 404, body: { error: 'Unknown MKOS operation.', ops: Object.keys(OPS) } };
+  if (d.owner && !x.owner) return { status: 403, body: { error: 'Only the site owner can do that.' } };
+  await mkInit(env);
+  const body = await d.run(env, user, { ...(args || {}), _owner: x.owner }, x);
+  return { status: body && body.error ? 400 : 200, body };
+}
+
+// /api/mkos/<op>[/<id>] — GET takes query parameters, POST/PUT take a JSON body.
+export async function mkosApi(request, env, url, user, body, x) {
+  const parts = url.pathname.replace(/^\/api\/mkos\/?/, '').split('/').filter(Boolean);
+  const op = parts[0] || 'status', args = { ...Object.fromEntries(url.searchParams), ...(body || {}) };
+  if (parts[1]) args.id = decodeURIComponent(parts.slice(1).join('/'));
+  for (const k of ['include_history', 'history', 'neighbors', 'confirm']) if (args[k] === 'true' || args[k] === '1') args[k] = true;
+  return mkosCall(env, user, op, args, x);
+}
+
+export const MKOS_TOOLS = [
+  { name: 'mkos', description: 'The Medical Knowledge Operating System (MKOS): the app\'s structured knowledge base (sources, guidelines, concepts, recommendations, evidence, blueprint, curriculum) and this physician\'s learner state. `op` is one of: status, search {q, type, specialty, include_history}, object {id, history, neighbors}, context {id} (the governed teaching package for a concept: current recommendations with citations, board mapping, facets), route {q} (answers from the lowest-cost authoritative layer and says which), learner {level}, plan (what to teach, review, assess, reinforce, remediate, prioritize, delay), refresh_me, framework. Owner only: events, jobs, audit {id}, review {id, result, note}, edit {object, summary}, set_status {id, status, replaced_by, reason}, settings {path, value}, rescan, requeue {kind}, tick, graph_validation, compat_registry, cutover_validate, cutover_retire {confirm}, cutover_rollback.',
+    inputSchema: { type: 'object', properties: { op: { type: 'string' }, args: { type: 'object' } }, required: ['op'] }, annotations: { readOnlyHint: false, destructiveHint: false } },
+];

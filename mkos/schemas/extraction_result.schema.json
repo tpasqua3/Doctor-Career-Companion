@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/extraction_result.schema.json",
+  "title": "Extraction contract",
+  "description": "What an extraction step (deterministic or AI) must return for one chunk of a source.",
+  "type": "object",
+  "properties": {
+    "source_id": {
+      "type": "string"
+    },
+    "chunk": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "concept_type": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "concept_type"
+        ]
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "statement": {
+            "type": "string"
+          },
+          "strength_original": {
+            "type": "string"
+          },
+          "loe_original": {
+            "type": "string"
+          },
+          "section": {
+            "type": "string"
+          },
+          "page": {},
+          "population": {
+            "type": "string"
+          },
+          "intervention": {
+            "type": "string"
+          },
+          "setting": {
+            "type": "string"
+          },
+          "concepts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "adult_scope": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "statement",
+          "concepts"
+        ]
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "concept": {
+            "type": "string"
+          },
+          "facet_group": {
+            "type": "string"
+          },
+          "facet_key": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          },
+          "page": {}
+        },
+        "required": [
+          "concept",
+          "facet_group",
+          "facet_key",
+          "statement"
+        ]
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "acronym": {
+            "type": "string"
+          },
+          "evidence_kind": {
+            "type": "string"
+          },
+          "design": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "concepts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "rel": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "rel",
+          "to"
+        ]
+      }
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "page": {},
+          "concepts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "source_id",
+    "concepts"
+  ]
+}

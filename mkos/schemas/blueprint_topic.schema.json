@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/blueprint_topic.schema.json",
+  "title": "Blueprint topic",
+  "description": "BOARD FACETS: ABIM / LKA mapping of one topic.",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "blueprint": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "Blueprint"
+    },
+    "code": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string"
+    },
+    "subcategory": {
+      "type": "string"
+    },
+    "importance": {
+      "type": "string"
+    },
+    "low_frequency": {
+      "type": "boolean"
+    },
+    "provisional": {
+      "type": "boolean"
+    },
+    "tier": {
+      "type": "string"
+    },
+    "est_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "priority_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 12
+    },
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Concept"
+    },
+    "domain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "Domain"
+    }
+  },
+  "required": [
+    "blueprint",
+    "code"
+  ]
+}

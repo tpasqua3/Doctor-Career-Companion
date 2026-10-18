@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/routing_decision.schema.json",
+  "title": "Routing decision",
+  "description": "ROUTING CONFIDENCE: Decision, Confidence, Alternative Paths, Reasoning, Supporting Signals.",
+  "type": "object",
+  "properties": {
+    "request": {
+      "type": "string"
+    },
+    "decision": {
+      "enum": [
+        "database",
+        "rules",
+        "graph",
+        "assets",
+        "ai"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reasoning": {
+      "type": "string"
+    },
+    "signals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "at": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "request",
+    "decision",
+    "confidence",
+    "reasoning"
+  ]
+}

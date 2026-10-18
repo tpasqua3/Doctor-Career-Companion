@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/change_event.schema.json",
+  "title": "Change event",
+  "description": "DYNAMIC KNOWLEDGE REFRESH ENGINE: Create Change Event -> Classify -> Determine Impact -> Queue -> Validate -> Republish.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "subject_id": {
+      "type": "string"
+    },
+    "detail": {
+      "type": "object"
+    },
+    "classification": {
+      "type": "object"
+    },
+    "stage": {
+      "enum": [
+        "created",
+        "classified",
+        "impact_determined",
+        "queued",
+        "validated",
+        "republished",
+        "failed"
+      ]
+    },
+    "impact": {
+      "type": "object",
+      "properties": {
+        "what_changed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "what_did_not_change": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "superseded": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recalculate": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "regenerate": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "review": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "republish": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "created": {
+      "type": "string"
+    },
+    "updated": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "subject_id",
+    "stage"
+  ]
+}

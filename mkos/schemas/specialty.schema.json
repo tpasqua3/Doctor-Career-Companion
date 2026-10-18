@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/specialty.schema.json",
+  "title": "Specialty / Domain",
+  "description": "KNOWLEDGE GRANULARITY MODEL levels 1-2.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "abim_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "folder_aliases": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "kind": {
+      "type": "string"
+    },
+    "parent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "exam_pct": {
+      "type": "object"
+    },
+    "status": {
+      "enum": [
+        "current",
+        "modified",
+        "superseded",
+        "retired"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "name"
+  ]
+}

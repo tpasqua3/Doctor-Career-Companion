@@ -1,0 +1,259 @@
+{
+  "id": "framework.source_classes",
+  "type": "Framework",
+  "name": "Source classes",
+  "version": "1.0.0",
+  "status": "current",
+  "created_date": "2026-10-17",
+  "updated_date": "2026-10-17",
+  "supersedes": null,
+  "replaced_by": null,
+  "source_attribution": [
+    "MKOS V3 Canonical Architecture Specification + Knowledge Currency Principle + Universal Confidence, Uncertainty and Trust Model (Medical Training App Push, week of 10/17/2026)",
+    "MKOS Implementation Directive (10/17/2026)"
+  ],
+  "change_log": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-17",
+      "summary": "Initial source classes mapped onto the spec's SOURCE TYPES and AUTHORITY HIERARCHY."
+    }
+  ],
+  "note": "Every Source is classified into one class. authority_tier names an entry of ontology.authority_hierarchy; base_authority is the authority_score before freshness/supersession adjustment. copyright governs storage: 'licensed_no_verbatim' content (MKSAP, textbooks, question banks) is indexed and abstracted only — no verbatim text, no question stems — and never leaves the private store (D1 + the owner's Drive), never the repository. 'publisher_copyright_paraphrase' sources are paraphrased and cited, never reproduced (owner rule 7 of the registry precedence rules).",
+  "extraction_depths": {
+    "recommendations": "Guideline metadata, every recommendation (paraphrased) with class/strength, level of evidence, population, intervention, section, page; concepts covered; supersession links.",
+    "claims": "Key claims (paraphrased) with provenance; concepts covered.",
+    "evidence": "Evidence object (design, population, intervention, outcome, result direction); concepts covered.",
+    "blueprint": "Blueprint topics, weights and task ratings (see blueprint registries).",
+    "index_and_facets": "Section/chapter index (locators), concepts covered, abstracted facet facts and board pearls in the app's own words.",
+    "index_only": "Section/chapter index (locators) and concepts covered.",
+    "none": "Registered for completeness; not mined."
+  },
+  "classes": [
+    {
+      "key": "clinical_practice_guideline",
+      "name": "Clinical practice guideline",
+      "spec_source_type": "Guidelines",
+      "authority_tier": "Current Guideline",
+      "base_authority": 98,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "recommendations"
+    },
+    {
+      "key": "guideline_executive_summary",
+      "name": "Guideline executive summary",
+      "spec_source_type": "Guidelines",
+      "authority_tier": "Current Guideline",
+      "base_authority": 96,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "recommendations"
+    },
+    {
+      "key": "guideline_recommendation_summary",
+      "name": "Guideline recommendation summary",
+      "spec_source_type": "Guidelines",
+      "authority_tier": "Current Guideline",
+      "base_authority": 95,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "recommendations"
+    },
+    {
+      "key": "preventive_recommendations",
+      "name": "Preventive services recommendation (e.g. USPSTF)",
+      "spec_source_type": "Guidelines",
+      "authority_tier": "Current Guideline",
+      "base_authority": 97,
+      "copyright": "public_domain_or_open",
+      "extraction_depth": "recommendations"
+    },
+    {
+      "key": "immunization_schedule",
+      "name": "Immunization schedule",
+      "spec_source_type": "Guidelines",
+      "authority_tier": "Current Guideline",
+      "base_authority": 97,
+      "copyright": "public_domain_or_open",
+      "extraction_depth": "recommendations"
+    },
+    {
+      "key": "clinical_practice_update",
+      "name": "Clinical practice update",
+      "spec_source_type": "Consensus Statements",
+      "authority_tier": "Society Statement",
+      "base_authority": 88,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "recommendations"
+    },
+    {
+      "key": "consensus_statement",
+      "name": "Consensus statement",
+      "spec_source_type": "Consensus Statements",
+      "authority_tier": "Society Statement",
+      "base_authority": 88,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "recommendations"
+    },
+    {
+      "key": "expert_consensus_document",
+      "name": "Expert consensus decision pathway",
+      "spec_source_type": "Consensus Statements",
+      "authority_tier": "Society Statement",
+      "base_authority": 87,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "recommendations"
+    },
+    {
+      "key": "scientific_statement",
+      "name": "Scientific statement",
+      "spec_source_type": "Consensus Statements",
+      "authority_tier": "Society Statement",
+      "base_authority": 85,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "claims"
+    },
+    {
+      "key": "strategy_report",
+      "name": "Strategy report (e.g. GOLD, GINA)",
+      "spec_source_type": "Guidelines",
+      "authority_tier": "Current Guideline",
+      "base_authority": 94,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "recommendations"
+    },
+    {
+      "key": "protocol",
+      "name": "Protocol / institutional policy",
+      "spec_source_type": "Protocols",
+      "authority_tier": "Supplemental Content",
+      "base_authority": 60,
+      "copyright": "internal",
+      "extraction_depth": "claims"
+    },
+    {
+      "key": "landmark_trial",
+      "name": "Clinical trial report",
+      "spec_source_type": "Review Articles",
+      "authority_tier": "Landmark Trial",
+      "base_authority": 80,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "evidence"
+    },
+    {
+      "key": "review_article",
+      "name": "Review article",
+      "spec_source_type": "Review Articles",
+      "authority_tier": "Review Article",
+      "base_authority": 65,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "claims"
+    },
+    {
+      "key": "research_article",
+      "name": "Research article / case report",
+      "spec_source_type": "Review Articles",
+      "authority_tier": "Review Article",
+      "base_authority": 55,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "evidence"
+    },
+    {
+      "key": "board_blueprint",
+      "name": "Board exam blueprint",
+      "spec_source_type": "Board Blueprints",
+      "authority_tier": "Board Blueprint",
+      "base_authority": 90,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "blueprint"
+    },
+    {
+      "key": "mksap",
+      "name": "MKSAP board review syllabus",
+      "spec_source_type": "MKSAP",
+      "authority_tier": "MKSAP",
+      "base_authority": 78,
+      "copyright": "licensed_no_verbatim",
+      "extraction_depth": "index_and_facets"
+    },
+    {
+      "key": "question_bank",
+      "name": "Question bank",
+      "spec_source_type": "Question Banks",
+      "authority_tier": "MKSAP",
+      "base_authority": 70,
+      "copyright": "licensed_no_verbatim",
+      "extraction_depth": "index_only"
+    },
+    {
+      "key": "textbook",
+      "name": "Textbook",
+      "spec_source_type": "Textbooks",
+      "authority_tier": "Textbook",
+      "base_authority": 70,
+      "copyright": "licensed_no_verbatim",
+      "extraction_depth": "index_only"
+    },
+    {
+      "key": "reference_text",
+      "name": "Reference text",
+      "spec_source_type": "Reference Texts",
+      "authority_tier": "Textbook",
+      "base_authority": 68,
+      "copyright": "licensed_no_verbatim",
+      "extraction_depth": "index_only"
+    },
+    {
+      "key": "dataset",
+      "name": "Dataset",
+      "spec_source_type": "Datasets",
+      "authority_tier": "Supporting Evidence",
+      "base_authority": 75,
+      "copyright": "varies",
+      "extraction_depth": "index_only"
+    },
+    {
+      "key": "decision_support_tool",
+      "name": "Decision support tool / calculator",
+      "spec_source_type": "Decision Support Tools",
+      "authority_tier": "Supporting Evidence",
+      "base_authority": 80,
+      "copyright": "varies",
+      "extraction_depth": "claims"
+    },
+    {
+      "key": "media_library",
+      "name": "Image, video or audio library",
+      "spec_source_type": "Image Libraries",
+      "authority_tier": "Supplemental Content",
+      "base_authority": 55,
+      "copyright": "varies",
+      "extraction_depth": "index_only"
+    },
+    {
+      "key": "front_matter",
+      "name": "Front matter / non-clinical page",
+      "spec_source_type": "Reference Texts",
+      "authority_tier": "Supplemental Content",
+      "base_authority": 10,
+      "copyright": "varies",
+      "extraction_depth": "none"
+    },
+    {
+      "key": "registry_or_backend",
+      "name": "App registry / backend file",
+      "spec_source_type": "Reference Databases",
+      "authority_tier": "Supplemental Content",
+      "base_authority": 0,
+      "copyright": "internal",
+      "extraction_depth": "none"
+    },
+    {
+      "key": "unclassified",
+      "name": "Unclassified document",
+      "spec_source_type": "Reference Texts",
+      "authority_tier": "Supplemental Content",
+      "base_authority": 40,
+      "copyright": "varies",
+      "extraction_depth": "index_only"
+    }
+  ]
+}

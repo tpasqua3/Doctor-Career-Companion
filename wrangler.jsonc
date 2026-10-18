@@ -22,7 +22,13 @@
     // "Medical Knowledge Database": read only, shared by every account the library is turned on for.
     "DRIVE_KNOWLEDGE_FOLDER": "1-ZjgpyMvbZ3xT1LtjJd_UjfM3ZOXWVCy",
     // "Doctor Companion App Account-level Data": one subfolder per account, written by this server.
-    "DRIVE_ACCOUNTS_FOLDER": "166xPHCup9T4mRoVU8efczTQ5pZgGlhYg"
+    "DRIVE_ACCOUNTS_FOLDER": "166xPHCup9T4mRoVU8efczTQ5pZgGlhYg",
+    // MKOS (src/mkos): its durable central record, "Doctor Companion App Central Registry Data" > "MKOS" (written by this server only).
+    "MKOS_DRIVE_FOLDER": "1pNhN1eDBzLwPU1g5rDtdbf98Gbk7yD1z",
+    // The legacy guideline registry's folder ("Registry and Sources") and its "Old versions" subfolder, used only by the gated cutover.
+    "MKOS_REGISTRY_FOLDER": "10q-amxvHZZvml0kvyW5rvnp_ukH3OL2u",
+    "MKOS_REGISTRY_OLD_FOLDER": "1Va7L9BfmdweU-ZRd4nI6rhHMyRYtq0CP"
+    // Optional variables: MKOS=off pauses the engine; MKOS_AI=off keeps extraction to rules only (no AI calls).
   }
   // Secrets, added in the Cloudflare dashboard as type Secret:
   //   RESEND_API_KEY                optional: turns on password reset by emailed link (MAIL_FROM sets the sender). Until it is set,

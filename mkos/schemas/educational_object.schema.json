@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/educational_object.schema.json",
+  "title": "Educational object",
+  "description": "EDUCATIONAL OBJECTS: Objectives, Assessments, Blueprints, Competencies, Lessons, Cases, Questions, Flashcards, Simulations, Curricula, Learning Paths.",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "edu_kind": {
+      "enum": [
+        "objective",
+        "assessment",
+        "lesson",
+        "case",
+        "question",
+        "flashcard",
+        "simulation",
+        "curriculum",
+        "learning_path"
+      ]
+    },
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Concept"
+    },
+    "competencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Competency"
+    },
+    "difficulty": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "knowledge_state_target": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "children": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "edu_kind"
+  ]
+}

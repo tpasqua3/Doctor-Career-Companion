@@ -10,6 +10,8 @@
 // The rule that keeps accounts apart: nothing a browser, the connector or an AI model sends ever names an account or an account
 // folder. The account comes from the login session (or the connector link) and the folder comes from that account's row in D1.
 // The AI models hold no Google credential at all; when one asks for a record, this server answers from the caller's rows only.
+import { mkosApi, mkosCall, MKOS_TOOLS } from './mkos/routes.js';
+import { mkTick } from './mkos/tick.js';
 const enc = new TextEncoder();
 const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
 const rand = n => hex(crypto.getRandomValues(new Uint8Array(n)));
@@ -832,18 +834,18 @@ async function gsend(env, method, path, body) {
 const mkdir = (env, name, parent, props) => gsend(env, 'POST', 'files', { name, mimeType: FOLDER, parents: [parent], ...(props ? { appProperties: props } : {}) });
 const trash = (env, id) => gsend(env, 'PATCH', 'files/' + id, { trashed: true }).catch(e => { if (!e.gone) throw e; });
 /* Write one file: a new one in `parent`, or new contents for the file `id`. */
-async function gupload(env, { id, name, parent, text, props }) {
-  const meta = id ? {} : { name, parents: [parent], mimeType: 'application/json', ...(props ? { appProperties: props } : {}) }, bytes = enc.encode(text);
+async function gupload(env, { id, name, parent, text, props, mime }) {
+  const type = mime || 'application/json', meta = id ? {} : { name, parents: [parent], mimeType: type, ...(props ? { appProperties: props } : {}) }, bytes = enc.encode(text);
   const base = 'https://www.googleapis.com/upload/drive/v3/files' + (id ? '/' + id : ''), auth = 'Bearer ' + await googleToken(env), method = id ? 'PATCH' : 'POST';
   let r;
   if (bytes.length < 4e6) {
     const b = 'dcc' + rand(12);
     r = await fetch(base + '?uploadType=multipart&supportsAllDrives=true&fields=id', { method, headers: { Authorization: auth, 'Content-Type': 'multipart/related; boundary=' + b },
-      body: `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n${text}\r\n--${b}--` });
+      body: `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: ${type}\r\n\r\n${text}\r\n--${b}--` });
   } else {
-    const start = await fetch(base + '?uploadType=resumable&supportsAllDrives=true&fields=id', { method, headers: { Authorization: auth, 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': 'application/json' }, body: JSON.stringify(meta) });
+    const start = await fetch(base + '?uploadType=resumable&supportsAllDrives=true&fields=id', { method, headers: { Authorization: auth, 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': type }, body: JSON.stringify(meta) });
     const to = start.headers.get('Location'); if (!start.ok || !to) { const e = gfail(start, await start.json().catch(() => ({}))); e.gone = start.status === 404; throw e; }
-    r = await fetch(to, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: bytes });
+    r = await fetch(to, { method: 'PUT', headers: { 'Content-Type': type }, body: bytes });
   }
   const j = await r.json().catch(() => ({})); if (!r.ok || !j.id) { const e = gfail(r, j); e.gone = r.status === 404; throw e; }
   return j.id;
@@ -912,13 +914,14 @@ async function storage(env, user) {
 }
 /* The timer: accounts with records waiting, then accounts due a backup. */
 async function sweep(env) {
-  await init(env); await driveState(env); if (!storeOn(env)) return;
+  await init(env); await driveState(env); if (!storeOn(env)) return 0;
   const B = { n: 34 }, ids = new Set();
   (await env.DB.prepare('SELECT DISTINCT d.user_id AS id ' + DIRTY + ' LIMIT 4').all()).results.forEach(r => ids.add(r.id));
   (await env.DB.prepare('SELECT u.id FROM users u LEFT JOIN drive_accounts a ON a.user_id = u.id WHERE a.profile IS NULL LIMIT 3').all()).results.forEach(r => ids.add(r.id));
   (await env.DB.prepare("SELECT DISTINCT x.user_id AS id FROM drive_docs x LEFT JOIN docs d ON d.user_id = x.user_id AND d.path = x.path WHERE d.path IS NULL LIMIT 2").all()).results.forEach(r => ids.add(r.id));
   (await env.DB.prepare("SELECT a.user_id AS id FROM drive_accounts a WHERE a.folder IS NOT NULL AND EXISTS (SELECT 1 FROM docs d WHERE d.user_id = a.user_id AND substr(d.updated, 1, 10) > COALESCE(a.backup_day, '')) LIMIT 2").all()).results.forEach(r => ids.add(r.id));
   for (const id of ids) { if (B.n <= 6) break; await syncUser(env, id, B); }
+  return ids.size;
 }
 
 /* ---------- The privacy policy and terms of service ----------
@@ -1188,6 +1191,10 @@ async function api(request, env, url, ctx) {
   }
   if (!user) return fail(401, 'Log in to continue.');
 
+  /* MKOS, the Medical Knowledge Operating System (src/mkos): /api/mkos/<op>[/<id>]. Knowledge is central and readable by every
+     account; learner state is the caller's own; administration is the owner's. */
+  if (url.pathname.startsWith('/api/mkos')) { const r = await mkosApi(request, env, url, user, body, { owner: isOwner(env, user), deps: mkDeps(env), roots: mkRoots(env) }); return json(r.body, r.status); }
+
   /* Change password while logged in: the current password is asked for again. This device stays logged in; every other one is logged out. */
   if (route === 'POST /api/password') {
     if (user.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
@@ -1396,10 +1403,48 @@ async function api(request, env, url, ctx) {
   return fail(404, 'Not found.');
 }
 
+/* ---------- MKOS: what the knowledge engine may use from this server ----------
+   Drive access goes through the same owner credential and the same library check as the rest of the site; the MKOS folder in the
+   central registry folder (MKOS_DRIVE_FOLDER) is the only place it writes. AI extraction uses the existing hierarchy unchanged, as the
+   'notes' (housekeeping) job under its own usage account 'mkos', so it never spends a learner's allowance. */
+const mkRoots = env => ({ root: KNOW(env), mirrorRoot: str(env.MKOS_DRIVE_FOLDER, 200) });
+function mkDeps(env) {
+  const META = 'nextPageToken,files(id,name,mimeType,parents,size,md5Checksum,modifiedTime)';
+  const shape = f => ({ id: f.id, title: f.name, mimeType: f.mimeType, parentId: (f.parents || [])[0] || '', fileSize: f.size || '', md5: f.md5Checksum || '', modifiedTime: f.modifiedTime || '' });
+  const docsOf = async (uid, prefixes) => {
+    if (!uid) return {};
+    const where = prefixes.map(p => p.endsWith('_') ? 'path LIKE ?' : 'path = ?').join(' OR ');
+    const { results } = await env.DB.prepare(`SELECT path, body FROM docs WHERE user_id = ? AND (${where})`).bind(uid, ...prefixes.map(p => p.endsWith('_') ? p + '%' : p)).all();
+    const out = {}; for (const r of results) { try { out[r.path] = JSON.parse(r.body); } catch { } } return out;
+  };
+  return {
+    list: async (folderId, token) => { const j = await (await gfetch(env, 'files', { q: `'${folderId}' in parents and trashed = false`, pageSize: 100, pageToken: token || '', fields: META, includeItemsFromAllDrives: 'true' })).json(); return { files: (j.files || []).map(shape), next: j.nextPageToken || '' }; },
+    readText: async fileId => (await driveTool(env, 'read_file_content', { fileId })).fileContent || '',
+    readJson: async fileId => { await inLibrary(env, fileId); return await (await gfetch(env, 'files/' + fileId, { alt: 'media' })).json(); },
+    findJson: async q => { const j = await (await gfetch(env, 'files', { q: driveQuery(q), pageSize: 20, fields: 'files(id,name,mimeType,parents)', includeItemsFromAllDrives: 'true' })).json();
+      for (const f of j.files || []) if (/json/i.test(f.mimeType + f.name) && await inside(env, (f.parents || [])[0], KNOW(env))) return { id: f.id, title: f.name }; return null; },
+    upload: ({ id, name, parent, text, mime }) => gupload(env, { id, name, parent, text, mime }),
+    mkdir: (name, parent) => mkdir(env, name, parent),
+    patch: async (id, { name, addParents, removeParents }) => gsend(env, 'PATCH', 'files/' + id + '?' + form({ ...(addParents ? { addParents } : {}), ...(removeParents ? { removeParents } : {}) }), name ? { name } : {}),
+    folders: { registry: str(env.MKOS_REGISTRY_FOLDER, 200), oldVersions: str(env.MKOS_REGISTRY_OLD_FOLDER, 200), mkos: str(env.MKOS_DRIVE_FOLDER, 200) },
+    userDocs: docsOf,
+    ownerDocs: async prefixes => docsOf(await ownerId(env), prefixes),
+    changedUsers: async () => (await env.DB.prepare("SELECT user_id, MAX(updated) AS updated FROM docs WHERE path = 'med/state' OR path LIKE 'med/les_%' OR path LIKE 'med/bank_%' OR path LIKE 'med/cards_%' GROUP BY user_id").all()).results,
+    ai: (geminiKey(env) || env.ANTHROPIC_API_KEY || deepseekKey(env)) && env.MKOS_AI !== 'off' ? async prompt => {
+      const r = await runAI(env, { id: 'mkos', email: '' }, { input: prompt, tier: 'quick', job: 'notes' });
+      if (r.status !== 200) { const e = new Error(r.error || 'AI unavailable'); throw e; } return r.text; } : null,
+  };
+}
+async function mkTickSafe(env) {
+  try { await init(env); await driveState(env); if (!DRIVE.mode) return; await mkTick(env, mkDeps(env), mkRoots(env)); }
+  catch (e) { console.error('mkos', e); }
+}
+
 /* ---------- MCP connector at /mcp/<token> ----------
    A small Model Context Protocol server (JSON over HTTP POST). The token in the address is the only credential,
    so it is long, random, stored only as a hash, and can be replaced or switched off from the account page. */
 const MCP_TOOLS = [
+  ...MKOS_TOOLS,
   { name: 'load_progress', description: "Load this physician's saved study and career record: the documents changed since `since` (milliseconds since 1970; 0 for everything), the list of every document path, and the server time to pass as `since` next time. `area` defaults to \"med\". `only` (a list of document names such as [\"says\", \"saylog\"]) returns just those documents, whenever they changed.",
     inputSchema: { type: 'object', properties: { area: { type: 'string' }, since: { type: 'number' }, only: { type: 'array', items: { type: 'string' } } } }, annotations: { readOnlyHint: true } },
   { name: 'get_profile', description: "The account's first name, last name and email, and how much is saved.",
@@ -1463,6 +1508,11 @@ async function mcpServer(request, env, token, ctx) {
       if (!on) return bad('The reference library is not turned on for this account.');
       try { return out(await driveSlice(env, fileId(a.fileId), a.offset)); } catch (e) { if (e instanceof LibError) return bad(e.message); throw e; }
     }
+    if (name === 'mkos') {
+      const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return bad('This account no longer exists.');
+      const r = await mkosCall(env, u, String(a.op || 'status'), a.args && typeof a.args === 'object' ? a.args : {}, { owner: isOwner(env, u), deps: mkDeps(env), roots: mkRoots(env) });
+      return r.status === 200 ? out(r.body) : bad(JSON.stringify(r.body).slice(0, 2000));
+    }
     const path = String(a.path || '');
     if (!PATH_OK.test(path)) return bad('That is not a valid document path. It must start with the area, like med/state.');
     if (name === 'save_doc') {
@@ -1482,7 +1532,14 @@ async function mcpServer(request, env, token, ctx) {
 }
 
 export default {
-  async scheduled(event, env, ctx) { ctx.waitUntil(sweep(env).catch(e => console.error(e))); },
+  /* Every five minutes: copy waiting records to Drive first; when nothing was waiting, the same run gives MKOS its turn (scan, jobs,
+     mirror). Splitting the run this way keeps each invocation inside the platform's per-run limits. */
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil((async () => {
+      const busy = await sweep(env).catch(e => { console.error(e); return 1; });
+      if (!busy && env.MKOS !== 'off') await mkTickSafe(env);
+    })());
+  },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/mcp/')) {

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/asset.schema.json",
+  "title": "Asset",
+  "description": "ASSET TYPES: an addressable part of a source (document section, table, figure, algorithm, risk calculator...).",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "asset_type": {
+      "enum": [
+        "Documents",
+        "Images",
+        "Videos",
+        "Audio",
+        "Cases",
+        "Questions",
+        "Tables",
+        "Figures",
+        "Algorithms",
+        "Risk Calculators",
+        "Interactive Content",
+        "Datasets",
+        "Procedures"
+      ]
+    },
+    "source_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "Source"
+    },
+    "locator": {
+      "type": "object"
+    },
+    "caption": {
+      "type": "string"
+    },
+    "covers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Concept"
+    }
+  },
+  "required": [
+    "asset_type",
+    "source_id"
+  ]
+}

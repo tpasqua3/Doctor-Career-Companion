@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/audit_record.schema.json",
+  "title": "Audit record",
+  "description": "GOVERNANCE OBJECTS: Audit Logs / Approval Records / Review History.",
+  "type": "object",
+  "properties": {
+    "at": {
+      "type": "string"
+    },
+    "actor": {
+      "type": "string"
+    },
+    "action": {
+      "type": "string"
+    },
+    "object_id": {
+      "type": "string"
+    },
+    "from_version": {
+      "type": "string"
+    },
+    "to_version": {
+      "type": "string"
+    },
+    "detail": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "at",
+    "actor",
+    "action"
+  ]
+}

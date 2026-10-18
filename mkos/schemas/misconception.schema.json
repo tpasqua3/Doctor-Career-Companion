@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/misconception.schema.json",
+  "title": "Misconception record",
+  "description": "MISCONCEPTION MODEL; raised by Incorrect + Confident.",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "type": "string"
+    },
+    "object_id": {
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "diagnostic_error",
+        "management_error",
+        "interpretation_error",
+        "reasoning_error",
+        "false_association",
+        "board_trap",
+        "persistent_misconception"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "status": {
+      "enum": [
+        "open",
+        "remediating",
+        "resolved"
+      ]
+    },
+    "first_seen": {
+      "type": "string"
+    },
+    "last_seen": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "user_id",
+    "object_id",
+    "kind"
+  ]
+}

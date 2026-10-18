@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/curriculum_node.schema.json",
+  "title": "Curriculum node",
+  "description": "CURRICULUM LAYER: node in the curriculum tree (track > specialty > domain > topic), mapped to blueprint topics and concepts.",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "track": {
+      "type": "string"
+    },
+    "parent": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "CurriculumNode"
+    },
+    "order": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Concept"
+    },
+    "blueprint_topics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "BlueprintTopic"
+    },
+    "legacy_topic_id": {
+      "type": "string"
+    },
+    "objectives": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Objective"
+    },
+    "prerequisites": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "CurriculumNode"
+    }
+  },
+  "required": [
+    "track"
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/provenance.schema.json",
+  "title": "Provenance step",
+  "description": "PROVENANCE MODEL: Every Claim -> Evidence -> Recommendation -> Guideline -> Source. One step of the chain.",
+  "type": "object",
+  "properties": {
+    "source_id": {
+      "type": "string",
+      "pattern": "^src\\."
+    },
+    "locator": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ]
+        },
+        "section": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "figure": {
+          "type": "string"
+        },
+        "chunk": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "method": {
+      "enum": [
+        "registry_import",
+        "owner_registry",
+        "deterministic_parse",
+        "ai_extraction",
+        "owner_edit",
+        "legacy_app_data",
+        "blueprint_import",
+        "derived",
+        "learner_event"
+      ]
+    },
+    "agent": {
+      "type": "string"
+    },
+    "at": {
+      "type": "string"
+    },
+    "note": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_id",
+    "method",
+    "at"
+  ]
+}

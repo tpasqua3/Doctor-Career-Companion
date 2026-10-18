@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/recommendation.schema.json",
+  "title": "Recommendation",
+  "description": "EVIDENCE MODEL / RECOMMENDATION CONFIDENCE. Text is the app's paraphrase, never the guideline's wording.",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "statement": {
+      "type": "string",
+      "minLength": 10
+    },
+    "guideline": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "Guideline"
+    },
+    "source_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "Source"
+    },
+    "section": {
+      "type": "string"
+    },
+    "page": {
+      "type": [
+        "integer",
+        "string",
+        "null"
+      ]
+    },
+    "strength_original": {
+      "type": "string"
+    },
+    "strength": {
+      "enum": [
+        "strong",
+        "moderate",
+        "weak",
+        "against_moderate",
+        "against_strong",
+        "insufficient",
+        "unstated"
+      ]
+    },
+    "loe_original": {
+      "type": "string"
+    },
+    "evidence_level": {
+      "enum": [
+        "A",
+        "B-R",
+        "B-NR",
+        "C-LD",
+        "C-EO"
+      ]
+    },
+    "grading_system": {
+      "type": "string"
+    },
+    "population": {
+      "type": "string"
+    },
+    "intervention": {
+      "type": "string"
+    },
+    "comparator": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "setting": {
+      "enum": [
+        "outpatient",
+        "inpatient",
+        "icu",
+        "emergency",
+        "any",
+        "unknown"
+      ]
+    },
+    "adult_scope": {
+      "type": "boolean"
+    },
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Concept"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "EvidenceObject"
+    },
+    "recommendation_confidence": {
+      "type": "object",
+      "properties": {
+        "recommendation_strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "evidence_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "guideline_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "consensus_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "freshness_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "overall": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    }
+  },
+  "required": [
+    "statement",
+    "source_id",
+    "strength",
+    "evidence_level"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/blueprint.schema.json",
+  "title": "Blueprint",
+  "description": "A board exam blueprint edition (Board Blueprints source type).",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "exam": {
+      "type": "string"
+    },
+    "exam_code": {
+      "type": "string"
+    },
+    "edition": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "Source"
+    },
+    "task_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "required": [
+    "exam",
+    "edition"
+  ]
+}

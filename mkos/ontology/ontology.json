@@ -1,0 +1,2607 @@
+{
+  "id": "ontology.core",
+  "type": "Ontology",
+  "name": "MKOS Ontology",
+  "version": "1.0.0",
+  "status": "current",
+  "created_date": "2026-10-17",
+  "updated_date": "2026-10-17",
+  "supersedes": null,
+  "replaced_by": null,
+  "source_attribution": [
+    "MKOS V3 Canonical Architecture Specification + Knowledge Currency Principle + Universal Confidence, Uncertainty and Trust Model (Medical Training App Push, week of 10/17/2026)",
+    "MKOS Implementation Directive (10/17/2026)"
+  ],
+  "change_log": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-17",
+      "summary": "Initial ontology from the MKOS V3 specification."
+    }
+  ],
+  "project": {
+    "name": "Medical Knowledge Operating System",
+    "acronym": "MKOS",
+    "app": "Doctor Career Companion"
+  },
+  "purpose": "Transform medicine from documents into structured knowledge, structured knowledge into educational assets, educational assets into adaptive learning experiences, and adaptive learning experiences into measurable competency growth.",
+  "is_not": [
+    "A RAG System",
+    "A Question Bank",
+    "A Flashcard Application",
+    "A Board Review Platform",
+    "A Tutoring Platform",
+    "A Curriculum System",
+    "An AI Wrapper"
+  ],
+  "foundational_principles": [
+    "Structured Knowledge Is Authoritative",
+    "Sources Create Knowledge",
+    "Ontology Creates Meaning",
+    "Knowledge Graphs Create Relationships",
+    "Educational Systems Consume Structure",
+    "AI Consumes Structure",
+    "Provenance Is Mandatory",
+    "Version Everything",
+    "Delete Nothing",
+    "Preserve Supersession",
+    "Prefer Incremental Updates",
+    "Prefer Deterministic Systems",
+    "Minimum Effective AI Dosage",
+    "Lowest-Cost Capable Resource Wins",
+    "Generate Once, Reuse Forever",
+    "Store Knowledge Once, Reuse Forever"
+  ],
+  "core_system_model": [
+    "Source",
+    "Asset",
+    "Concept",
+    "Ontology",
+    "Knowledge Graph",
+    "Evidence",
+    "Recommendations",
+    "Educational Objects",
+    "Educational Assets",
+    "Learning Experiences",
+    "Learner State",
+    "Adaptive Delivery"
+  ],
+  "primary_domains": [
+    {
+      "key": "knowledge",
+      "name": "Knowledge Domain",
+      "purpose": "Represent medicine as structured computable knowledge.",
+      "pipeline": [
+        "Sources",
+        "Assets",
+        "Concepts",
+        "Relationships",
+        "Knowledge Graph",
+        "Evidence",
+        "Recommendations",
+        "Educational Mapping"
+      ]
+    },
+    {
+      "key": "educational",
+      "name": "Educational Domain",
+      "purpose": "Transform structured knowledge into reusable teaching assets."
+    },
+    {
+      "key": "learner_intelligence",
+      "name": "Learner Intelligence Domain",
+      "purpose": "Maintain a continuously evolving digital twin of the learner."
+    },
+    {
+      "key": "governance_delivery",
+      "name": "Governance and Delivery Domain",
+      "purpose": "Ensure trustworthiness, safety, currency, auditability, and scalability."
+    }
+  ],
+  "layers": [
+    {
+      "key": "knowledge",
+      "name": "Knowledge Layer",
+      "domain": "knowledge",
+      "store": "mk_objects (Source, Asset, Claim), mk_files, mk_versions",
+      "module": "src/mkos/kb.js"
+    },
+    {
+      "key": "ontology",
+      "name": "Ontology Layer",
+      "domain": "knowledge",
+      "store": "mkos/ontology (framework bundle) + mk_objects (Concept) + mk_aliases",
+      "module": "src/mkos/ontology.js"
+    },
+    {
+      "key": "knowledge_graph",
+      "name": "Knowledge Graph Layer",
+      "domain": "knowledge",
+      "store": "mk_edges",
+      "module": "src/mkos/graph.js"
+    },
+    {
+      "key": "evidence",
+      "name": "Evidence Layer",
+      "domain": "knowledge",
+      "store": "mk_objects (EvidenceObject)",
+      "module": "src/mkos/kb.js"
+    },
+    {
+      "key": "recommendation",
+      "name": "Recommendation Layer",
+      "domain": "knowledge",
+      "store": "mk_objects (Recommendation, Guideline)",
+      "module": "src/mkos/kb.js"
+    },
+    {
+      "key": "educational_asset",
+      "name": "Educational Asset Layer",
+      "domain": "educational",
+      "store": "mk_objects (EducationalObject, EducationalAsset) + mk_asset_links",
+      "module": "src/mkos/education.js"
+    },
+    {
+      "key": "curriculum",
+      "name": "Curriculum Layer",
+      "domain": "educational",
+      "store": "mk_objects (CurriculumNode, LearningPath, BlueprintTopic, Competency, Objective)",
+      "module": "src/mkos/education.js"
+    },
+    {
+      "key": "learner_intelligence",
+      "name": "Learner Intelligence Layer",
+      "domain": "learner_intelligence",
+      "store": "mk_learner_state, mk_learner_events, mk_misconceptions",
+      "module": "src/mkos/learner.js"
+    },
+    {
+      "key": "governance",
+      "name": "Governance Layer",
+      "domain": "governance_delivery",
+      "store": "mk_audit, mk_reviews, mk_events, mk_impacts",
+      "module": "src/mkos/governance.js"
+    },
+    {
+      "key": "routing",
+      "name": "Routing Layer",
+      "domain": "governance_delivery",
+      "store": "framework routing rules + mk_routes (routing decisions)",
+      "module": "src/mkos/routing.js"
+    },
+    {
+      "key": "adaptive_learning",
+      "name": "Adaptive Learning Layer",
+      "domain": "learner_intelligence",
+      "store": "derived from learner state + curriculum (no own store)",
+      "module": "src/mkos/adaptive.js"
+    }
+  ],
+  "object_types": [
+    {
+      "type": "Source",
+      "prefix": "src",
+      "layer": "knowledge",
+      "table": "mk_objects (+ mk_files for Drive change detection)",
+      "schema": "source.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "Asset",
+      "prefix": "asset",
+      "layer": "knowledge",
+      "table": "mk_objects",
+      "schema": "asset.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "Concept",
+      "prefix": "c",
+      "layer": "ontology",
+      "table": "mk_objects",
+      "schema": "concept.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "Guideline",
+      "prefix": "gl",
+      "layer": "recommendation",
+      "table": "mk_objects",
+      "schema": "guideline.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "Recommendation",
+      "prefix": "rec",
+      "layer": "recommendation",
+      "table": "mk_objects",
+      "schema": "recommendation.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "EvidenceObject",
+      "prefix": "ev",
+      "layer": "evidence",
+      "table": "mk_objects",
+      "schema": "evidence.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "Claim",
+      "prefix": "claim",
+      "layer": "knowledge",
+      "table": "mk_objects",
+      "schema": "claim.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "Specialty",
+      "prefix": "spec",
+      "layer": "curriculum",
+      "table": "mk_objects (seeded from the framework files)",
+      "schema": "specialty.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "Domain",
+      "prefix": "dom",
+      "layer": "curriculum",
+      "table": "mk_objects (seeded from the framework files)",
+      "schema": "specialty.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "Competency",
+      "prefix": "comp",
+      "layer": "curriculum",
+      "table": "mk_objects (seeded from the framework files)",
+      "schema": "competency.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "Objective",
+      "prefix": "obj",
+      "layer": "curriculum",
+      "table": "mk_objects",
+      "schema": "educational_object.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "Blueprint",
+      "prefix": "bp",
+      "layer": "curriculum",
+      "table": "mk_objects",
+      "schema": "blueprint.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "BlueprintTopic",
+      "prefix": "bpt",
+      "layer": "curriculum",
+      "table": "mk_objects",
+      "schema": "blueprint_topic.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "CurriculumNode",
+      "prefix": "cn",
+      "layer": "curriculum",
+      "table": "mk_objects",
+      "schema": "curriculum_node.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "LearningPath",
+      "prefix": "lp",
+      "layer": "curriculum",
+      "table": "mk_objects",
+      "schema": "educational_object.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "EducationalObject",
+      "prefix": "eo",
+      "layer": "educational_asset",
+      "table": "mk_objects",
+      "schema": "educational_object.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "EducationalAsset",
+      "prefix": "ea",
+      "layer": "educational_asset",
+      "table": "mk_objects",
+      "schema": "educational_asset.schema.json",
+      "versioned": true
+    }
+  ],
+  "source_types": [
+    "Guidelines",
+    "Textbooks",
+    "Reference Texts",
+    "Board Blueprints",
+    "Question Banks",
+    "MKSAP",
+    "Cases",
+    "Protocols",
+    "Consensus Statements",
+    "Review Articles",
+    "Datasets",
+    "Decision Support Tools",
+    "Image Libraries",
+    "Video Libraries",
+    "Audio Libraries",
+    "Reference Databases"
+  ],
+  "asset_types": [
+    "Documents",
+    "Images",
+    "Videos",
+    "Audio",
+    "Cases",
+    "Questions",
+    "Tables",
+    "Figures",
+    "Algorithms",
+    "Risk Calculators",
+    "Interactive Content",
+    "Datasets",
+    "Procedures"
+  ],
+  "concept_types": [
+    {
+      "key": "disease",
+      "name": "Disease",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "pathophysiology",
+        "epidemiology",
+        "risk_factor",
+        "clinical_presentation",
+        "diagnostic",
+        "classification",
+        "management",
+        "complication",
+        "prognosis",
+        "clinical_reasoning"
+      ]
+    },
+    {
+      "key": "syndrome",
+      "name": "Syndrome",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "pathophysiology",
+        "epidemiology",
+        "clinical_presentation",
+        "diagnostic",
+        "classification",
+        "management",
+        "complication",
+        "prognosis",
+        "clinical_reasoning"
+      ]
+    },
+    {
+      "key": "symptom",
+      "name": "Symptom",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "clinical_presentation",
+        "diagnostic",
+        "clinical_reasoning"
+      ]
+    },
+    {
+      "key": "sign",
+      "name": "Sign",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "clinical_presentation",
+        "diagnostic",
+        "clinical_reasoning"
+      ]
+    },
+    {
+      "key": "medication",
+      "name": "Medication",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "pharmacology",
+        "management"
+      ]
+    },
+    {
+      "key": "procedure",
+      "name": "Procedure",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "procedural",
+        "anatomy",
+        "complication"
+      ]
+    },
+    {
+      "key": "laboratory_test",
+      "name": "Laboratory Test",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "laboratory",
+        "test_interpretation",
+        "physiology"
+      ]
+    },
+    {
+      "key": "diagnostic_test",
+      "name": "Diagnostic Test",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "test_interpretation",
+        "laboratory",
+        "procedural"
+      ]
+    },
+    {
+      "key": "imaging_study",
+      "name": "Imaging Study",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "imaging",
+        "test_interpretation"
+      ]
+    },
+    {
+      "key": "biomarker",
+      "name": "Biomarker",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "laboratory",
+        "test_interpretation",
+        "physiology"
+      ]
+    },
+    {
+      "key": "risk_factor",
+      "name": "Risk Factor",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "epidemiology",
+        "risk_factor"
+      ]
+    },
+    {
+      "key": "anatomical_structure",
+      "name": "Anatomical Structure",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "anatomy",
+        "physiology"
+      ]
+    },
+    {
+      "key": "physiologic_process",
+      "name": "Physiologic Process",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "physiology"
+      ]
+    },
+    {
+      "key": "pathophysiologic_process",
+      "name": "Pathophysiologic Process",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "pathophysiology"
+      ]
+    },
+    {
+      "key": "guideline",
+      "name": "Guideline",
+      "expected_facet_groups": [
+        "identity",
+        "guideline",
+        "evidence"
+      ]
+    },
+    {
+      "key": "recommendation",
+      "name": "Recommendation",
+      "expected_facet_groups": [
+        "identity",
+        "guideline",
+        "evidence",
+        "board"
+      ]
+    },
+    {
+      "key": "evidence_object",
+      "name": "Evidence Object",
+      "expected_facet_groups": [
+        "identity",
+        "evidence"
+      ]
+    },
+    {
+      "key": "decision_tool",
+      "name": "Decision Tool",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "classification",
+        "clinical_reasoning"
+      ]
+    },
+    {
+      "key": "score",
+      "name": "Score",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "classification",
+        "clinical_reasoning"
+      ]
+    },
+    {
+      "key": "classification",
+      "name": "Classification",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "classification"
+      ]
+    },
+    {
+      "key": "clinical_finding",
+      "name": "Clinical Finding",
+      "expected_facet_groups": [
+        "identity",
+        "scientific",
+        "guideline",
+        "evidence",
+        "board",
+        "assessment",
+        "educational",
+        "competency",
+        "research",
+        "diagnostic",
+        "test_interpretation",
+        "clinical_reasoning"
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "key": "treats",
+      "name": "Treats",
+      "from": "Medication|Procedure|Recommendation",
+      "to": "Disease|Syndrome|Symptom|Clinical Finding",
+      "inverse": "treated_by",
+      "symmetric": false
+    },
+    {
+      "key": "diagnoses",
+      "name": "Diagnoses",
+      "from": "Laboratory Test|Diagnostic Test|Imaging Study|Procedure|Biomarker|Score|Decision Tool",
+      "to": "Disease|Syndrome",
+      "inverse": "diagnosed_by",
+      "symmetric": false
+    },
+    {
+      "key": "evaluates",
+      "name": "Evaluates",
+      "from": "Laboratory Test|Diagnostic Test|Imaging Study|Procedure|Score|Decision Tool",
+      "to": "*",
+      "inverse": "evaluated_by",
+      "symmetric": false
+    },
+    {
+      "key": "measures",
+      "name": "Measures",
+      "from": "Laboratory Test|Biomarker|Diagnostic Test|Score",
+      "to": "*",
+      "inverse": "measured_by",
+      "symmetric": false
+    },
+    {
+      "key": "causes",
+      "name": "Causes",
+      "from": "*",
+      "to": "*",
+      "inverse": "caused_by",
+      "symmetric": false
+    },
+    {
+      "key": "contributes_to",
+      "name": "Contributes_To",
+      "from": "*",
+      "to": "*",
+      "inverse": "contributed_to_by",
+      "symmetric": false
+    },
+    {
+      "key": "predisposes_to",
+      "name": "Predisposes_To",
+      "from": "Risk Factor|Disease|Syndrome|Medication",
+      "to": "Disease|Syndrome|Clinical Finding",
+      "inverse": "predisposed_by",
+      "symmetric": false
+    },
+    {
+      "key": "complicates",
+      "name": "Complicates",
+      "from": "Disease|Syndrome|Procedure|Medication",
+      "to": "Disease|Syndrome",
+      "inverse": "complicated_by",
+      "symmetric": false
+    },
+    {
+      "key": "contraindicates",
+      "name": "Contraindicates",
+      "from": "Disease|Syndrome|Clinical Finding|Medication|Laboratory Test",
+      "to": "Medication|Procedure",
+      "inverse": "contraindicated_by",
+      "symmetric": false
+    },
+    {
+      "key": "requires",
+      "name": "Requires",
+      "from": "*",
+      "to": "*",
+      "inverse": "required_by",
+      "symmetric": false
+    },
+    {
+      "key": "associated_with",
+      "name": "Associated_With",
+      "from": "*",
+      "to": "*",
+      "inverse": "associated_with",
+      "symmetric": true
+    },
+    {
+      "key": "recommended_by",
+      "name": "Recommended_By",
+      "from": "*",
+      "to": "Recommendation|Guideline",
+      "inverse": "recommends",
+      "symmetric": false
+    },
+    {
+      "key": "supported_by",
+      "name": "Supported_By",
+      "from": "Recommendation|Concept|Claim",
+      "to": "Evidence Object",
+      "inverse": "supports",
+      "symmetric": false
+    },
+    {
+      "key": "related_to",
+      "name": "Related_To",
+      "from": "*",
+      "to": "*",
+      "inverse": "related_to",
+      "symmetric": true
+    },
+    {
+      "key": "precedes",
+      "name": "Precedes",
+      "from": "*",
+      "to": "*",
+      "inverse": "follows",
+      "symmetric": false
+    },
+    {
+      "key": "follows",
+      "name": "Follows",
+      "from": "*",
+      "to": "*",
+      "inverse": "precedes",
+      "symmetric": false
+    }
+  ],
+  "structural_relationships": [
+    {
+      "key": "is_a",
+      "name": "is_a",
+      "basis": "Concept taxonomy (Identity facets: Parent/Child Concepts)",
+      "inverse": "has_subtype"
+    },
+    {
+      "key": "part_of",
+      "name": "part_of",
+      "basis": "Anatomical/structural containment (Identity facets: Taxonomy)",
+      "inverse": "has_part"
+    },
+    {
+      "key": "derived_from",
+      "name": "derived_from",
+      "basis": "Provenance Model: object derived from a Source/Asset",
+      "inverse": "source_of"
+    },
+    {
+      "key": "cites",
+      "name": "cites",
+      "basis": "Provenance Model: claim/asset cites Evidence/Recommendation/Guideline",
+      "inverse": "cited_by"
+    },
+    {
+      "key": "belongs_to_guideline",
+      "name": "belongs_to_guideline",
+      "basis": "Evidence Model: Recommendation -> Guideline",
+      "inverse": "contains_recommendation"
+    },
+    {
+      "key": "edition_of",
+      "name": "edition_of",
+      "basis": "Supersession Model: a Source edition belongs to a Guideline family",
+      "inverse": "has_edition"
+    },
+    {
+      "key": "supersedes",
+      "name": "supersedes",
+      "basis": "Supersession Model",
+      "inverse": "superseded_by"
+    },
+    {
+      "key": "mapped_to_blueprint",
+      "name": "mapped_to_blueprint",
+      "basis": "Board facets: ABIM/LKA Mapping",
+      "inverse": "blueprint_covers"
+    },
+    {
+      "key": "teaches",
+      "name": "teaches",
+      "basis": "Asset Generation Model: Educational Asset teaches Concept/Objective",
+      "inverse": "taught_by"
+    },
+    {
+      "key": "assesses",
+      "name": "assesses",
+      "basis": "Assessment facets: Question/Assessment assesses Concept/Objective/Competency",
+      "inverse": "assessed_by"
+    },
+    {
+      "key": "develops",
+      "name": "develops",
+      "basis": "Competency Model: Objective develops Competency",
+      "inverse": "developed_by"
+    },
+    {
+      "key": "in_specialty",
+      "name": "in_specialty",
+      "basis": "Knowledge Granularity Model: Specialty > Domain > Competency > Concept",
+      "inverse": "specialty_contains"
+    },
+    {
+      "key": "in_domain",
+      "name": "in_domain",
+      "basis": "Knowledge Granularity Model",
+      "inverse": "domain_contains"
+    },
+    {
+      "key": "prerequisite_of",
+      "name": "prerequisite_of",
+      "basis": "Adaptive Curriculum Model: What To Teach / Delay",
+      "inverse": "has_prerequisite"
+    },
+    {
+      "key": "covers",
+      "name": "covers",
+      "basis": "Asset covers Concept (indexing of Sources/Assets)",
+      "inverse": "covered_by"
+    }
+  ],
+  "facet_model": {
+    "note": "Every concept contains structured facets. A facet value is a list of facet items; each item is Value + Confidence + Provenance + Version + Timestamp (Universal Confidence Model core principle).",
+    "groups": [
+      {
+        "group": "identity",
+        "facets": [
+          {
+            "key": "canonical_name",
+            "name": "Canonical Name"
+          },
+          {
+            "key": "aliases",
+            "name": "Aliases"
+          },
+          {
+            "key": "synonyms",
+            "name": "Synonyms"
+          },
+          {
+            "key": "abbreviations",
+            "name": "Abbreviations"
+          },
+          {
+            "key": "historical_terminology",
+            "name": "Historical Terminology"
+          },
+          {
+            "key": "taxonomy",
+            "name": "Taxonomy"
+          },
+          {
+            "key": "icd_mapping",
+            "name": "ICD Mapping"
+          },
+          {
+            "key": "snomed_mapping",
+            "name": "SNOMED Mapping"
+          },
+          {
+            "key": "loinc_mapping",
+            "name": "LOINC Mapping"
+          },
+          {
+            "key": "rxnorm_mapping",
+            "name": "RxNorm Mapping"
+          },
+          {
+            "key": "cross_references",
+            "name": "Cross References"
+          },
+          {
+            "key": "parent_concepts",
+            "name": "Parent Concepts"
+          },
+          {
+            "key": "child_concepts",
+            "name": "Child Concepts"
+          },
+          {
+            "key": "related_concepts",
+            "name": "Related Concepts"
+          }
+        ]
+      },
+      {
+        "group": "scientific",
+        "facets": [
+          {
+            "key": "definition",
+            "name": "Definition"
+          },
+          {
+            "key": "scientific_context",
+            "name": "Scientific Context"
+          },
+          {
+            "key": "historical_context",
+            "name": "Historical Context"
+          },
+          {
+            "key": "molecular_biology",
+            "name": "Molecular Biology"
+          },
+          {
+            "key": "cell_biology",
+            "name": "Cell Biology"
+          },
+          {
+            "key": "biochemistry",
+            "name": "Biochemistry"
+          },
+          {
+            "key": "genetics",
+            "name": "Genetics"
+          },
+          {
+            "key": "genomics",
+            "name": "Genomics"
+          },
+          {
+            "key": "epigenetics",
+            "name": "Epigenetics"
+          },
+          {
+            "key": "immunology",
+            "name": "Immunology"
+          },
+          {
+            "key": "microbiology",
+            "name": "Microbiology"
+          },
+          {
+            "key": "histology",
+            "name": "Histology"
+          },
+          {
+            "key": "embryology",
+            "name": "Embryology"
+          },
+          {
+            "key": "developmental_biology",
+            "name": "Developmental Biology"
+          }
+        ]
+      },
+      {
+        "group": "anatomy",
+        "facets": [
+          {
+            "key": "gross_anatomy",
+            "name": "Gross Anatomy"
+          },
+          {
+            "key": "functional_anatomy",
+            "name": "Functional Anatomy"
+          },
+          {
+            "key": "microscopic_anatomy",
+            "name": "Microscopic Anatomy"
+          },
+          {
+            "key": "blood_supply",
+            "name": "Blood Supply"
+          },
+          {
+            "key": "drainage",
+            "name": "Drainage"
+          },
+          {
+            "key": "innervation",
+            "name": "Innervation"
+          },
+          {
+            "key": "structural_variants",
+            "name": "Structural Variants"
+          },
+          {
+            "key": "embryologic_origins",
+            "name": "Embryologic Origins"
+          },
+          {
+            "key": "associated_structures",
+            "name": "Associated Structures"
+          }
+        ]
+      },
+      {
+        "group": "physiology",
+        "facets": [
+          {
+            "key": "normal_physiology",
+            "name": "Normal Physiology"
+          },
+          {
+            "key": "homeostasis",
+            "name": "Homeostasis"
+          },
+          {
+            "key": "regulation",
+            "name": "Regulation"
+          },
+          {
+            "key": "feedback_systems",
+            "name": "Feedback Systems"
+          },
+          {
+            "key": "neurohormonal_systems",
+            "name": "Neurohormonal Systems"
+          },
+          {
+            "key": "endocrine_systems",
+            "name": "Endocrine Systems"
+          },
+          {
+            "key": "functional_relationships",
+            "name": "Functional Relationships"
+          },
+          {
+            "key": "normal_laboratory_correlates",
+            "name": "Normal Laboratory Correlates"
+          },
+          {
+            "key": "normal_imaging_correlates",
+            "name": "Normal Imaging Correlates"
+          }
+        ]
+      },
+      {
+        "group": "pathophysiology",
+        "facets": [
+          {
+            "key": "primary_mechanisms",
+            "name": "Primary Mechanisms"
+          },
+          {
+            "key": "secondary_mechanisms",
+            "name": "Secondary Mechanisms"
+          },
+          {
+            "key": "molecular_mechanisms",
+            "name": "Molecular Mechanisms"
+          },
+          {
+            "key": "cellular_mechanisms",
+            "name": "Cellular Mechanisms"
+          },
+          {
+            "key": "organ_mechanisms",
+            "name": "Organ Mechanisms"
+          },
+          {
+            "key": "system_mechanisms",
+            "name": "System Mechanisms"
+          },
+          {
+            "key": "compensatory_mechanisms",
+            "name": "Compensatory Mechanisms"
+          },
+          {
+            "key": "disease_progression",
+            "name": "Disease Progression"
+          },
+          {
+            "key": "clinical_consequences",
+            "name": "Clinical Consequences"
+          }
+        ]
+      },
+      {
+        "group": "epidemiology",
+        "facets": [
+          {
+            "key": "incidence",
+            "name": "Incidence"
+          },
+          {
+            "key": "prevalence",
+            "name": "Prevalence"
+          },
+          {
+            "key": "disease_burden",
+            "name": "Disease Burden"
+          },
+          {
+            "key": "population_distribution",
+            "name": "Population Distribution"
+          },
+          {
+            "key": "demographics",
+            "name": "Demographics"
+          },
+          {
+            "key": "mortality",
+            "name": "Mortality"
+          },
+          {
+            "key": "morbidity",
+            "name": "Morbidity"
+          },
+          {
+            "key": "public_health_impact",
+            "name": "Public Health Impact"
+          }
+        ]
+      },
+      {
+        "group": "risk_factor",
+        "facets": [
+          {
+            "key": "genetic_risks",
+            "name": "Genetic Risks"
+          },
+          {
+            "key": "environmental_risks",
+            "name": "Environmental Risks"
+          },
+          {
+            "key": "behavioral_risks",
+            "name": "Behavioral Risks"
+          },
+          {
+            "key": "occupational_risks",
+            "name": "Occupational Risks"
+          },
+          {
+            "key": "medication_risks",
+            "name": "Medication Risks"
+          },
+          {
+            "key": "protective_factors",
+            "name": "Protective Factors"
+          },
+          {
+            "key": "risk_modifiers",
+            "name": "Risk Modifiers"
+          }
+        ]
+      },
+      {
+        "group": "clinical_presentation",
+        "facets": [
+          {
+            "key": "symptoms",
+            "name": "Symptoms"
+          },
+          {
+            "key": "signs",
+            "name": "Signs"
+          },
+          {
+            "key": "typical_presentations",
+            "name": "Typical Presentations"
+          },
+          {
+            "key": "atypical_presentations",
+            "name": "Atypical Presentations"
+          },
+          {
+            "key": "acute_presentations",
+            "name": "Acute Presentations"
+          },
+          {
+            "key": "chronic_presentations",
+            "name": "Chronic Presentations"
+          },
+          {
+            "key": "silent_presentations",
+            "name": "Silent Presentations"
+          },
+          {
+            "key": "red_flags",
+            "name": "Red Flags"
+          },
+          {
+            "key": "alarm_features",
+            "name": "Alarm Features"
+          },
+          {
+            "key": "physical_examination_findings",
+            "name": "Physical Examination Findings"
+          }
+        ]
+      },
+      {
+        "group": "diagnostic",
+        "facets": [
+          {
+            "key": "diagnostic_criteria",
+            "name": "Diagnostic Criteria"
+          },
+          {
+            "key": "diagnostic_algorithms",
+            "name": "Diagnostic Algorithms"
+          },
+          {
+            "key": "rule_in_criteria",
+            "name": "Rule-In Criteria"
+          },
+          {
+            "key": "rule_out_criteria",
+            "name": "Rule-Out Criteria"
+          },
+          {
+            "key": "differential_diagnosis",
+            "name": "Differential Diagnosis"
+          },
+          {
+            "key": "diagnostic_pearls",
+            "name": "Diagnostic Pearls"
+          },
+          {
+            "key": "diagnostic_pitfalls",
+            "name": "Diagnostic Pitfalls"
+          },
+          {
+            "key": "diagnostic_uncertainty",
+            "name": "Diagnostic Uncertainty"
+          },
+          {
+            "key": "mimics",
+            "name": "Mimics"
+          },
+          {
+            "key": "associated_conditions",
+            "name": "Associated Conditions"
+          }
+        ]
+      },
+      {
+        "group": "laboratory",
+        "facets": [
+          {
+            "key": "normal_values",
+            "name": "Normal Values"
+          },
+          {
+            "key": "abnormal_findings",
+            "name": "Abnormal Findings"
+          },
+          {
+            "key": "critical_values",
+            "name": "Critical Values"
+          },
+          {
+            "key": "sensitivity",
+            "name": "Sensitivity"
+          },
+          {
+            "key": "specificity",
+            "name": "Specificity"
+          },
+          {
+            "key": "likelihood_ratios",
+            "name": "Likelihood Ratios"
+          },
+          {
+            "key": "predictive_values",
+            "name": "Predictive Values"
+          },
+          {
+            "key": "interpretation_rules",
+            "name": "Interpretation Rules"
+          },
+          {
+            "key": "artifacts",
+            "name": "Artifacts"
+          },
+          {
+            "key": "confounders",
+            "name": "Confounders"
+          },
+          {
+            "key": "monitoring_parameters",
+            "name": "Monitoring Parameters"
+          }
+        ]
+      },
+      {
+        "group": "imaging",
+        "facets": [
+          {
+            "key": "radiography",
+            "name": "Radiography"
+          },
+          {
+            "key": "ct",
+            "name": "CT"
+          },
+          {
+            "key": "mri",
+            "name": "MRI"
+          },
+          {
+            "key": "ultrasound",
+            "name": "Ultrasound"
+          },
+          {
+            "key": "echocardiography",
+            "name": "Echocardiography"
+          },
+          {
+            "key": "nuclear_imaging",
+            "name": "Nuclear Imaging"
+          },
+          {
+            "key": "pet",
+            "name": "PET"
+          },
+          {
+            "key": "angiography",
+            "name": "Angiography"
+          },
+          {
+            "key": "findings",
+            "name": "Findings"
+          },
+          {
+            "key": "interpretation",
+            "name": "Interpretation"
+          },
+          {
+            "key": "artifacts",
+            "name": "Artifacts"
+          },
+          {
+            "key": "limitations",
+            "name": "Limitations"
+          }
+        ]
+      },
+      {
+        "group": "procedural",
+        "facets": [
+          {
+            "key": "indications",
+            "name": "Indications"
+          },
+          {
+            "key": "contraindications",
+            "name": "Contraindications"
+          },
+          {
+            "key": "preparation",
+            "name": "Preparation"
+          },
+          {
+            "key": "technique",
+            "name": "Technique"
+          },
+          {
+            "key": "interpretation",
+            "name": "Interpretation"
+          },
+          {
+            "key": "complications",
+            "name": "Complications"
+          },
+          {
+            "key": "clinical_utility",
+            "name": "Clinical Utility"
+          },
+          {
+            "key": "follow_up",
+            "name": "Follow-Up"
+          }
+        ]
+      },
+      {
+        "group": "test_interpretation",
+        "facets": [
+          {
+            "key": "normal_results",
+            "name": "Normal Results"
+          },
+          {
+            "key": "abnormal_results",
+            "name": "Abnormal Results"
+          },
+          {
+            "key": "critical_findings",
+            "name": "Critical Findings"
+          },
+          {
+            "key": "severity_correlation",
+            "name": "Severity Correlation"
+          },
+          {
+            "key": "diagnostic_significance",
+            "name": "Diagnostic Significance"
+          },
+          {
+            "key": "management_implications",
+            "name": "Management Implications"
+          },
+          {
+            "key": "false_positives",
+            "name": "False Positives"
+          },
+          {
+            "key": "false_negatives",
+            "name": "False Negatives"
+          },
+          {
+            "key": "artifacts",
+            "name": "Artifacts"
+          },
+          {
+            "key": "board_traps",
+            "name": "Board Traps"
+          }
+        ]
+      },
+      {
+        "group": "classification",
+        "facets": [
+          {
+            "key": "disease_staging",
+            "name": "Disease Staging"
+          },
+          {
+            "key": "disease_severity",
+            "name": "Disease Severity"
+          },
+          {
+            "key": "risk_stratification",
+            "name": "Risk Stratification"
+          },
+          {
+            "key": "phenotypes",
+            "name": "Phenotypes"
+          },
+          {
+            "key": "subtypes",
+            "name": "Subtypes"
+          },
+          {
+            "key": "guideline_classifications",
+            "name": "Guideline Classifications"
+          },
+          {
+            "key": "research_classifications",
+            "name": "Research Classifications"
+          }
+        ]
+      },
+      {
+        "group": "management",
+        "facets": [
+          {
+            "key": "prevention",
+            "name": "Prevention"
+          },
+          {
+            "key": "lifestyle_modification",
+            "name": "Lifestyle Modification"
+          },
+          {
+            "key": "acute_management",
+            "name": "Acute Management"
+          },
+          {
+            "key": "chronic_management",
+            "name": "Chronic Management"
+          },
+          {
+            "key": "emergency_management",
+            "name": "Emergency Management"
+          },
+          {
+            "key": "outpatient_management",
+            "name": "Outpatient Management"
+          },
+          {
+            "key": "inpatient_management",
+            "name": "Inpatient Management"
+          },
+          {
+            "key": "icu_management",
+            "name": "ICU Management"
+          },
+          {
+            "key": "monitoring",
+            "name": "Monitoring"
+          },
+          {
+            "key": "escalation_pathways",
+            "name": "Escalation Pathways"
+          },
+          {
+            "key": "follow_up",
+            "name": "Follow-Up"
+          },
+          {
+            "key": "special_populations",
+            "name": "Special Populations"
+          },
+          {
+            "key": "palliative_care",
+            "name": "Palliative Care"
+          }
+        ]
+      },
+      {
+        "group": "pharmacology",
+        "facets": [
+          {
+            "key": "drug_class",
+            "name": "Drug Class"
+          },
+          {
+            "key": "mechanism_of_action",
+            "name": "Mechanism Of Action"
+          },
+          {
+            "key": "pharmacokinetics",
+            "name": "Pharmacokinetics"
+          },
+          {
+            "key": "pharmacodynamics",
+            "name": "Pharmacodynamics"
+          },
+          {
+            "key": "indications",
+            "name": "Indications"
+          },
+          {
+            "key": "contraindications",
+            "name": "Contraindications"
+          },
+          {
+            "key": "adverse_effects",
+            "name": "Adverse Effects"
+          },
+          {
+            "key": "monitoring",
+            "name": "Monitoring"
+          },
+          {
+            "key": "drug_interactions",
+            "name": "Drug Interactions"
+          },
+          {
+            "key": "renal_dosing",
+            "name": "Renal Dosing"
+          },
+          {
+            "key": "hepatic_dosing",
+            "name": "Hepatic Dosing"
+          },
+          {
+            "key": "pregnancy_considerations",
+            "name": "Pregnancy Considerations"
+          },
+          {
+            "key": "toxicology",
+            "name": "Toxicology"
+          }
+        ]
+      },
+      {
+        "group": "complication",
+        "facets": [
+          {
+            "key": "acute_complications",
+            "name": "Acute Complications"
+          },
+          {
+            "key": "chronic_complications",
+            "name": "Chronic Complications"
+          },
+          {
+            "key": "expected_complications",
+            "name": "Expected Complications"
+          },
+          {
+            "key": "rare_complications",
+            "name": "Rare Complications"
+          },
+          {
+            "key": "life_threatening_complications",
+            "name": "Life-Threatening Complications"
+          }
+        ]
+      },
+      {
+        "group": "prognosis",
+        "facets": [
+          {
+            "key": "natural_history",
+            "name": "Natural History"
+          },
+          {
+            "key": "expected_outcomes",
+            "name": "Expected Outcomes"
+          },
+          {
+            "key": "mortality_predictors",
+            "name": "Mortality Predictors"
+          },
+          {
+            "key": "response_to_therapy",
+            "name": "Response To Therapy"
+          },
+          {
+            "key": "progression_risk",
+            "name": "Progression Risk"
+          }
+        ]
+      },
+      {
+        "group": "guideline",
+        "facets": [
+          {
+            "key": "current_guidelines",
+            "name": "Current Guidelines"
+          },
+          {
+            "key": "historical_guidelines",
+            "name": "Historical Guidelines"
+          },
+          {
+            "key": "guideline_evolution",
+            "name": "Guideline Evolution"
+          },
+          {
+            "key": "recommendation_mapping",
+            "name": "Recommendation Mapping"
+          },
+          {
+            "key": "recommendation_strength",
+            "name": "Recommendation Strength"
+          },
+          {
+            "key": "evidence_levels",
+            "name": "Evidence Levels"
+          },
+          {
+            "key": "guideline_rationale",
+            "name": "Guideline Rationale"
+          },
+          {
+            "key": "international_variations",
+            "name": "International Variations"
+          }
+        ]
+      },
+      {
+        "group": "evidence",
+        "facets": [
+          {
+            "key": "landmark_trials",
+            "name": "Landmark Trials"
+          },
+          {
+            "key": "supporting_trials",
+            "name": "Supporting Trials"
+          },
+          {
+            "key": "negative_trials",
+            "name": "Negative Trials"
+          },
+          {
+            "key": "meta_analyses",
+            "name": "Meta-Analyses"
+          },
+          {
+            "key": "systematic_reviews",
+            "name": "Systematic Reviews"
+          },
+          {
+            "key": "observational_data",
+            "name": "Observational Data"
+          },
+          {
+            "key": "registry_data",
+            "name": "Registry Data"
+          },
+          {
+            "key": "expert_opinion",
+            "name": "Expert Opinion"
+          },
+          {
+            "key": "evidence_quality",
+            "name": "Evidence Quality"
+          },
+          {
+            "key": "evidence_gaps",
+            "name": "Evidence Gaps"
+          },
+          {
+            "key": "evidence_limitations",
+            "name": "Evidence Limitations"
+          },
+          {
+            "key": "evidence_controversies",
+            "name": "Evidence Controversies"
+          }
+        ]
+      },
+      {
+        "group": "clinical_reasoning",
+        "facets": [
+          {
+            "key": "pattern_recognition",
+            "name": "Pattern Recognition"
+          },
+          {
+            "key": "illness_scripts",
+            "name": "Illness Scripts"
+          },
+          {
+            "key": "differential_construction",
+            "name": "Differential Construction"
+          },
+          {
+            "key": "diagnostic_reasoning",
+            "name": "Diagnostic Reasoning"
+          },
+          {
+            "key": "bayesian_reasoning",
+            "name": "Bayesian Reasoning"
+          },
+          {
+            "key": "management_reasoning",
+            "name": "Management Reasoning"
+          },
+          {
+            "key": "risk_stratification",
+            "name": "Risk Stratification"
+          },
+          {
+            "key": "clinical_tradeoffs",
+            "name": "Clinical Tradeoffs"
+          },
+          {
+            "key": "decision_trees",
+            "name": "Decision Trees"
+          },
+          {
+            "key": "uncertainty_management",
+            "name": "Uncertainty Management"
+          },
+          {
+            "key": "cognitive_biases",
+            "name": "Cognitive Biases"
+          }
+        ]
+      },
+      {
+        "group": "board",
+        "facets": [
+          {
+            "key": "abim_mapping",
+            "name": "ABIM Mapping"
+          },
+          {
+            "key": "lka_mapping",
+            "name": "LKA Mapping"
+          },
+          {
+            "key": "usmle_mapping",
+            "name": "USMLE Mapping"
+          },
+          {
+            "key": "subspecialty_mapping",
+            "name": "Subspecialty Mapping"
+          },
+          {
+            "key": "board_frequency",
+            "name": "Board Frequency"
+          },
+          {
+            "key": "board_importance",
+            "name": "Board Importance"
+          },
+          {
+            "key": "high_yield_facts",
+            "name": "High-Yield Facts"
+          },
+          {
+            "key": "common_traps",
+            "name": "Common Traps"
+          },
+          {
+            "key": "common_distractors",
+            "name": "Common Distractors"
+          },
+          {
+            "key": "board_pearls",
+            "name": "Board Pearls"
+          },
+          {
+            "key": "board_vignettes",
+            "name": "Board Vignettes"
+          }
+        ]
+      },
+      {
+        "group": "assessment",
+        "facets": [
+          {
+            "key": "recognition",
+            "name": "Recognition"
+          },
+          {
+            "key": "recall",
+            "name": "Recall"
+          },
+          {
+            "key": "application",
+            "name": "Application"
+          },
+          {
+            "key": "interpretation",
+            "name": "Interpretation"
+          },
+          {
+            "key": "management",
+            "name": "Management"
+          },
+          {
+            "key": "clinical_reasoning",
+            "name": "Clinical Reasoning"
+          },
+          {
+            "key": "integrated_questions",
+            "name": "Integrated Questions"
+          },
+          {
+            "key": "simulation_questions",
+            "name": "Simulation Questions"
+          },
+          {
+            "key": "oral_board_questions",
+            "name": "Oral Board Questions"
+          }
+        ]
+      },
+      {
+        "group": "educational",
+        "facets": [
+          {
+            "key": "lessons",
+            "name": "Lessons"
+          },
+          {
+            "key": "audio_lessons",
+            "name": "Audio Lessons"
+          },
+          {
+            "key": "visual_lessons",
+            "name": "Visual Lessons"
+          },
+          {
+            "key": "flashcards",
+            "name": "Flashcards"
+          },
+          {
+            "key": "board_reviews",
+            "name": "Board Reviews"
+          },
+          {
+            "key": "clinical_pearls",
+            "name": "Clinical Pearls"
+          },
+          {
+            "key": "review_sheets",
+            "name": "Review Sheets"
+          },
+          {
+            "key": "teaching_scripts",
+            "name": "Teaching Scripts"
+          },
+          {
+            "key": "cases",
+            "name": "Cases"
+          },
+          {
+            "key": "simulations",
+            "name": "Simulations"
+          },
+          {
+            "key": "learning_paths",
+            "name": "Learning Paths"
+          },
+          {
+            "key": "curriculum_mappings",
+            "name": "Curriculum Mappings"
+          }
+        ]
+      },
+      {
+        "group": "competency",
+        "facets": [
+          {
+            "key": "knowledge",
+            "name": "Knowledge"
+          },
+          {
+            "key": "recognition",
+            "name": "Recognition"
+          },
+          {
+            "key": "interpretation",
+            "name": "Interpretation"
+          },
+          {
+            "key": "diagnosis",
+            "name": "Diagnosis"
+          },
+          {
+            "key": "management",
+            "name": "Management"
+          },
+          {
+            "key": "reasoning",
+            "name": "Reasoning"
+          },
+          {
+            "key": "evidence_based_medicine",
+            "name": "Evidence-Based Medicine"
+          },
+          {
+            "key": "board_readiness",
+            "name": "Board Readiness"
+          },
+          {
+            "key": "independent_practice_readiness",
+            "name": "Independent Practice Readiness"
+          }
+        ]
+      },
+      {
+        "group": "research",
+        "facets": [
+          {
+            "key": "current_research",
+            "name": "Current Research"
+          },
+          {
+            "key": "emerging_therapies",
+            "name": "Emerging Therapies"
+          },
+          {
+            "key": "ongoing_trials",
+            "name": "Ongoing Trials"
+          },
+          {
+            "key": "knowledge_gaps",
+            "name": "Knowledge Gaps"
+          },
+          {
+            "key": "controversies",
+            "name": "Controversies"
+          },
+          {
+            "key": "future_directions",
+            "name": "Future Directions"
+          }
+        ]
+      }
+    ]
+  },
+  "universal_knowledge_object_model": [
+    "Clinical Object",
+    "Educational Object",
+    "Assessment Object",
+    "Competency Object",
+    "Board Object",
+    "Evidence Object",
+    "Research Object",
+    "Knowledge Object"
+  ],
+  "evidence_model": {
+    "chain": [
+      "Evidence",
+      "Recommendation",
+      "Guideline",
+      "Concept"
+    ],
+    "levels": [
+      {
+        "key": "A",
+        "name": "A",
+        "meaning": "High-quality evidence from more than one RCT, meta-analyses of high-quality RCTs, or RCTs corroborated by registry studies",
+        "evidence_score": 97
+      },
+      {
+        "key": "B-R",
+        "name": "B-R",
+        "meaning": "Moderate-quality evidence from one or more RCTs or meta-analyses of moderate-quality RCTs",
+        "evidence_score": 85
+      },
+      {
+        "key": "B-NR",
+        "name": "B-NR",
+        "meaning": "Moderate-quality evidence from well-designed nonrandomized, observational or registry studies",
+        "evidence_score": 75
+      },
+      {
+        "key": "C-LD",
+        "name": "C-LD",
+        "meaning": "Limited data: randomized or nonrandomized studies with limitations of design or execution",
+        "evidence_score": 60
+      },
+      {
+        "key": "C-EO",
+        "name": "C-EO",
+        "meaning": "Consensus of expert opinion based on clinical experience",
+        "evidence_score": 45
+      }
+    ],
+    "crosswalk_note": "Other grading systems found in sources are normalized onto these five levels (see scoring.json evidence_crosswalk); the original grade is always kept as stated."
+  },
+  "difficulty_model": [
+    {
+      "level": 1,
+      "name": "Recognition"
+    },
+    {
+      "level": 2,
+      "name": "Recall"
+    },
+    {
+      "level": 3,
+      "name": "Application"
+    },
+    {
+      "level": 4,
+      "name": "Board-Level Integration"
+    },
+    {
+      "level": 5,
+      "name": "Advanced Clinical Reasoning"
+    }
+  ],
+  "educational_objects": [
+    "Objectives",
+    "Assessments",
+    "Blueprints",
+    "Competencies",
+    "Lessons",
+    "Cases",
+    "Questions",
+    "Flashcards",
+    "Simulations",
+    "Curricula",
+    "Learning Paths"
+  ],
+  "educational_assets": [
+    "Long Form Lessons",
+    "Micro Lessons",
+    "Audio Courses",
+    "Question Banks",
+    "Flashcard Libraries",
+    "Board Reviews",
+    "Clinical Pearls",
+    "Review Modules",
+    "Simulation Libraries",
+    "Competency Packages",
+    "Visual Learning Assets",
+    "Teaching Scripts"
+  ],
+  "asset_generation_model": {
+    "chain": [
+      "Concept",
+      "Objectives",
+      "Assets",
+      "Assessments",
+      "Curricula",
+      "Learning Experiences"
+    ],
+    "fan_out": "One Concept -> Many Assets"
+  },
+  "master_learner_model": [
+    "Knowledge State",
+    "Competency State",
+    "Retention State",
+    "Confidence State",
+    "Behavior State",
+    "Prediction State",
+    "Risk State",
+    "Readiness State",
+    "Adaptive Learning State"
+  ],
+  "knowledge_state_model": [
+    "Recognition",
+    "Recall",
+    "Understanding",
+    "Application",
+    "Interpretation",
+    "Analysis",
+    "Synthesis",
+    "Clinical Reasoning",
+    "Teaching Ability",
+    "Transfer Ability",
+    "Mastery"
+  ],
+  "knowledge_granularity_model": {
+    "levels": [
+      "Specialty",
+      "Domain",
+      "Competency",
+      "Concept",
+      "Facet",
+      "Subfacet",
+      "Question"
+    ],
+    "note": "Mastery exists at every level."
+  },
+  "confidence_model": {
+    "quadrants": [
+      "Correct + Confident",
+      "Correct + Uncertain",
+      "Incorrect + Confident",
+      "Incorrect + Uncertain"
+    ],
+    "note": "Confidence is independent from mastery.",
+    "incorrect_high_confidence_triggers": [
+      "Misconception Detection",
+      "Reasoning Review",
+      "Targeted Remediation"
+    ]
+  },
+  "misconception_model": [
+    "Diagnostic Errors",
+    "Management Errors",
+    "Interpretation Errors",
+    "Reasoning Errors",
+    "False Associations",
+    "Board Traps",
+    "Persistent Misconceptions"
+  ],
+  "retention_model": [
+    "Acquisition",
+    "Retention",
+    "Decay",
+    "Relearning",
+    "Forgetting Risk",
+    "Retention Strength"
+  ],
+  "competency_model": [
+    "Knowledge Competency",
+    "Interpretation Competency",
+    "Diagnostic Competency",
+    "Management Competency",
+    "Reasoning Competency",
+    "Evidence Competency",
+    "Board Competency",
+    "Clinical Competency",
+    "Independent Practice Competency"
+  ],
+  "modality_model": {
+    "modalities": [
+      "Lessons",
+      "Questions",
+      "Flashcards",
+      "Audio",
+      "Visual Assets",
+      "Cases",
+      "Simulations",
+      "Review Modules"
+    ],
+    "determine": [
+      "Most Effective",
+      "Least Effective",
+      "Retention Benefit",
+      "Learning Efficiency"
+    ]
+  },
+  "board_readiness_model": [
+    "ABIM Readiness",
+    "LKA Readiness",
+    "USMLE Readiness",
+    "Subspecialty Readiness",
+    "Difficulty Readiness",
+    "Question-Type Readiness"
+  ],
+  "knowledge_gap_model": [
+    "Missing Concepts",
+    "Weak Concepts",
+    "Decaying Concepts",
+    "Competency Gaps",
+    "Reasoning Gaps",
+    "Board Gaps",
+    "Cross-Specialty Gaps"
+  ],
+  "adaptive_curriculum_model": [
+    "What To Teach",
+    "What To Review",
+    "What To Assess",
+    "What To Reinforce",
+    "What To Remediate",
+    "What To Prioritize",
+    "What To Delay"
+  ],
+  "authority_hierarchy": [
+    "Current Guideline",
+    "Supporting Evidence",
+    "Society Statement",
+    "Landmark Trial",
+    "Board Blueprint",
+    "MKSAP",
+    "Textbook",
+    "Review Article",
+    "Supplemental Content"
+  ],
+  "provenance_model": {
+    "chain": [
+      "Every Claim",
+      "Evidence",
+      "Recommendation",
+      "Guideline",
+      "Source"
+    ],
+    "rule": "Every fact must trace to origin."
+  },
+  "versioning_model": {
+    "states": [
+      "current",
+      "modified",
+      "superseded",
+      "retired"
+    ],
+    "transitions": {
+      "current": [
+        "modified",
+        "superseded",
+        "retired"
+      ],
+      "modified": [
+        "current",
+        "superseded",
+        "retired"
+      ],
+      "superseded": [
+        "retired"
+      ],
+      "retired": []
+    },
+    "rules": [
+      "Nothing Is Deleted",
+      "Everything Is Versioned",
+      "Historical information remains accessible",
+      "Current information becomes preferred"
+    ]
+  },
+  "governance_objects": [
+    "Version History",
+    "Provenance",
+    "Validation",
+    "Audit Logs",
+    "Review History",
+    "Citation Packages",
+    "Evidence Packages",
+    "Trust Scores",
+    "Approval Records"
+  ],
+  "engine_hierarchy": [
+    "Knowledge Engine",
+    "Mastery Engine",
+    "Competency Engine",
+    "Retention Engine",
+    "Recommendation Engine",
+    "Curriculum Engine",
+    "Adaptive Delivery Engine",
+    "Assessment Engine",
+    "AI Teaching Engine",
+    "User Experience Layer"
+  ],
+  "routing_model": {
+    "rule": "Always use the lowest-cost authoritative source capable of solving the problem.",
+    "order": [
+      "Database",
+      "Ontology",
+      "Knowledge Graph",
+      "Evidence Layer",
+      "Recommendations",
+      "Educational Assets",
+      "Learner State",
+      "AI"
+    ]
+  },
+  "deterministic_first_rule": [
+    {
+      "ask": "Can Database Solve?",
+      "use": "database"
+    },
+    {
+      "ask": "Can Rules Solve?",
+      "use": "rules"
+    },
+    {
+      "ask": "Can Graph Solve?",
+      "use": "graph"
+    },
+    {
+      "ask": "Can Assets Solve?",
+      "use": "assets"
+    },
+    {
+      "ask": "Only Then",
+      "use": "ai"
+    }
+  ],
+  "engine_handoff_contract": [
+    "input_snapshot",
+    "output_snapshot",
+    "timestamp",
+    "version",
+    "confidence_score",
+    "validation_status",
+    "provenance_bundle",
+    "audit_record",
+    "governance_status"
+  ],
+  "fallback_hierarchy": [
+    "Current Valid Data",
+    "Previous Stable Data",
+    "Population Model",
+    "Curriculum Model",
+    "Deterministic Default",
+    "AI Inference"
+  ],
+  "failure_recovery_model": [
+    "Detect",
+    "Validate",
+    "Retry",
+    "Fallback",
+    "Escalate",
+    "Governance Review",
+    "Audit",
+    "Resume"
+  ],
+  "stop_the_line_conditions": [
+    {
+      "key": "missing_evidence",
+      "name": "Missing Evidence"
+    },
+    {
+      "key": "missing_citation",
+      "name": "Missing Citation"
+    },
+    {
+      "key": "missing_provenance",
+      "name": "Missing Provenance"
+    },
+    {
+      "key": "invalid_recommendation",
+      "name": "Invalid Recommendation"
+    },
+    {
+      "key": "superseded_guideline_usage",
+      "name": "Superseded Guideline Usage"
+    },
+    {
+      "key": "governance_failure",
+      "name": "Governance Failure"
+    },
+    {
+      "key": "audit_failure",
+      "name": "Audit Failure"
+    },
+    {
+      "key": "unsafe_educational_content",
+      "name": "Unsafe Educational Content"
+    }
+  ],
+  "ai_governance": {
+    "may": [
+      "Teach",
+      "Explain",
+      "Coach",
+      "Summarize",
+      "Personalize",
+      "Generate Educational Assets"
+    ],
+    "may_not": [
+      "Create Authority",
+      "Override Evidence",
+      "Override Guidelines",
+      "Override Governance",
+      "Override Competency Models",
+      "Override Mastery Models"
+    ],
+    "authority_originates_from": [
+      "Evidence",
+      "Recommendations",
+      "Guidelines",
+      "Governance",
+      "Validation"
+    ],
+    "implementation": "AI-extracted knowledge enters with governance_status 'pending_validation' and an ai_extraction provenance step; its confidence is capped (scoring.json ai_extraction_cap) until validated against the source."
+  },
+  "knowledge_currency": {
+    "change_inputs": [
+      "Sources",
+      "Guidelines",
+      "Recommendations",
+      "Evidence",
+      "Trials",
+      "Board Blueprints",
+      "Question Banks",
+      "Cases",
+      "Educational Assets"
+    ],
+    "determine": [
+      "What Changed",
+      "What Did Not Change",
+      "What Is Superseded",
+      "What Requires Recalculation",
+      "What Requires Regeneration",
+      "What Requires Review",
+      "What Requires Republishing"
+    ],
+    "priority_rules": [
+      [
+        "Current Valid Evidence",
+        "Historical Evidence"
+      ],
+      [
+        "Current Guideline Recommendations",
+        "Historical Recommendations"
+      ],
+      [
+        "Current Board Blueprint Mappings",
+        "Historical Blueprint Mappings"
+      ],
+      [
+        "Current Educational Assets",
+        "Superseded Educational Assets"
+      ]
+    ],
+    "incremental_evolution": [
+      "Detect Delta",
+      "Identify Impacted Objects",
+      "Update Affected Nodes",
+      "Update Relationships",
+      "Update Educational Assets",
+      "Update Learner Models",
+      "Update Recommendations",
+      "Publish Changes"
+    ],
+    "refresh_engine": {
+      "monitor": [
+        "Guidelines",
+        "Recommendations",
+        "Evidence Sources",
+        "Board Blueprints",
+        "Approved Source Libraries",
+        "Educational Registry"
+      ],
+      "flow": [
+        "Create Change Event",
+        "Classify Change",
+        "Determine Impact",
+        "Queue Reprocessing",
+        "Validate",
+        "Republish"
+      ]
+    },
+    "impact_targets": [
+      "Affected Concepts",
+      "Affected Relationships",
+      "Affected Recommendations",
+      "Affected Guidelines",
+      "Affected Educational Assets",
+      "Affected Questions",
+      "Affected Flashcards",
+      "Affected Lessons",
+      "Affected Cases",
+      "Affected Curricula",
+      "Affected Competencies",
+      "Affected Learner States"
+    ],
+    "learner_reconciliation": [
+      "Identify Learners Impacted",
+      "Identify Related Competencies",
+      "Identify Related Objectives",
+      "Identify Knowledge Gaps",
+      "Generate Appropriate Review Pathway"
+    ],
+    "current_state_prioritization": [
+      "Current Version",
+      "Highest Authority Source",
+      "Highest Evidence Level",
+      "Most Recent Valid Recommendation",
+      "Most Recent Valid Guideline"
+    ],
+    "historical_override": "Historical content is returned only when the request asks for it (include_history=true)."
+  },
+  "self_evolving_outputs": [
+    "Expanded Ontology",
+    "Expanded Graph",
+    "Expanded Educational Assets",
+    "Expanded Competencies",
+    "Expanded Curricula",
+    "Expanded Assessments",
+    "Expanded Learner Models"
+  ]
+}

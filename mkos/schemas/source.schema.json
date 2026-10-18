@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/source.schema.json",
+  "title": "Source",
+  "description": "SOURCE TYPES: a document or library item the knowledge comes from (guideline edition, MKSAP chapter, textbook chapter, blueprint...).",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "source_class": {
+      "type": "string"
+    },
+    "spec_source_type": {
+      "type": "string"
+    },
+    "drive_file_id": {
+      "type": "string"
+    },
+    "drive_path": {
+      "type": "string"
+    },
+    "mime_type": {
+      "type": "string"
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "md5": {
+      "type": "string"
+    },
+    "drive_modified": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "short_label": {
+      "type": "string"
+    },
+    "responsible_orgs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "collaborating_orgs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "authors": {
+      "type": "string"
+    },
+    "journal": {
+      "type": "string"
+    },
+    "citation": {
+      "type": "string"
+    },
+    "doi": {
+      "type": "string"
+    },
+    "published_online": {
+      "type": "string"
+    },
+    "issue_date": {
+      "type": "string"
+    },
+    "year": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "population": {
+      "enum": [
+        "adult",
+        "pediatric",
+        "mixed",
+        "unknown"
+      ]
+    },
+    "copyright": {
+      "type": "string"
+    },
+    "guideline_family": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "Guideline"
+    },
+    "edition_role": {
+      "enum": [
+        "sole",
+        "current",
+        "focused_update",
+        "superseded",
+        "unknown"
+      ]
+    },
+    "registry_ref_id": {
+      "type": "string"
+    },
+    "ingest_state": {
+      "enum": [
+        "registered",
+        "queued",
+        "extracting",
+        "extracted",
+        "skipped",
+        "failed"
+      ]
+    },
+    "ingest_note": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_class",
+    "drive_file_id",
+    "title",
+    "population",
+    "copyright",
+    "ingest_state"
+  ]
+}

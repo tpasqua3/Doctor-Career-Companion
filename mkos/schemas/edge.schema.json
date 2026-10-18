@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/edge.schema.json",
+  "title": "Knowledge graph edge",
+  "description": "KNOWLEDGE GRAPH RELATIONSHIPS. Stored once per direction pair (the reverse is derived from ontology inverse).",
+  "type": "object",
+  "properties": {
+    "src": {
+      "type": "string"
+    },
+    "rel": {
+      "type": "string"
+    },
+    "dst": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "current",
+        "modified",
+        "superseded",
+        "retired"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "provenance": {
+      "type": "array",
+      "items": {
+        "$ref": "provenance.schema.json"
+      }
+    },
+    "created": {
+      "type": "string"
+    },
+    "updated": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "src",
+    "rel",
+    "dst",
+    "status",
+    "provenance"
+  ]
+}

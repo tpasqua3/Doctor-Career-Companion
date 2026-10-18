@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/educational_asset.schema.json",
+  "title": "Educational asset",
+  "description": "EDUCATIONAL ASSETS + EDUCATIONAL ASSET CONFIDENCE. A versioned derivative of current knowledge; points at the stored asset (e.g. a learner record document) rather than copying it.",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "asset_kind": {
+      "enum": [
+        "long_form_lesson",
+        "micro_lesson",
+        "audio_course",
+        "question_bank",
+        "question",
+        "flashcard_library",
+        "flashcard",
+        "board_review",
+        "clinical_pearl",
+        "review_module",
+        "simulation",
+        "competency_package",
+        "visual_asset",
+        "teaching_script"
+      ]
+    },
+    "store": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "learner_doc",
+            "mkos",
+            "drive"
+          ]
+        },
+        "user_scope": {
+          "enum": [
+            "central",
+            "user"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": "string"
+        }
+      }
+    },
+    "teaches": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Concept"
+    },
+    "objectives": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Objective"
+    },
+    "cites": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blueprint_topics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "BlueprintTopic"
+    },
+    "difficulty": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "generated_by": {
+      "type": "string"
+    },
+    "reviewed_by": {
+      "type": "string"
+    },
+    "derived_from_versions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "asset_confidence": {
+      "type": "object",
+      "properties": {
+        "citation_coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "evidence_coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "validation_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "trust_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "overall": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "review_status": {
+      "type": "string"
+    },
+    "needs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "asset_kind",
+    "store"
+  ]
+}

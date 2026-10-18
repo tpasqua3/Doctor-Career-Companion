@@ -1,0 +1,163 @@
+{
+  "id": "framework.ingestion",
+  "type": "Framework",
+  "name": "Ingestion and knowledge currency pipeline",
+  "version": "1.0.1",
+  "status": "current",
+  "created_date": "2026-10-17",
+  "updated_date": "2026-10-17",
+  "supersedes": null,
+  "replaced_by": null,
+  "source_attribution": [
+    "MKOS V3 Canonical Architecture Specification + Knowledge Currency Principle + Universal Confidence, Uncertainty and Trust Model (Medical Training App Push, week of 10/17/2026)",
+    "MKOS Implementation Directive (10/17/2026)"
+  ],
+  "change_log": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-17",
+      "summary": "Initial ingestion pipeline: Drive scan, change events, classification, impact analysis, queue."
+    },
+    {
+      "version": "1.0.1",
+      "date": "2026-10-17",
+      "summary": "Scanner no longer skips 'Guidelines and Backend'; AI policy per extraction depth; rule-parsed recommendations are linked to concepts by alias matching."
+    }
+  ],
+  "watch": {
+    "root": "DRIVE_KNOWLEDGE_FOLDER",
+    "skip_folder_patterns": [
+      "^old versions$",
+      "^registry and sources$",
+      "^mkos$"
+    ],
+    "skip_title_patterns": [
+      "registry",
+      "tracker",
+      "index v\\d"
+    ]
+  },
+  "scan": {
+    "cadence": "every cron tick checks one page of the library (5-minute cron); a full sweep restarts when it reaches the end",
+    "signals": [
+      "new file id",
+      "md5Checksum changed",
+      "modifiedTime changed",
+      "file trashed or moved out",
+      "renamed"
+    ]
+  },
+  "change_event_types": [
+    "source_added",
+    "source_modified",
+    "source_removed",
+    "source_moved",
+    "edition_superseded",
+    "blueprint_changed",
+    "knowledge_object_changed",
+    "asset_changed",
+    "owner_correction"
+  ],
+  "classification_rules": [
+    {
+      "when": "folder is under Guidelines/<Specialty>",
+      "class": "by title keywords (guideline, consensus, statement, update, schedule, recommendation) else clinical_practice_guideline"
+    },
+    {
+      "when": "folder is under MKSAP Database",
+      "class": "mksap"
+    },
+    {
+      "when": "folder is under Textbooks",
+      "class": "textbook"
+    },
+    {
+      "when": "folder is under Board Exam Blueprints or Blueprint Registries",
+      "class": "board_blueprint"
+    },
+    {
+      "when": "title looks like trial/cohort/case report",
+      "class": "research_article"
+    },
+    {
+      "when": "front matter (cover, contents, index, copyright page)",
+      "class": "front_matter"
+    }
+  ],
+  "supersession_detection": {
+    "family_key": "responsible organizations + normalized topic (title minus years, org lists and boilerplate words)",
+    "rule": "Within a guideline family, the edition with the latest publication date is current; earlier editions become superseded (or 'modified' when the newer document is a focused update that covers only part of the older one — the older edition stays current for issues the update does not cover).",
+    "focused_update_keywords": [
+      "focused update",
+      "update",
+      "addendum",
+      "clinical practice update"
+    ],
+    "owner_override": "An explicit status in the owner's guidelines registry (active/updated/check_edition/review_relevance) wins over detection."
+  },
+  "scope": {
+    "adult_only_curriculum": true,
+    "pediatric": "Pediatric and mixed adult/child sources are ingested and indexed (population=pediatric|mixed) but excluded from curriculum citation and from learner-facing recommendations (owner rule, Oct 2026)."
+  },
+  "impact_analysis": {
+    "from_source": [
+      "Recommendations derived_from the source",
+      "Concepts those recommendations treat/diagnose/etc.",
+      "Guideline family",
+      "Educational assets citing the source or teaching those concepts",
+      "Questions/Flashcards/Lessons linked to those concepts",
+      "Curriculum nodes and blueprint topics mapped to those concepts",
+      "Competencies developed by the affected objectives",
+      "Learner states on those concepts"
+    ],
+    "actions": {
+      "recalculate": [
+        "scores",
+        "confidence",
+        "curriculum priority"
+      ],
+      "regenerate": [
+        "educational assets whose citations are superseded"
+      ],
+      "review": [
+        "recommendations whose meaning changed",
+        "assets flagged by stop-the-line"
+      ],
+      "republish": [
+        "snapshot + Drive mirror"
+      ]
+    }
+  },
+  "extraction": {
+    "text": "Google Docs exported as Markdown; PDFs converted with Workers AI toMarkdown; text cached in mk_text only while the source is being processed, then dropped (library text is not kept).",
+    "chunking": {
+      "target_chars": 24000,
+      "overlap_chars": 800,
+      "split_on": "headings, then paragraphs"
+    },
+    "deterministic_first": [
+      "recommendation tables with COR/LOE columns parsed by pattern before AI",
+      "metadata (DOI, journal, year) from first pages by pattern",
+      "concept resolution by alias table before AI"
+    ],
+    "ai_step": "Only for text that rules could not structure; the AI returns JSON in the extraction contract; results enter as pending_validation with confidence capped at scoring.ai_extraction_cap.",
+    "daily_ai_budget_default": 120,
+    "budget_note": "Shares the site's Gemini allowance with teaching, so the default is low; the owner raises it on the MKOS admin card.",
+    "ai_policy": {
+      "recommendations": "AI only for parts where no graded recommendation table was found",
+      "index_and_facets": "AI on every part (concept index and abstracted facts, in the app's own words)",
+      "index_only": "AI only on the first index_only_parts parts (title pages and table of contents) to index chapters and concepts",
+      "claims": "AI on every part",
+      "evidence": "AI on every part",
+      "index_only_parts": 3
+    }
+  },
+  "validation": [
+    "schema valid",
+    "provenance present (source + locator)",
+    "citation present",
+    "no verbatim run longer than 25 words from a licensed_no_verbatim source",
+    "recommendation has strength or is marked unstated",
+    "no superseded source cited as current"
+  ]
+}

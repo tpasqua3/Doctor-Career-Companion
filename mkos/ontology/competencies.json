@@ -1,0 +1,186 @@
+{
+  "id": "framework.competencies",
+  "type": "Framework",
+  "name": "Competency framework",
+  "version": "1.0.0",
+  "status": "current",
+  "created_date": "2026-10-17",
+  "updated_date": "2026-10-17",
+  "supersedes": null,
+  "replaced_by": null,
+  "source_attribution": [
+    "MKOS V3 Canonical Architecture Specification + Knowledge Currency Principle + Universal Confidence, Uncertainty and Trust Model (Medical Training App Push, week of 10/17/2026)",
+    "MKOS Implementation Directive (10/17/2026)"
+  ],
+  "change_log": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-17",
+      "summary": "Initial competency framework from the COMPETENCY MODEL and COMPETENCY FACETS."
+    }
+  ],
+  "competencies": [
+    {
+      "id": "comp.knowledge",
+      "name": "Knowledge Competency",
+      "facets": [
+        "Knowledge"
+      ],
+      "difficulty_levels": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": "comp.interpretation",
+      "name": "Interpretation Competency",
+      "facets": [
+        "Interpretation"
+      ],
+      "difficulty_levels": [
+        3
+      ]
+    },
+    {
+      "id": "comp.diagnostic",
+      "name": "Diagnostic Competency",
+      "facets": [
+        "Recognition",
+        "Diagnosis"
+      ],
+      "difficulty_levels": [
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "comp.management",
+      "name": "Management Competency",
+      "facets": [
+        "Management"
+      ],
+      "difficulty_levels": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": "comp.reasoning",
+      "name": "Reasoning Competency",
+      "facets": [
+        "Reasoning"
+      ],
+      "difficulty_levels": [
+        4,
+        5
+      ]
+    },
+    {
+      "id": "comp.evidence",
+      "name": "Evidence Competency",
+      "facets": [
+        "Evidence-Based Medicine"
+      ],
+      "difficulty_levels": [
+        3,
+        4
+      ]
+    },
+    {
+      "id": "comp.board",
+      "name": "Board Competency",
+      "facets": [
+        "Board Readiness"
+      ],
+      "difficulty_levels": [
+        4
+      ]
+    },
+    {
+      "id": "comp.clinical",
+      "name": "Clinical Competency",
+      "facets": [
+        "Diagnosis",
+        "Management"
+      ],
+      "difficulty_levels": [
+        4,
+        5
+      ]
+    },
+    {
+      "id": "comp.independent_practice",
+      "name": "Independent Practice Competency",
+      "facets": [
+        "Independent Practice Readiness"
+      ],
+      "difficulty_levels": [
+        5
+      ]
+    }
+  ],
+  "task_type_map": {
+    "diagnosis_testing": [
+      "comp.diagnostic",
+      "comp.interpretation"
+    ],
+    "treatment_care": [
+      "comp.management",
+      "comp.clinical"
+    ],
+    "risk_prognosis_epidemiology": [
+      "comp.evidence",
+      "comp.knowledge"
+    ],
+    "pathophysiology_basic_science": [
+      "comp.knowledge",
+      "comp.reasoning"
+    ]
+  },
+  "objective_verbs": {
+    "1": [
+      "recognize",
+      "identify"
+    ],
+    "2": [
+      "recall",
+      "list",
+      "state"
+    ],
+    "3": [
+      "apply",
+      "interpret",
+      "select"
+    ],
+    "4": [
+      "integrate",
+      "prioritize",
+      "choose the next best step"
+    ],
+    "5": [
+      "reason through",
+      "weigh trade-offs",
+      "manage under uncertainty"
+    ]
+  },
+  "facet_to_competency": {
+    "diagnostic": "comp.diagnostic",
+    "laboratory": "comp.interpretation",
+    "imaging": "comp.interpretation",
+    "test_interpretation": "comp.interpretation",
+    "management": "comp.management",
+    "pharmacology": "comp.management",
+    "clinical_reasoning": "comp.reasoning",
+    "evidence": "comp.evidence",
+    "guideline": "comp.evidence",
+    "board": "comp.board",
+    "pathophysiology": "comp.knowledge",
+    "physiology": "comp.knowledge",
+    "epidemiology": "comp.knowledge",
+    "clinical_presentation": "comp.diagnostic",
+    "procedural": "comp.clinical",
+    "prognosis": "comp.knowledge",
+    "complication": "comp.management"
+  }
+}

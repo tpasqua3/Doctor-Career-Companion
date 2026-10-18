@@ -1,0 +1,336 @@
+{
+  "id": "framework.specialties",
+  "type": "Framework",
+  "name": "Specialty and domain taxonomy",
+  "version": "1.0.0",
+  "status": "current",
+  "created_date": "2026-10-17",
+  "updated_date": "2026-10-17",
+  "supersedes": null,
+  "replaced_by": null,
+  "source_attribution": [
+    "MKOS V3 Canonical Architecture Specification + Knowledge Currency Principle + Universal Confidence, Uncertainty and Trust Model (Medical Training App Push, week of 10/17/2026)",
+    "MKOS Implementation Directive (10/17/2026)"
+  ],
+  "change_log": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-17",
+      "summary": "Initial taxonomy: ABIM IM blueprint categories plus the app's tracks and planned ancillary specialties."
+    }
+  ],
+  "note": "Knowledge Granularity Model level 1-2 (Specialty > Domain). Domains are the ABIM blueprint subcategories, loaded from the blueprint registries at ingest (dom.<abim_code>.<slug>), plus domains added by ingestion. A Drive folder name resolves to a specialty through folder_aliases (case-insensitive); an unknown folder becomes a new specialty in status 'modified' awaiting owner review, never an error.",
+  "specialties": [
+    {
+      "id": "spec.allergy_immunology",
+      "name": "Allergy and Immunology",
+      "abim_code": "AI",
+      "folder_aliases": [
+        "Allergy & Immunology",
+        "Allergy and Immunology",
+        "Allergy"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.cardiology",
+      "name": "Cardiovascular Disease",
+      "abim_code": "CV",
+      "folder_aliases": [
+        "Cardiology",
+        "Cardiovascular"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.dermatology",
+      "name": "Dermatology",
+      "abim_code": "DERM",
+      "folder_aliases": [
+        "Dermatology",
+        "Derm"
+      ],
+      "kind": "ancillary",
+      "status": "current"
+    },
+    {
+      "id": "spec.endocrinology",
+      "name": "Endocrinology, Diabetes, and Metabolism",
+      "abim_code": "ENDO",
+      "folder_aliases": [
+        "Endocrinology",
+        "Endocrine"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.gastroenterology",
+      "name": "Gastroenterology and Hepatology",
+      "abim_code": "GI",
+      "folder_aliases": [
+        "Gastroenterology",
+        "GI",
+        "Hepatology"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.hematology",
+      "name": "Hematology",
+      "abim_code": "HEME",
+      "folder_aliases": [
+        "Hematology",
+        "Hematology & Oncology",
+        "Heme"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.infectious_disease",
+      "name": "Infectious Disease",
+      "abim_code": "ID",
+      "folder_aliases": [
+        "Infectious Disease",
+        "ID"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.miscellaneous",
+      "name": "Miscellaneous (General Internal Medicine)",
+      "abim_code": "MISC",
+      "folder_aliases": [
+        "Miscellaneous"
+      ],
+      "kind": "im_general",
+      "status": "current"
+    },
+    {
+      "id": "spec.nephrology",
+      "name": "Nephrology and Urology",
+      "abim_code": "NEPH",
+      "folder_aliases": [
+        "Nephrology",
+        "Renal"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.neurology",
+      "name": "Neurology",
+      "abim_code": "NEURO",
+      "folder_aliases": [
+        "Neurology",
+        "Neuro"
+      ],
+      "kind": "ancillary",
+      "status": "current"
+    },
+    {
+      "id": "spec.obgyn",
+      "name": "Obstetrics and Gynecology",
+      "abim_code": "OBGYN",
+      "folder_aliases": [
+        "OB-GYN",
+        "OBGYN",
+        "Obstetrics and Gynecology",
+        "Women's Health"
+      ],
+      "kind": "ancillary",
+      "status": "current"
+    },
+    {
+      "id": "spec.oncology",
+      "name": "Medical Oncology",
+      "abim_code": "ONC",
+      "folder_aliases": [
+        "Oncology",
+        "Medical Oncology"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.ophthalmology",
+      "name": "Ophthalmology",
+      "abim_code": "OPH",
+      "folder_aliases": [
+        "Ophthalmology"
+      ],
+      "kind": "ancillary",
+      "status": "current"
+    },
+    {
+      "id": "spec.ent",
+      "name": "Otolaryngology and Dental Medicine",
+      "abim_code": "ENT",
+      "folder_aliases": [
+        "ENT",
+        "Otolaryngology"
+      ],
+      "kind": "ancillary",
+      "status": "current"
+    },
+    {
+      "id": "spec.psychiatry",
+      "name": "Psychiatry and Addiction Medicine",
+      "abim_code": "PSYCH",
+      "folder_aliases": [
+        "Psychiatry",
+        "Psychiatry & Addiction",
+        "Addiction"
+      ],
+      "kind": "ancillary",
+      "status": "current"
+    },
+    {
+      "id": "spec.pulmonology",
+      "name": "Pulmonary and Critical Care Medicine",
+      "abim_code": "PULM",
+      "folder_aliases": [
+        "Pulmonology",
+        "Pulmonary",
+        "Pulm",
+        "Critical Care"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.rheumatology",
+      "name": "Rheumatology and Orthopedics",
+      "abim_code": "RHEUM",
+      "folder_aliases": [
+        "Rheumatology",
+        "Rheum"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.geriatrics",
+      "name": "Geriatric Medicine",
+      "abim_code": "GERI",
+      "folder_aliases": [
+        "Geriatrics",
+        "Geriatric"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.hospital_medicine",
+      "name": "General Internal and Hospital Medicine",
+      "abim_code": null,
+      "folder_aliases": [
+        "General IM & Hospital Medicine",
+        "Hospital Medicine",
+        "General Internal Medicine",
+        "Infection Control"
+      ],
+      "kind": "im_general",
+      "status": "current"
+    },
+    {
+      "id": "spec.preventive_medicine",
+      "name": "Preventive Medicine",
+      "abim_code": null,
+      "folder_aliases": [
+        "Preventative Care",
+        "Preventive Care",
+        "Preventive Medicine",
+        "USPSTF"
+      ],
+      "kind": "im_general",
+      "status": "current"
+    },
+    {
+      "id": "spec.palliative_care",
+      "name": "Hospice and Palliative Medicine",
+      "abim_code": null,
+      "folder_aliases": [
+        "Palliative Care",
+        "Palliative"
+      ],
+      "kind": "im_subspecialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.urology",
+      "name": "Urology",
+      "abim_code": null,
+      "folder_aliases": [
+        "Urology"
+      ],
+      "kind": "ancillary",
+      "status": "current"
+    },
+    {
+      "id": "spec.msk_sports",
+      "name": "Musculoskeletal and Sports Medicine",
+      "abim_code": null,
+      "folder_aliases": [
+        "Musculoskeletal & Sports Medicine",
+        "Sports Medicine",
+        "Orthopedics"
+      ],
+      "kind": "ancillary",
+      "status": "current"
+    },
+    {
+      "id": "spec.practice_value_based_care",
+      "name": "Practice, Quality and Value-Based Care",
+      "abim_code": null,
+      "folder_aliases": [
+        "Practice",
+        "Value-Based Care",
+        "Quality",
+        "Coding"
+      ],
+      "kind": "practice",
+      "status": "current"
+    },
+    {
+      "id": "spec.omm",
+      "name": "Osteopathic Manipulative Medicine",
+      "abim_code": null,
+      "folder_aliases": [
+        "OMM",
+        "OMT",
+        "Osteopathic"
+      ],
+      "kind": "practice",
+      "status": "current"
+    },
+    {
+      "id": "spec.procedures_regenerative",
+      "name": "Procedures and Regenerative Medicine",
+      "abim_code": null,
+      "folder_aliases": [
+        "Procedures",
+        "POCUS",
+        "Regenerative Medicine"
+      ],
+      "kind": "practice",
+      "status": "current"
+    },
+    {
+      "id": "spec.general_reference",
+      "name": "General Medical Reference",
+      "abim_code": null,
+      "folder_aliases": [
+        "Textbooks",
+        "ACP"
+      ],
+      "kind": "reference",
+      "status": "current"
+    }
+  ]
+}

@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/concept.schema.json",
+  "title": "Concept",
+  "description": "CONCEPT TYPES + CONCEPT FACET MODEL. facets[group][facet_key] is a list of facet items.",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "concept_type": {
+      "type": "string"
+    },
+    "canonical_name": {
+      "type": "string"
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "abbreviations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "codes": {
+      "type": "object",
+      "properties": {
+        "icd10": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "snomed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "loinc": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rxnorm": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "parents": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Concept"
+    },
+    "domains": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Domain"
+    },
+    "blueprint_topics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "BlueprintTopic"
+    },
+    "facets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "value": {},
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "provenance": {
+                "type": "array",
+                "items": {
+                  "$ref": "provenance.schema.json"
+                }
+              },
+              "version": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "value",
+              "provenance"
+            ]
+          }
+        }
+      }
+    },
+    "facet_coverage": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "board": {
+      "type": "object",
+      "properties": {
+        "abim_weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "lka_tier": {
+          "type": "string"
+        },
+        "task_importance": {
+          "type": "string"
+        },
+        "low_frequency": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "required": [
+    "concept_type",
+    "canonical_name"
+  ]
+}

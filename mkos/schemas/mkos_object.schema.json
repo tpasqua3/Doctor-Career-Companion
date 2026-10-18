@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/mkos_object.schema.json",
+  "title": "MKOS object (universal envelope)",
+  "description": "Fields every MKOS knowledge, educational and governance object carries: Value + Confidence + Provenance + Version + Timestamp.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z]+\\.[a-z0-9_.\\-]+$"
+    },
+    "type": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "specialty": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Specialty"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "status": {
+      "enum": [
+        "current",
+        "modified",
+        "superseded",
+        "retired"
+      ]
+    },
+    "governance_status": {
+      "enum": [
+        "draft",
+        "pending_validation",
+        "validated",
+        "approved",
+        "rejected",
+        "stopped"
+      ]
+    },
+    "created": {
+      "type": "string"
+    },
+    "updated": {
+      "type": "string"
+    },
+    "supersedes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "replaced_by": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "scores": {
+      "type": "object",
+      "properties": {
+        "authority_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "evidence_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "citation_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "freshness_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "supersession_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "trust_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "confidence": {
+      "$ref": "confidence.schema.json"
+    },
+    "provenance": {
+      "type": "array",
+      "items": {
+        "$ref": "provenance.schema.json"
+      }
+    },
+    "change_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "at",
+          "summary"
+        ]
+      }
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "name",
+    "version",
+    "status",
+    "governance_status",
+    "created",
+    "updated",
+    "provenance"
+  ]
+}

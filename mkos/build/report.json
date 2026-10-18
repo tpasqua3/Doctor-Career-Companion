@@ -1,0 +1,29 @@
+{
+  "built": "2026-10-18T02:14:56.950Z",
+  "errors": 0,
+  "warnings": [],
+  "counts": {
+    "app_curriculum_topics": 240,
+    "facet_groups": 26,
+    "facets": 252,
+    "concept_types": 21,
+    "relationships": 16,
+    "structural_relationships": 15,
+    "object_types": 17,
+    "schemas": 25,
+    "specialties": 27,
+    "source_classes": 25,
+    "competencies": 9,
+    "layers": 11,
+    "stop_the_line_conditions": 8
+  },
+  "framework_hash": "b2f62c2d3707c1cb",
+  "versions": {
+    "competencies": "1.0.0",
+    "ingestion": "1.0.1",
+    "ontology": "1.0.0",
+    "scoring": "1.0.0",
+    "source_classes": "1.0.0",
+    "specialties": "1.0.0"
+  }
+}

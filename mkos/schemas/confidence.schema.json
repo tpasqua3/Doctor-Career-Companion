@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/confidence.schema.json",
+  "title": "Confidence object",
+  "description": "CONFIDENCE OBJECT: every confidence-bearing object supports these fields.",
+  "type": "object",
+  "properties": {
+    "value": {},
+    "confidence_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "confidence_type": {
+      "type": "string"
+    },
+    "confidence_source": {
+      "type": "string"
+    },
+    "evidence_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "signal_strength": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "data_density": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "stability_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "last_updated": {
+      "type": "string"
+    },
+    "calculation_method": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "confidence_score",
+    "confidence_type",
+    "calculation_method"
+  ]
+}
