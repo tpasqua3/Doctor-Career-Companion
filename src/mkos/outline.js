@@ -73,7 +73,7 @@ export function pdfText(u8) {
 }
 
 // ---------- reading the file by byte ranges ----------
-export async function pdfOutline(read, size, { maxItems = 4000, maxDepth = 4, maxReads = 600 } = {}) {
+export async function pdfOutline(read, size, { maxItems = 4000, maxDepth = 4, maxReads = 400 } = {}) {
   let reads = 0;
   const cache = new Map();   // fixed 64 KB blocks
   const BLOCK = 65536;
@@ -154,14 +154,22 @@ export async function pdfOutline(read, size, { maxItems = 4000, maxDepth = 4, ma
   const outlines = await deref(root.d.Outlines);
   // page tree: page object number -> page number (1-based); walked lazily only when there is an outline
   const pageNum = new Map();
+  // Page numbers come from the page tree's order. A node whose /Count equals its number of kids has only pages as kids, so the
+  // leaf page objects themselves (scattered through a large file between images) never need to be read: only the tree's inner nodes.
+  let pagesOk = true;
   async function walkPages() {
-    let n = 0; const stack = [root.d.Pages]; const visited = new Set();
-    while (stack.length && pageNum.size < 20000) {
-      const ref = stack.pop(); if (!ref || ref.r == null || visited.has(ref.r)) continue; visited.add(ref.r);
-      const node = await obj(ref.r); if (!node || !node.d) continue;
-      if (node.d.Type && node.d.Type.n === 'Pages' || node.d.Kids) { const kids = (node.d.Kids && node.d.Kids.a) || []; for (let k = kids.length - 1; k >= 0; k--) stack.push(kids[k]); }
-      else pageNum.set(ref.r, ++n);
+    let n = 0; const visited = new Set();
+    async function node(ref, depth) {
+      if (!ref || ref.r == null || visited.has(ref.r) || depth > 32) return;
+      if (reads > maxReads * 0.6) { pagesOk = false; return; }   // keep the budget for the outline itself
+      visited.add(ref.r);
+      const o = await obj(ref.r); if (!o || !o.d) return;
+      const kids = (o.d.Kids && o.d.Kids.a) || null;
+      if (!kids) { pageNum.set(ref.r, ++n); return; }
+      if (o.d.Count && o.d.Count.i === kids.length) { for (const k of kids) if (k.r != null) pageNum.set(k.r, ++n); return; }
+      for (const k of kids) { await node(k, depth + 1); if (!pagesOk) return; }
     }
+    await node(root.d.Pages, 0);
   }
   const names = new Map();
   async function namedDest(name) {
@@ -202,7 +210,7 @@ export async function pdfOutline(read, size, { maxItems = 4000, maxDepth = 4, ma
     }
   }
   await walk(outlines.d.First, 1, null);
-  return { items, pages: pageNum.size, reads };
+  return { items, pages: pagesOk ? pageNum.size : null, page_numbers: pagesOk, reads };
 }
 
 // PNG predictors (used by compressed cross-reference streams).
