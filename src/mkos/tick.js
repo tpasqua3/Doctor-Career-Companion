@@ -220,6 +220,13 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
   if (rawDeps.ai) deps.ai = (...a) => { tick(1); return rawDeps.ai(...a); };
   const report = { at: nowIso(), budget, steps: [] };
   let platformHit = false;
+  // Canonical storage first, on its own small budget: persisting to Drive (the system of record) never waits behind other work.
+  if (mirrorRoot) {
+    const mm = metered(rawEnv, 120);
+    try { const m = await mirrorStep(mm.env, rawDeps, mirrorRoot, { max: 3 }); report.steps.push(`drive ${m.written} written, ${Math.max(0, m.dirty - m.written)} behind`);
+      if (new Date().getUTCHours() === 7) await snapshot(mm.env, rawDeps, mirrorRoot); }
+    catch (e) { if (!e.budget) { if (PLATFORM.test(String(e.message || e))) platformHit = true; report.steps.push('drive: ' + String(e.message || e).slice(0, 120)); } }
+  }
   try {
     if (!(await bootstrap(env, deps, meter))) throw new BudgetSpent();
     report.steps.push('bootstrap ok');
@@ -250,7 +257,6 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
       report.steps.push(`${job.kind} ${job.subject}${finished ? ' done' : ' continues'}`);
       if (!finished && job.kind === 'extract') break;     // one AI-bearing step per run
     }
-    if (mirrorRoot) { const m = await mirrorStep(env, deps, mirrorRoot, { max: 4 }); report.steps.push(`mirror ${m.written} written`); if (new Date().getUTCHours() === 7) await snapshot(env, deps, mirrorRoot).catch(() => {}); }
   } catch (e) {
     if (e.budget) report.steps.push('budget spent');
     else if (PLATFORM.test(String(e.message || e))) { platformHit = true; report.steps.push('platform limit: ' + e.message); }
