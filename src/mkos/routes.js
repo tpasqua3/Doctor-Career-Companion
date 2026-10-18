@@ -11,6 +11,7 @@ import { queue } from './ingest.js';
 import { buildCompatRegistry, validateCutover, retireLegacy, rollbackCutover } from './cutover.js';
 import { mkTick } from './tick.js';
 import { FRAMEWORK, FRAMEWORK_HASH } from './framework.js';
+import { dashboard as pronDashboard, flag as pronFlag, approve as pronApprove, rejectCandidate, syncOwner, pronId } from './pronounce.js';
 
 const OPS = {
   // ---- open to every account
@@ -44,6 +45,12 @@ const OPS = {
   cutover_validate: { owner: true, run: async (env, u, a, x) => validateCutover(env, x.deps, { learnerDocs: await x.deps.userDocs(u.id, ['med/libreg', 'med/les_', 'med/bank_', 'med/cards_']) }) },
   cutover_retire: { owner: true, run: async (env, u, a, x) => retireLegacy(env, x.deps, { actor: 'owner:' + u.email, confirm: a.confirm === true }) },
   cutover_rollback: { owner: true, run: async (env, u, a, x) => rollbackCutover(env, x.deps, { actor: 'owner:' + u.email }) },
+  pronunciation: { owner: false, run: async (env, u, a) => { const o = await getObject(env, pronId(String(a.term || ''))); return o ? { record: o } : { error: 'no pronunciation record for that term' }; } },
+  pron_dashboard: { owner: true, run: async (env, u, a) => pronDashboard(env, { limit: Math.min(100, Number(a.limit) || 25) }) },
+  pron_flag: { owner: true, run: async (env, u, a, x) => pronFlag(env, x.deps, String(a.term || ''), { user: 'owner:' + u.email, source_system: String(a.source_system || 'api') }) },
+  pron_approve: { owner: true, run: async (env, u, a, x) => pronApprove(env, x.deps, String(a.term || ''), { index: a.index ?? null, simplified: a.simplified || null, ipa: a.ipa || '', lock: a.lock !== false, user: 'owner:' + u.email }) },
+  pron_reject: { owner: true, run: async (env, u, a) => rejectCandidate(env, String(a.term || ''), a.index, { user: 'owner:' + u.email }) },
+  pron_sync: { owner: true, run: async (env, u, a, x) => syncOwner(env, x.deps, {}) },
   framework: { owner: false, run: async () => ({ framework_hash: FRAMEWORK_HASH, versions: Object.fromEntries(Object.entries(FRAMEWORK.frameworks).map(([k, v]) => [k, v.version])), ontology: FRAMEWORK.frameworks.ontology }) },
 };
 
@@ -66,6 +73,6 @@ export async function mkosApi(request, env, url, user, body, x) {
 }
 
 export const MKOS_TOOLS = [
-  { name: 'mkos', description: 'The Medical Knowledge Operating System (MKOS): the app\'s structured knowledge base (sources, guidelines, concepts, recommendations, evidence, blueprint, curriculum) and this physician\'s learner state. `op` is one of: status, search {q, type, specialty, include_history}, object {id, history, neighbors}, context {id} (the governed teaching package for a concept: current recommendations with citations, board mapping, facets), route {q} (answers from the lowest-cost authoritative layer and says which), learner {level}, plan (what to teach, review, assess, reinforce, remediate, prioritize, delay), refresh_me, framework. Owner only: events, jobs, audit {id}, review {id, result, note}, edit {object, summary}, set_status {id, status, replaced_by, reason}, settings {path, value}, rescan, requeue {kind}, tick, graph_validation, compat_registry, cutover_validate, cutover_retire {confirm}, cutover_rollback.',
+  { name: 'mkos', description: 'The Medical Knowledge Operating System (MKOS): the app\'s structured knowledge base (sources, guidelines, concepts, recommendations, evidence, blueprint, curriculum) and this physician\'s learner state. `op` is one of: status, search {q, type, specialty, include_history}, object {id, history, neighbors}, context {id} (the governed teaching package for a concept: current recommendations with citations, board mapping, facets), route {q} (answers from the lowest-cost authoritative layer and says which), learner {level}, plan (what to teach, review, assess, reinforce, remediate, prioritize, delay), refresh_me, framework. pronunciation {term}. Owner only: pron_dashboard, pron_flag {term, source_system} (Mark Pronunciation Incorrect: records it and generates ranked candidates), pron_approve {term, index | simplified, ipa, lock}, pron_reject {term, index}, pron_sync, events, jobs, audit {id}, review {id, result, note}, edit {object, summary}, set_status {id, status, replaced_by, reason}, settings {path, value}, rescan, requeue {kind}, tick, graph_validation, compat_registry, cutover_validate, cutover_retire {confirm}, cutover_rollback.',
     inputSchema: { type: 'object', properties: { op: { type: 'string' }, args: { type: 'object' } }, required: ['op'] }, annotations: { readOnlyHint: false, destructiveHint: false } },
 ];

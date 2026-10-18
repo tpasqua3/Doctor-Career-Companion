@@ -87,7 +87,7 @@ export async function loadText(env, deps, src, { complete = false } = {}) {
   return chunks.length;
 }
 
-async function aiBudgetLeft(env) {
+export async function aiBudgetLeft(env) {
   const day = nowIso().slice(0, 10), used = J(await getSetting(env, 'ai_budget'), {}), cap = Number(fwGet('ingestion.extraction.daily_ai_budget_default', await overrides(env)));
   return { left: cap - (used.day === day ? used.n : 0), spend: async () => setSetting(env, 'ai_budget', JSON.stringify({ day, n: (used.day === day ? used.n : 0) + 1 })) };
 }

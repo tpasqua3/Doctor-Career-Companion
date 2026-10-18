@@ -2,7 +2,7 @@
   "id": "ontology.core",
   "type": "Ontology",
   "name": "MKOS Ontology",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "current",
   "created_date": "2026-10-17",
   "updated_date": "2026-10-17",
@@ -17,6 +17,11 @@
       "version": "1.0.0",
       "date": "2026-10-17",
       "summary": "Initial ontology from the MKOS V3 specification."
+    },
+    {
+      "version": "1.1.0",
+      "date": "2026-10-17",
+      "summary": "Pronunciation: Pronunciation object type, pronunciation facet group on every concept, has_pronunciation relationship."
     }
   ],
   "project": {
@@ -313,6 +318,14 @@
       "table": "mk_objects",
       "schema": "educational_asset.schema.json",
       "versioned": true
+    },
+    {
+      "type": "Pronunciation",
+      "prefix": "pron",
+      "layer": "knowledge",
+      "table": "mk_objects",
+      "schema": "pronunciation.schema.json",
+      "versioned": true
     }
   ],
   "source_types": [
@@ -371,7 +384,8 @@
         "management",
         "complication",
         "prognosis",
-        "clinical_reasoning"
+        "clinical_reasoning",
+        "pronunciation"
       ]
     },
     {
@@ -395,7 +409,8 @@
         "management",
         "complication",
         "prognosis",
-        "clinical_reasoning"
+        "clinical_reasoning",
+        "pronunciation"
       ]
     },
     {
@@ -413,7 +428,8 @@
         "research",
         "clinical_presentation",
         "diagnostic",
-        "clinical_reasoning"
+        "clinical_reasoning",
+        "pronunciation"
       ]
     },
     {
@@ -431,7 +447,8 @@
         "research",
         "clinical_presentation",
         "diagnostic",
-        "clinical_reasoning"
+        "clinical_reasoning",
+        "pronunciation"
       ]
     },
     {
@@ -448,7 +465,8 @@
         "competency",
         "research",
         "pharmacology",
-        "management"
+        "management",
+        "pronunciation"
       ]
     },
     {
@@ -466,7 +484,8 @@
         "research",
         "procedural",
         "anatomy",
-        "complication"
+        "complication",
+        "pronunciation"
       ]
     },
     {
@@ -484,7 +503,8 @@
         "research",
         "laboratory",
         "test_interpretation",
-        "physiology"
+        "physiology",
+        "pronunciation"
       ]
     },
     {
@@ -502,7 +522,8 @@
         "research",
         "test_interpretation",
         "laboratory",
-        "procedural"
+        "procedural",
+        "pronunciation"
       ]
     },
     {
@@ -519,7 +540,8 @@
         "competency",
         "research",
         "imaging",
-        "test_interpretation"
+        "test_interpretation",
+        "pronunciation"
       ]
     },
     {
@@ -537,7 +559,8 @@
         "research",
         "laboratory",
         "test_interpretation",
-        "physiology"
+        "physiology",
+        "pronunciation"
       ]
     },
     {
@@ -554,7 +577,8 @@
         "competency",
         "research",
         "epidemiology",
-        "risk_factor"
+        "risk_factor",
+        "pronunciation"
       ]
     },
     {
@@ -571,7 +595,8 @@
         "competency",
         "research",
         "anatomy",
-        "physiology"
+        "physiology",
+        "pronunciation"
       ]
     },
     {
@@ -587,7 +612,8 @@
         "educational",
         "competency",
         "research",
-        "physiology"
+        "physiology",
+        "pronunciation"
       ]
     },
     {
@@ -603,7 +629,8 @@
         "educational",
         "competency",
         "research",
-        "pathophysiology"
+        "pathophysiology",
+        "pronunciation"
       ]
     },
     {
@@ -612,7 +639,8 @@
       "expected_facet_groups": [
         "identity",
         "guideline",
-        "evidence"
+        "evidence",
+        "pronunciation"
       ]
     },
     {
@@ -622,7 +650,8 @@
         "identity",
         "guideline",
         "evidence",
-        "board"
+        "board",
+        "pronunciation"
       ]
     },
     {
@@ -630,7 +659,8 @@
       "name": "Evidence Object",
       "expected_facet_groups": [
         "identity",
-        "evidence"
+        "evidence",
+        "pronunciation"
       ]
     },
     {
@@ -647,7 +677,8 @@
         "competency",
         "research",
         "classification",
-        "clinical_reasoning"
+        "clinical_reasoning",
+        "pronunciation"
       ]
     },
     {
@@ -664,7 +695,8 @@
         "competency",
         "research",
         "classification",
-        "clinical_reasoning"
+        "clinical_reasoning",
+        "pronunciation"
       ]
     },
     {
@@ -680,7 +712,8 @@
         "educational",
         "competency",
         "research",
-        "classification"
+        "classification",
+        "pronunciation"
       ]
     },
     {
@@ -698,7 +731,8 @@
         "research",
         "diagnostic",
         "test_interpretation",
-        "clinical_reasoning"
+        "clinical_reasoning",
+        "pronunciation"
       ]
     }
   ],
@@ -922,6 +956,12 @@
       "name": "covers",
       "basis": "Asset covers Concept (indexing of Sources/Assets)",
       "inverse": "covered_by"
+    },
+    {
+      "key": "has_pronunciation",
+      "name": "has_pronunciation",
+      "basis": "Pronunciation Facet: a concept's governed pronunciation record",
+      "inverse": "pronunciation_of"
     }
   ],
   "facet_model": {
@@ -2062,6 +2102,55 @@
           {
             "key": "future_directions",
             "name": "Future Directions"
+          }
+        ]
+      },
+      {
+        "group": "pronunciation",
+        "facets": [
+          {
+            "key": "display_name",
+            "name": "Display Name"
+          },
+          {
+            "key": "simplified_phonetic_pronunciation",
+            "name": "Simplified Phonetic Pronunciation"
+          },
+          {
+            "key": "standardized_pronunciation",
+            "name": "Standardized Pronunciation"
+          },
+          {
+            "key": "ipa_representation",
+            "name": "IPA Representation"
+          },
+          {
+            "key": "tts_ssml_representation",
+            "name": "TTS SSML Representation"
+          },
+          {
+            "key": "alternative_accepted_pronunciations",
+            "name": "Alternative Accepted Pronunciations"
+          },
+          {
+            "key": "audio_pronunciation_reference",
+            "name": "Audio Pronunciation Reference"
+          },
+          {
+            "key": "pronunciation_confidence_score",
+            "name": "Pronunciation Confidence Score"
+          },
+          {
+            "key": "pronunciation_source",
+            "name": "Pronunciation Source"
+          },
+          {
+            "key": "last_validation_date",
+            "name": "Last Validation Date"
+          },
+          {
+            "key": "version",
+            "name": "Version"
           }
         ]
       }

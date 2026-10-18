@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/pronunciation.schema.json",
+  "title": "Pronunciation record",
+  "description": "UNIVERSAL PRONUNCIATION OBJECT: a governed, versioned, confidence-scored pronunciation for one term, inherited by every audio system.",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "required": [
+    "term",
+    "display_name",
+    "simplified",
+    "management",
+    "validation_status",
+    "pron_confidence"
+  ],
+  "properties": {
+    "term": {
+      "type": "string"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "concept": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "x-ref": "Concept"
+    },
+    "simplified": {
+      "type": "string"
+    },
+    "standardized": {
+      "type": "string"
+    },
+    "ipa": {
+      "type": "string"
+    },
+    "ssml": {
+      "type": "string"
+    },
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "audio_ref": {
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "owner_list",
+        "owner_asis",
+        "owner_unconfirmed",
+        "ai_generated",
+        "admin_custom"
+      ]
+    },
+    "management": {
+      "enum": [
+        "system_managed",
+        "admin_locked"
+      ]
+    },
+    "validation_status": {
+      "enum": [
+        "unvalidated",
+        "monitoring",
+        "approved",
+        "flagged",
+        "rejected"
+      ]
+    },
+    "band": {
+      "enum": [
+        "high",
+        "medium",
+        "low",
+        "very_low"
+      ]
+    },
+    "speak": {
+      "type": "boolean"
+    },
+    "pron_confidence": {
+      "type": "object",
+      "properties": {
+        "pronunciation_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "source_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "tts_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "validation_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "admin_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "trust_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "freshness_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "overall_pronunciation_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "correction_history": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "review_history": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "stats": {
+      "type": "object"
+    },
+    "last_validated": {
+      "type": "string"
+    }
+  }
+}

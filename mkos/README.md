@@ -65,6 +65,19 @@ Owner: `events`, `jobs`, `audit`, `review {id, result, note}`, `edit {object}`, 
 AI extraction calls only free services (Gemini's quick model on the free tier, then Cloudflare Workers AI), directly and under its own
 usage account `mkos`: a paid service is never reached, the app's AI hierarchy is unchanged and no learner's allowance is spent. Variables: `MKOS=off` pauses the engine; `MKOS_AI=off` keeps extraction to rules only.
 
+## Pronunciation registry (src/mkos/pronounce.js, mkos/ontology/pronunciation.json)
+
+Pronunciation is a governed knowledge object: one `Pronunciation` record per term (display name, simplified respelling, IPA, SSML,
+alternatives, confidence fields, band, validation status, management, correction and review history), linked to its concept by
+`has_pronunciation` and carried as the `pronunciation` facet. The owner's central list (med/says, the app's Pronunciation test) stays
+the admin store: each entry is mirrored as an admin-locked, approved record and words confirmed "right as written" likewise; anything
+approved through MKOS is written back into that list. Free-AI candidates (taught by the owner's confirmed respellings, calibrated by
+his acceptance rate) are generated daily for likely-misread terms and for anything flagged; they enter as unvalidated and are never
+spoken until confirmed (`pronunciation.tts_use.min_overall_confidence`, default 95). Every voice on the server reads the account's
+list, then the owner's, then the MKOS records cleared for speech, so a correction made once is heard everywhere.
+Owner operations: `pron_dashboard`, `pron_flag {term}` (Mark Pronunciation Incorrect), `pron_approve {term, index | simplified, lock}`,
+`pron_reject`, `pron_sync`; everyone: `pronunciation {term}`.
+
 ## Retiring the legacy guideline registry (`guidelines_registry_v6_CURRENT.json`)
 
 1. **Import everything**: every legacy entry, every field kept verbatim (`data.legacy`), ref_ids unchanged.

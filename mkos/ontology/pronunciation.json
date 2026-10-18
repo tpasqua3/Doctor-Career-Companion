@@ -1,0 +1,181 @@
+{
+  "id": "framework.pronunciation",
+  "type": "Framework",
+  "name": "Pronunciation registry and governance",
+  "version": "1.0.0",
+  "status": "current",
+  "created_date": "2026-10-17",
+  "updated_date": "2026-10-17",
+  "supersedes": null,
+  "replaced_by": null,
+  "source_attribution": [
+    "MKOS Pronunciation, Audio, and TTS Standardization Framework",
+    "Pronunciation Feedback and Admin Override System",
+    "Pronunciation Confidence and Governance Framework (10/17/2026)"
+  ],
+  "change_log": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-17",
+      "summary": "Initial pronunciation framework from the three pronunciation specifications."
+    }
+  ],
+  "principle": [
+    "Define Once",
+    "Maintain Once",
+    "Use Everywhere",
+    "Knowledge Once",
+    "Govern Once",
+    "Correct Once",
+    "Propagate Everywhere"
+  ],
+  "record_fields": [
+    "Display Name",
+    "Simplified Phonetic Pronunciation",
+    "Standardized Pronunciation",
+    "IPA Representation",
+    "TTS / SSML Representation",
+    "Alternative Accepted Pronunciations",
+    "Audio Pronunciation Reference",
+    "Pronunciation Confidence Score",
+    "Pronunciation Source",
+    "Last Validation Date",
+    "Version",
+    "Validation Status",
+    "Evidence Source",
+    "Correction History",
+    "Review History"
+  ],
+  "confidence_fields": [
+    "pronunciation_confidence",
+    "source_confidence",
+    "tts_confidence",
+    "validation_confidence",
+    "admin_confidence",
+    "trust_score",
+    "freshness_score",
+    "overall_pronunciation_confidence"
+  ],
+  "overall_weights": {
+    "pronunciation_confidence": 0.25,
+    "source_confidence": 0.15,
+    "tts_confidence": 0.1,
+    "validation_confidence": 0.2,
+    "admin_confidence": 0.2,
+    "freshness_score": 0.1
+  },
+  "thresholds": [
+    {
+      "min": 95,
+      "band": "high",
+      "action": "automatically approved"
+    },
+    {
+      "min": 80,
+      "band": "medium",
+      "action": "approved with monitoring"
+    },
+    {
+      "min": 60,
+      "band": "low",
+      "action": "flag for review"
+    },
+    {
+      "min": 0,
+      "band": "very_low",
+      "action": "do not use as preferred pronunciation; require validation"
+    }
+  ],
+  "sources": {
+    "owner_list": {
+      "source_confidence": 99,
+      "admin_confidence": 100,
+      "validation_confidence": 100,
+      "pronunciation_confidence": 98,
+      "management": "admin_locked",
+      "note": "the owner's central pronunciation list (med/says): authoritative, inherited by every account"
+    },
+    "owner_asis": {
+      "source_confidence": 99,
+      "admin_confidence": 100,
+      "validation_confidence": 100,
+      "pronunciation_confidence": 98,
+      "management": "admin_locked",
+      "note": "confirmed to sound right as written (med/saylog asis)"
+    },
+    "owner_unconfirmed": {
+      "source_confidence": 70,
+      "admin_confidence": 0,
+      "validation_confidence": 0,
+      "pronunciation_confidence": 70,
+      "management": "system_managed",
+      "note": "an AI suggestion in the owner's list not yet confirmed (switched off)"
+    },
+    "ai_generated": {
+      "source_confidence": 70,
+      "admin_confidence": 0,
+      "validation_confidence": 0,
+      "pronunciation_confidence": 75,
+      "management": "system_managed",
+      "note": "candidate from a free AI service, calibrated by the owner's historical acceptance rate"
+    },
+    "admin_custom": {
+      "source_confidence": 99,
+      "admin_confidence": 100,
+      "validation_confidence": 100,
+      "pronunciation_confidence": 98,
+      "management": "admin_locked",
+      "note": "written or approved by the owner in MKOS"
+    }
+  },
+  "tts_use": {
+    "min_overall_confidence": 95,
+    "note": "Only records at or above this confidence (admin-approved and locked records always are) are spoken. Medium-band records are kept for monitoring and review but not spoken, preserving the owner's rule that an unheard AI guess is never used in a lesson. Set pronunciation.tts_use.min_overall_confidence to 80 to speak the 'approved with monitoring' band too."
+  },
+  "precedence": [
+    "an account's own list (that account only)",
+    "the owner's central list (admin locked)",
+    "MKOS records cleared for speech"
+  ],
+  "generation": {
+    "who": "concepts whose names are likely misread (medications, eponyms, long or Latin/Greek terms) and terms flagged by the owner",
+    "batch": 10,
+    "examples": 40,
+    "never_overwrite": "admin_locked records; candidates are attached as suggestions instead"
+  },
+  "propagation": [
+    "Pronunciation Registry",
+    "Concept",
+    "TTS Representation",
+    "Audio Lessons",
+    "Voice Tutor",
+    "Conversational Tutor",
+    "Flashcards",
+    "Questions",
+    "Board Reviews",
+    "Teaching Scripts",
+    "Future Generated Assets"
+  ],
+  "propagation_mechanism": "Every voice path on the server (Google Cloud TTS, Cloudflare voice, card and question audio, tutor speech) resolves text through one respelling step (respell in src/worker.js) whose list is: the account's own list, then the owner's central list, then the MKOS records cleared for speech. A correction made once is heard everywhere on the next request; nothing is copied into lessons or cards.",
+  "learning": [
+    "Flag Frequency",
+    "Correction Frequency",
+    "Override Frequency",
+    "Rejection Frequency",
+    "Validation Rate",
+    "Accepted Suggestion Rate",
+    "Frequently Corrected Terms",
+    "Shared linguistic structure (beginnings and endings of corrected terms)"
+  ],
+  "dashboard": [
+    "High Confidence Pronunciations",
+    "Medium Confidence Pronunciations",
+    "Low Confidence Pronunciations",
+    "Recently Corrected Terms",
+    "Frequently Corrected Terms",
+    "Unvalidated Terms",
+    "Flagged Terms",
+    "Admin Locked Terms",
+    "Terms Requiring Review"
+  ]
+}

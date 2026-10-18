@@ -11,6 +11,8 @@ import { analyzeImpact, rescore } from './impact.js';
 import { seedFramework, importBlueprint, importCurriculum, mapLearnerAssets } from './education.js';
 import { deriveFromRecord } from './learner.js';
 import { mirrorStep, snapshot } from './mirror.js';
+import { syncOwner, generateCandidates, termsNeedingPronunciation } from './pronounce.js';
+import { aiBudgetLeft } from './extract.js';
 
 export class BudgetSpent extends Error { constructor() { super('MKOS query budget spent for this run'); this.budget = true; } }
 // Only Cloudflare's own per-invocation limits count as a platform cap (a Google rate limit is an ordinary, retried error).
@@ -92,6 +94,16 @@ async function runJob(env, deps, job) {
       }
       await save('running'); return false;
     }
+    if (job.kind === 'pron_sync') { p.prog = p.prog || {}; await syncOwner(env, deps, { prog: p.prog }); await save('done'); return true; }
+    if (job.kind === 'pronounce') {
+      // Up to pronunciation.generation.batch terms per AI call, one call per run, within the shared daily AI budget.
+      const b = await aiBudgetLeft(env);
+      if (!deps.ai || b.left <= 0 || (p.batches || 0) >= 10) { await save('done', `${p.generated || 0} terms`); return true; }
+      const terms = await termsNeedingPronunciation(env, FRAMEWORK.frameworks.pronunciation.generation.batch || 10);
+      if (!terms.length) { await save('done', 'no terms waiting'); return true; }
+      const r = await generateCandidates(env, deps, terms); await b.spend();
+      p.batches = (p.batches || 0) + 1; p.generated = (p.generated || 0) + (r.generated || 0); await save('running'); return false;
+    }
     if (job.kind === 'learner') { const docs = await deps.userDocs(job.subject, ['med/state', 'med/bank_', 'med/cards_']); await deriveFromRecord(env, job.subject, docs); await save('done'); return true; }
     if (job.kind === 'assets') {
       const docs = await deps.userDocs(job.subject, p.paths && p.paths.length ? p.paths : ['med/les_', 'med/bank_', 'med/cards_']);
@@ -131,7 +143,7 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot } = {}) {
   const { env, meter, tick } = metered(rawEnv, budget);
   // Queries the Worker makes on MKOS's behalf (learner records) count against the same budget.
   const deps = { ...rawDeps };
-  for (const k of ['userDocs', 'ownerDocs', 'changedUsers']) if (rawDeps[k]) deps[k] = (...a) => { tick(1); return rawDeps[k](...a); };
+  for (const k of ['userDocs', 'ownerDocs', 'changedUsers', 'ownerUpdated', 'ownerSay']) if (rawDeps[k]) deps[k] = (...a) => { tick(1); return rawDeps[k](...a); };
   if (rawDeps.ai) deps.ai = (...a) => { tick(1); return rawDeps.ai(...a); };
   const report = { at: nowIso(), budget, steps: [] };
   let platformHit = false;
@@ -142,6 +154,9 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot } = {}) {
     const scanDue = !scan || Date.now() - Date.parse(scan.finished) > 30 * 60e3 || J(await getSetting(env, 'scan'), {})?.cur;
     if (scanDue && root) { const s = await scanStep(env, deps, root, { pages: 1 }); report.steps.push(`scan +${s.files} files, ${s.changes.length} changes`); }
     await learnerWatch(env, deps);
+    // Pronunciation: mirror the owner's list whenever it changes; one generation job per day for terms without a record.
+    if (deps.ownerUpdated) { const t = await deps.ownerUpdated(['med/says', 'med/saylog']); if (t && t > ((await getSetting(env, 'pron_sync_t')) || '')) { await queue(env, 'pron_sync', 'owner', {}, 4); await setSetting(env, 'pron_sync_t', t); } }
+    const day = nowIso().slice(0, 10); if ((await getSetting(env, 'pron_gen_day')) !== day && J(await getSetting(env, 'bootstrap'), {})?.curriculum?.done) { await queue(env, 'pronounce', 'day:' + day, {}, 8); await setSetting(env, 'pron_gen_day', day); }
     for (let k = 0; k < 6; k++) {
       const job = await env.DB.prepare("SELECT * FROM mk_jobs WHERE state IN ('queued','running') AND not_before <= ? ORDER BY priority, id LIMIT 1").bind(Date.now()).first();
       if (!job) break;

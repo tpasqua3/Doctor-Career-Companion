@@ -12,6 +12,7 @@
 // The AI models hold no Google credential at all; when one asks for a record, this server answers from the caller's rows only.
 import { mkosApi, mkosCall, MKOS_TOOLS } from './mkos/routes.js';
 import { mkTick } from './mkos/tick.js';
+import { ttsList as mkosSays } from './mkos/pronounce.js';
 const enc = new TextEncoder();
 const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
 const rand = n => hex(crypto.getRandomValues(new Uint8Array(n)));
@@ -412,15 +413,19 @@ async function ownerId(env) {
   if (!env.OWNER_EMAIL) return null;
   try { const r = await env.DB.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(String(env.OWNER_EMAIL).trim().toLowerCase()).first(); return r ? r.id : null; } catch (e) { return null; }
 }
+/* After the account's list and the owner's central list come the MKOS pronunciation records cleared for speech (src/mkos/pronounce.js):
+   respell keeps the first entry it meets for a word, so a person's own entries, then the owner's, always win. */
 async function sayFor(env, user) {
   const mine = await sayList(env, user), o = await ownerId(env);
-  return !o || o === user.id ? mine : mine.concat(await sayList(env, { id: o }));
+  const mk = env.MKOS === 'off' ? [] : await mkosSays(env).catch(() => []);
+  return (!o || o === user.id ? mine : mine.concat(await sayList(env, { id: o }))).concat(mk);
 }
 /* What the app shows about it: whether this account is the owner, and for everyone else the central entries in use. */
 async function siteSays(env, user) {
   const o = await ownerId(env);
   if (!o || o === user.id) return { owner: !!o, list: [] };
-  const list = (await sayList(env, { id: o })).filter(x => x && x.on !== false && typeof x.w === 'string' && typeof x.s === 'string' && x.w.trim() && x.s.trim()).slice(0, SAY_MAX).map(x => ({ w: x.w.trim().toLowerCase().slice(0, 60), s: x.s.trim().slice(0, 120) }));
+  const mk = env.MKOS === 'off' ? [] : await mkosSays(env).catch(() => []);
+  const list = (await sayList(env, { id: o })).concat(mk).filter(x => x && x.on !== false && typeof x.w === 'string' && typeof x.s === 'string' && x.w.trim() && x.s.trim()).slice(0, SAY_MAX).map(x => ({ w: x.w.trim().toLowerCase().slice(0, 60), s: x.s.trim().slice(0, 120) }));
   return { owner: false, list };
 }
 /* Up to SAY_MAX words in use per account (the owner's central list counts separately). Single words are found by looking each
@@ -1428,6 +1433,8 @@ function mkDeps(env) {
     patch: async (id, { name, addParents, removeParents }) => gsend(env, 'PATCH', 'files/' + id + '?' + form({ ...(addParents ? { addParents } : {}), ...(removeParents ? { removeParents } : {}) }), name ? { name } : {}),
     folders: { registry: str(env.MKOS_REGISTRY_FOLDER, 200), oldVersions: str(env.MKOS_REGISTRY_OLD_FOLDER, 200), mkos: str(env.MKOS_DRIVE_FOLDER, 200) },
     userDocs: docsOf,
+    ownerUpdated: async paths => { const o = await ownerId(env); if (!o) return ''; const r = await env.DB.prepare(`SELECT MAX(updated) AS t FROM docs WHERE user_id = ? AND path IN (${paths.map(() => '?').join(',')})`).bind(o, ...paths).first(); return (r && r.t) || ''; },
+    ownerSay: async ops => { const o = await ownerId(env); if (!o) throw new Error('No owner account.'); const r = await applySayOps(env, o, ops); syncSoon(env, null, o); return r; },
     ownerDocs: async prefixes => docsOf(await ownerId(env), prefixes),
     changedUsers: async () => (await env.DB.prepare("SELECT user_id, MAX(updated) AS updated FROM docs WHERE path = 'med/state' OR path LIKE 'med/les_%' OR path LIKE 'med/bank_%' OR path LIKE 'med/cards_%' GROUP BY user_id").all()).results,
     /* Free services only (Gemini's free tier, then Cloudflare Workers AI), called directly so a paid service is never reached and the
