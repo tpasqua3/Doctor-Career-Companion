@@ -1,0 +1,410 @@
+MKOS Audit Remediation and Optimization Directive
+
+Purpose
+
+Following completion of the Backend-to-Frontend Penetration Audit, Retrieval Audit, Source Audit, Knowledge Object Audit, Curriculum Audit, AI Utilization Audit, and Stress Testing Review, execute a comprehensive remediation pass.
+
+The objective is to eliminate disconnected systems, unused assets, excessive AI utilization, incomplete mappings, orphaned content, and frontend-access deficiencies.
+
+Success is not measuring deficiencies.
+
+Success is eliminating deficiencies and validating remediation.
+
+==================================================
+PHASE 1: ELIMINATE ORPHANED ASSETS
+==================================================
+
+Identify and remediate:
+
+- orphaned sources
+- orphaned chapters
+- orphaned sections
+- orphaned topics
+- orphaned concepts
+- orphaned knowledge objects
+- orphaned educational assets
+- orphaned learning objectives
+- orphaned assessments
+
+Every entity must be connected to:
+
+Source
+→ Ontology
+→ Knowledge Object
+→ Graph
+→ Curriculum
+→ Functionality
+
+No standalone entities should remain.
+
+==================================================
+PHASE 2: COMPLETE MAPPING COVERAGE
+==================================================
+
+For all entities lacking relationships:
+
+Generate and validate:
+
+- ontology mappings
+- specialty mappings
+- competency mappings
+- blueprint mappings
+- curriculum mappings
+- source mappings
+- assessment mappings
+- educational mappings
+
+Target:
+
+100% mapped coverage.
+
+No meaningful entity should exist outside the relationship graph.
+
+==================================================
+PHASE 3: FRONTEND PENETRATION REMEDIATION
+==================================================
+
+For each frontend workflow:
+
+- search
+- tutoring
+- board review
+- flashcards
+- assessments
+- curriculum generation
+- lesson generation
+- progress reports
+- recommendations
+
+Determine:
+
+Backend Assets Available
+
+Backend Assets Utilized
+
+Missing Connections
+
+Build integration pathways until backend assets become available through user-facing functionality.
+
+Target:
+
+No major backend asset category should remain inaccessible.
+
+==================================================
+PHASE 4: KNOWLEDGE OBJECT UTILIZATION OPTIMIZATION
+==================================================
+
+For every knowledge object determine:
+
+- searchable
+- retrievable
+- teachable
+- assessable
+- traceable
+- citable
+
+Remediate objects failing any category.
+
+Target:
+
+Every knowledge object participates in at least one user-facing workflow.
+
+==================================================
+PHASE 5: CURRICULUM COVERAGE REMEDIATION
+==================================================
+
+For every ABIM, CERT, and LKA topic:
+
+Verify existence of:
+
+- source mappings
+- ontology mappings
+- knowledge objects
+- objectives
+- assessments
+- educational assets
+
+If coverage is incomplete:
+
+Automatically generate missing components.
+
+Target:
+
+100% blueprint propagation.
+
+Blueprint
+→ Knowledge Objects
+→ Objectives
+→ Educational Assets
+→ Assessments
+
+==================================================
+PHASE 6: RETRIEVAL COVERAGE REMEDIATION
+==================================================
+
+Identify content currently requiring AI despite existing knowledge assets.
+
+For each AI invocation determine:
+
+Can retrieval replace this?
+
+Can ontology traversal replace this?
+
+Can graph traversal replace this?
+
+Can rules replace this?
+
+Can pre-generated educational assets replace this?
+
+If yes:
+
+Build retrieval pathways.
+
+Reduce AI dependency.
+
+Target:
+
+AI should never solve a problem already solvable through retrieval.
+
+==================================================
+PHASE 7: MKSAP UTILIZATION OPTIMIZATION
+==================================================
+
+For all MKSAP content:
+
+Verify:
+
+- chapter indexing
+- topic indexing
+- knowledge object mapping
+- blueprint linkage
+- curriculum linkage
+- competency linkage
+- assessment linkage
+
+Build missing pathways.
+
+Ensure MKSAP can participate in:
+
+- tutoring
+- lesson generation
+- board review
+- question generation
+- competency remediation
+
+Target:
+
+MKSAP becomes a first-class educational source.
+
+==================================================
+PHASE 8: TEXTBOOK UTILIZATION OPTIMIZATION
+==================================================
+
+For all indexed textbook assets:
+
+Verify:
+
+- chapter indexing
+- concept indexing
+- ontology linkage
+- blueprint linkage
+- curriculum linkage
+
+Create:
+
+- concept references
+- chapter references
+- citation references
+- graph relationships
+
+Maintain index-first architecture.
+
+Do not reproduce textbook content.
+
+Target:
+
+Textbook concepts become retrievable without requiring textbook duplication.
+
+==================================================
+PHASE 9: KNOWLEDGE GRAPH DENSIFICATION
+==================================================
+
+Identify graph sparsity.
+
+Automatically increase:
+
+- prerequisite links
+- concept links
+- disease links
+- medication links
+- diagnostic links
+- therapeutic links
+- competency links
+- blueprint links
+
+Target:
+
+High-connectivity graph traversal across specialties.
+
+The graph should become increasingly useful without requiring AI intervention.
+
+==================================================
+PHASE 10: CALLABLE KNOWLEDGE ASSET EXPANSION
+==================================================
+
+All assets should support:
+
+- retrieval
+- citation
+- flagging
+- governance review
+- confidence scoring
+- version review
+- supersession review
+- source tracing
+
+Target:
+
+Every meaningful educational entity should be:
+
+Callable
+Citable
+Traceable
+Versioned
+Reviewable
+
+==================================================
+PHASE 11: AI UTILIZATION OPTIMIZATION
+==================================================
+
+For every workflow classify:
+
+AI Required
+AI Helpful
+AI Optional
+AI Unnecessary
+
+Build deterministic alternatives wherever possible.
+
+Priority order:
+
+Ontology
+→ Graph
+→ Knowledge Objects
+→ Educational Assets
+→ Rules Engine
+→ AI
+
+AI becomes final escalation.
+
+==================================================
+PHASE 12: PERFORMANCE OPTIMIZATION
+==================================================
+
+Benchmark:
+
+- retrieval latency
+- graph traversal latency
+- lesson generation latency
+- tutoring latency
+- question generation latency
+
+Compare:
+
+AI-heavy path
+
+vs
+
+Retrieval-first path
+
+Measure:
+
+- response times
+- token costs
+- consistency
+- reproducibility
+
+Implement the more efficient pathway whenever educational quality is maintained.
+
+==================================================
+PHASE 13: AUTOMATED REGRESSION AUDITS
+==================================================
+
+Establish recurring audits:
+
+- source audit
+- indexing audit
+- mapping audit
+- retrieval audit
+- penetration audit
+- AI utilization audit
+- curriculum audit
+
+Detect degradation automatically.
+
+Generate exception reports.
+
+==================================================
+PHASE 14: SUCCESS VALIDATION
+==================================================
+
+Produce a final report containing:
+
+1. Deficiencies discovered
+2. Deficiencies fixed
+3. Assets connected
+4. Frontend penetration gains
+5. Retrieval coverage gains
+6. Curriculum coverage gains
+7. AI utilization reductions
+8. Token savings estimates
+9. Latency improvements
+10. Remaining deficiencies
+
+==================================================
+TARGET END STATE
+==================================================
+
+Source Documents
+→ Source Registries
+→ Ontology
+→ Knowledge Objects
+→ Knowledge Graph
+→ Curriculum
+→ Educational Assets
+→ Assessments
+→ Frontend Functionality
+
+All layers:
+
+- connected
+- retrievable
+- utilized
+- versioned
+- auditable
+- citable
+- source-linked
+- rebuildable
+
+Core Principle
+
+The purpose of MKOS is not to accumulate data.
+
+The purpose of MKOS is to transform stored knowledge into usable educational functionality.
+
+Backend assets that are not surfaced, utilized, retrievable, or callable represent unfinished work and should be considered optimization targets.
+
+Target Philosophy:
+
+Database First
+Ontology First
+Knowledge Graph First
+Retrieval First
+AI Last
+
+Audit
+→ Remediate
+→ Validate
+→ Stress Test
+→ Re-Audit
+→ Expand
