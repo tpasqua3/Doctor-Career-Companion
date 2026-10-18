@@ -5,7 +5,11 @@ The app runs as the **website** (Cloudflare Worker `doctor-career-companion`, de
 (artifact "Doctor Career Companion", https://claude.ai/artifact/HCUTx5bthRAJo8V1QEEuv3, published from `app/companion.html`), and inside
 the **Life OS hub**. All three must always agree. After changing `app/companion.html`: run `python3 tools/build.py`, commit
 `public/index.html` with it, push to `main`, and in the same session republish `app/companion.html` to the artifact URL above (Artifact tool
-with its `url`; leave its capabilities as they are). Never add a feature to one place only. Nothing may break existing functionality.
+with its `url`; leave its capabilities as they are, except to add a new connector tool the page calls). Then refresh the Life OS copy:
+the Life OS artifact (repo tpasqua3/Life-OS, see its CLAUDE.md) publishes `doctor.html`, built from this artifact's published page with
+its `build_embed.txt` script; rebuild and republish it, and add any new connector tool to `EMBED` in its `claude/page.html` and to its
+capabilities. (The Life OS website frames this website, so it needs nothing.) Never add a feature to one place only. Nothing may break
+existing functionality.
 
 ## MKOS is the universal educational operating system (owner mandate, 10/17/2026)
 MKOS (`src/mkos`, `mkos/`, see `mkos/README.md`) is the educational system of record, routing, governance, recommendation, asset,
