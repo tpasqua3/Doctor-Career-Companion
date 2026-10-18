@@ -153,6 +153,28 @@ Extraction never waits on the AI budget: when the day's free AI budget is spent,
 AI enrichment (`enrich` jobs); guideline parts without recommendation language get rules only; parts done by rules alone continue
 while the run's query budget has room, and each run takes jobs until its budget is nearly used.
 
+## Canonical storage: Drive is the system of record (src/mkos/mirror.js, restore.js)
+
+Google Drive (the MKOS folder) holds the truth; D1 is the execution layer (graph, search, query, cache, learner state, curriculum,
+blueprint and asset retrieval) and is rebuildable from Drive. Every run persists the files whose content changed: every knowledge object
+(including criteria, objectives, teaching points, targets, pearls and asset records, with confidence, classification, governance and
+provenance), every version, the graph in stable buckets, shared educational assets with their content, the blueprint execution tables,
+the sources and compatibility registries, change events, audit records, reviews and the reconciliation report, plus `manifest.json`
+(every file's id, hash, row count and time) and a daily bundled snapshot. Change detection costs a few grouped queries; a changed
+object rewrites only its own files and the manifest. `durability` reports how far Drive is behind; the daily reconciliation records
+it. Owner: `restore {mode: verify}` compares the Drive manifest with the database; `restore {mode: restore, confirm: true}` rebuilds
+the database from Drive (resumable; never replaces newer data). Learner state and a learner's own material live in that account's
+own Drive folder.
+
+## Clinical pearls (decompose.js, decomposition.json "pearls")
+
+Pearls are durable governed assets in the pearl registry (`eo.pe.<concept>.<n>`): generated once by the free AI, pending validation
+until the owner validates them (`asset_review ok`) or rejects them (`asset_review regenerate`), classified, versioned, persisted to
+Drive and linked to their recommendations, concept, competencies and blueprint topics, then reused by every lesson, question, card,
+case, review and tutor answer on the concept. Each pearl keeps the basis it was written from; the daily reconciliation regenerates a
+concept's pearls only when that basis moved materially (recommendation, guideline edition, evidence level, objectives, competencies,
+relationships), and a learner's flag withholds a pearl until the owner reviews it. Pearls a regeneration no longer yields are superseded.
+
 ## Daily reconciliation (src/mkos/reconcile.js)
 
 Once a day, at the Life OS refresh hour (`reconciliation.utc_hour`, 04:00 UTC = midnight New York), MKOS checks and repairs: new and

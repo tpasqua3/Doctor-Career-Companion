@@ -188,8 +188,8 @@ export async function putAssets(env, u, a) {
 /* asset_flag {id, reason}: a learner reports a problem. One flag stops reuse until the owner reviews it. */
 export async function flagAsset(env, u, a, owner) {
   const id = String(a.id || '');
-  if (!/^ea\./.test(id) || (id.startsWith('ea.u') && !id.startsWith('ea.' + U(u.id) + '.'))) return { error: 'not found' };
-  const o = await getObject(env, id); if (!o || o.type !== 'EducationalAsset') return { error: 'not found' };
+  if (!/^(ea|eo\.pe)\./.test(id) || (id.startsWith('ea.u') && !id.startsWith('ea.' + U(u.id) + '.'))) return { error: 'not found' };
+  const o = await getObject(env, id); if (!o || !(o.type === 'EducationalAsset' || (o.type === 'EducationalObject' && o.edu_kind === 'clinical_pearl'))) return { error: 'not found' };
   const note = String(a.reason || '').replace(/\s+/g, ' ').slice(0, 500);
   const flags = [...((o.data && o.data.flags) || []), { by: owner ? 'owner' : U(u.id), at: nowIso(), note }].slice(-20);
   await putObject(env, { ...o, needs: [...new Set([...(o.needs || []), 'review'])], review_status: 'flagged', data: { ...(o.data || {}), flags } }, { actor: owner ? 'owner' : 'learner:' + U(u.id), summary: 'flagged: ' + (note || 'no reason given') });
@@ -198,10 +198,11 @@ export async function flagAsset(env, u, a, owner) {
 
 /* asset_review {id, result: ok | regenerate | retire, note} (owner): clear a flag, send the asset back for regeneration, or retire it. */
 export async function reviewAsset(env, u, a) {
-  const id = String(a.id || ''), o = await getObject(env, id); if (!o || o.type !== 'EducationalAsset') return { error: 'not found' };
+  // Educational assets and clinical pearls share this review (a pearl validated here stops being labelled unvalidated; regenerate = failed validation).
+  const id = String(a.id || ''), o = await getObject(env, id); if (!o || !(o.type === 'EducationalAsset' || (o.type === 'EducationalObject' && o.edu_kind === 'clinical_pearl'))) return { error: 'not found' };
   const actor = 'owner:' + u.email, note = String(a.note || '').slice(0, 500);
   if (a.result === 'retire') return setStatus(env, id, 'retired', { actor, reason: note || 'retired at review', force: true });
-  if (a.result === 'regenerate') { await putObject(env, { ...o, needs: ['regenerate'], review_status: 'needs_regenerate' }, { actor, summary: 'sent for regeneration' + (note ? ': ' + note : '') }); return { ok: true }; }
+  if (a.result === 'regenerate') { await putObject(env, { ...o, needs: ['regenerate'], review_status: 'needs_regenerate', data: { ...(o.data || {}), regenerate_reason: 'failed validation' + (note ? ': ' + note : '') } }, { actor, summary: 'sent for regeneration' + (note ? ': ' + note : '') }); return { ok: true }; }
   if (a.result !== 'ok') return { error: 'result must be ok, regenerate or retire' };
   await putObject(env, { ...o, needs: [], review_status: 'validated', governance_status: 'validated' }, { actor, summary: 'reviewed ok' + (note ? ': ' + note : '') });
   await audit(env, actor, 'asset_review', id, o.version, null, { result: 'ok', note });

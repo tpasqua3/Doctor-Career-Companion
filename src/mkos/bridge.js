@@ -91,7 +91,7 @@ export async function topicKnowledge(env, concepts) {
   const q = cs.map(() => '?').join(',');
   const { results } = await env.DB.prepare(`SELECT o.body FROM mk_objects o WHERE o.id IN (SELECT src FROM mk_edges WHERE dst IN (${q}) AND rel IN ('covers','teaches','assesses') AND status = 'current' AND (src LIKE 'eo.%' OR src LIKE 'obj.%'))
     AND o.status = 'current' ORDER BY o.trust DESC LIMIT 160`).bind(...cs).all().catch(() => ({ results: [] }));
-  for (const r of results) { const o = J(r.body); if (!o) continue; const x = { id: o.id, statement: o.statement || o.name, difficulty: o.difficulty ?? null, targets: o.targets || [], governance: o.governance_status };
+  for (const r of results) { const o = J(r.body); if (!o || o.empty || (o.edu_kind === 'clinical_pearl' && (o.needs || []).length)) continue; const x = { id: o.id, statement: o.statement || o.name, difficulty: o.difficulty ?? null, targets: o.targets || [], governance: o.governance_status };
     out.counts[o.edu_kind || o.objective_type] = (out.counts[o.edu_kind || o.objective_type] || 0) + 1;
     if (o.edu_kind === 'high_yield') out.high_yield.push(x); else if (o.edu_kind === 'common_error') out.common_errors.push(x); else if (o.edu_kind === 'clinical_pearl') out.pearls.push(x);
     else if (o.type === 'Objective' && o.objective_type !== 'assessment' && o.objective_type !== 'board') out.objectives.push(x); else if (/_target$/.test(o.edu_kind || '')) out.targets.push(x); }
@@ -127,7 +127,9 @@ export async function topicContext(env, u, tid, { name = '' } = {}) {
   if (dk.common_errors.length) lines.push('- Common errors to address: ' + dk.common_errors.slice(0, 4).map((x) => x.statement.replace(/^Common error to avoid \(acting against this recommendation\):\s*/, '')).join(' | '));
   if (dk.criteria.length) lines.push('- Criteria: ' + dk.criteria.slice(0, 6).map((x) => `${x.kind}: ${x.values && x.values.length ? x.values.join(', ') + ' (' + x.statement.slice(0, 160) + ')' : x.statement.slice(0, 200)}`).join(' | '));
   if (dk.objectives.length) lines.push('- Objectives this material should meet: ' + dk.objectives.slice(0, 5).map((x) => x.statement.slice(0, 220)).join(' | '));
-  if (dk.pearls.length) lines.push('- Clinical pearls (AI-suggested, not yet validated; use only where they agree with the recommendations above): ' + dk.pearls.slice(0, 3).map((x) => x.statement).join(' | '));
+  { const pv = dk.pearls.filter((x) => x.governance === 'validated'), pu = dk.pearls.filter((x) => x.governance !== 'validated');
+    if (pv.length) lines.push('- Clinical pearls (validated): ' + pv.slice(0, 3).map((x) => x.statement).join(' | '));
+    if (pu.length) lines.push('- Clinical pearls (AI-suggested, not yet validated; use only where they agree with the recommendations above): ' + pu.slice(0, 3).map((x) => x.statement).join(' | ')); }
   // A shared educational asset is written from everything above but not from one learner's state (assets.json shared_prompt_excludes_learner_state).
   const shared = lines.slice();
   if (st) lines.push(`- This learner: mastery ${Math.round(st.mastery)}/100, system confidence ${Math.round(st.confidence)}/100, state ${st.knowledge_state}${st.calibration && st.calibration.incorrect_confident ? ', has been wrong while confident here (address the misconception)' : ''}.`);

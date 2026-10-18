@@ -83,6 +83,8 @@ export const TABLES = [
 ];
 
 let ready = '';
+// Tests only: open a second database in the same process.
+export const _resetInit = () => { ready = ''; };
 export async function mkInit(env) {
   if (ready === FRAMEWORK_HASH) return;
   await env.DB.batch(TABLES.map((s) => env.DB.prepare(s)));

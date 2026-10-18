@@ -8,8 +8,10 @@ import { J, nowIso, getSetting, setSetting, audit } from './db.js';
 import { putObject } from './kb.js';
 import { queue } from './ingest.js';
 import { auditAssets } from './assets.js';
+import { durability } from './mirror.js';
+import { pearlAudit } from './decompose.js';
 
-const R = FRAMEWORK.frameworks.decomposition.reconciliation, DV = (() => { const [a, b] = FRAMEWORK.frameworks.decomposition.version.split('.').map(Number); return a * 100 + b; })();
+const R = FRAMEWORK.frameworks.decomposition.reconciliation, DV = Number(FRAMEWORK.frameworks.decomposition.decomposition.rules_version) || 100;
 const CV = FRAMEWORK.frameworks.decomposition.classification.version;
 const n = async (env, sql, ...a) => ((await env.DB.prepare(sql).bind(...a).first()) || {}).n || 0;
 const openJob = async (env, kind, subject) => !!(await env.DB.prepare("SELECT 1 FROM mk_jobs WHERE kind = ? AND subject = ? AND state IN ('queued','running')").bind(kind, subject).first());
@@ -90,12 +92,27 @@ const STEPS = [
     t.checked += r.checked; t.flagged += r.flagged; for (const [k, v] of Object.entries(r.reasons)) t.reasons[k] = (t.reasons[k] || 0) + v;
     return r.done;
   }],
+  ['pearls', async (env, p, rep) => {
+    // Clinical pearls whose basis moved materially are sent for regeneration (the daily pearls job rewrites them, in the free AI budget).
+    p.pearls = p.pearls || {};
+    const r = await pearlAudit(env, { prog: p.pearls, limit: 30 });
+    const t = rep.pearls || (rep.pearls = { checked: 0, flagged: 0, reasons: {} });
+    t.checked += r.checked; t.flagged += r.flagged; for (const [k, v] of Object.entries(r.reasons)) t.reasons[k] = (t.reasons[k] || 0) + v;
+    if (r.done) { t.registry = (await env.DB.prepare("SELECT COUNT(*) AS n FROM mk_objects WHERE id LIKE 'eo.pe.%' AND status = 'current' AND COALESCE(json_extract(body, '$.empty'), 0) = 0").first()).n;
+      t.validated = (await env.DB.prepare("SELECT COUNT(*) AS n FROM mk_objects WHERE id LIKE 'eo.pe.%' AND status = 'current' AND gov = 'validated'").first()).n; }
+    return r.done;
+  }],
   ['propagation', async (env, p, rep) => {
     // Change events that never reached impact analysis (an interrupted run, a lost job) are analyzed now.
     const { results } = await env.DB.prepare(`SELECT id, subject FROM mk_events WHERE kind IN ('source_modified','source_removed','blueprint_superseded') AND stage NOT IN ('impact_determined','validated')
       AND created < ? AND subject NOT IN (SELECT subject FROM mk_jobs WHERE kind = 'impact' AND state IN ('queued','running')) LIMIT 40`).bind(new Date(Date.now() - 3600e3).toISOString()).all();
     for (const r of results) await queue(env, 'impact', r.subject, { event_id: r.id }, 2);
     rep.propagation = { impact_requeued: results.length };
+    return true;
+  }],
+  ['canonical', async (env, p, rep) => {
+    // Canonical storage: how far the Drive system of record is behind the database (it catches up a few files every run).
+    rep.canonical = await durability(env);
     return true;
   }],
   ['integrity', async (env, p, rep) => {

@@ -13,7 +13,7 @@ import { addEdges } from './graph.js';
 import { aiBudgetLeft } from './extract.js';
 import { boardRelevance, recDifficulty, classifyBatch } from './classify.js';
 
-const F = FRAMEWORK.frameworks, D = F.decomposition.decomposition, DV = Number(F.decomposition.version.split('.')[0]) * 100 + Number(F.decomposition.version.split('.')[1]);
+const F = FRAMEWORK.frameworks, D = F.decomposition.decomposition, DV = Number(D.rules_version) || 100;
 const AGAINST = new Set(['against_strong', 'against_moderate']);
 const keyOf = (rec) => rec.id.slice(4).replace(/[^a-z0-9]/gi, '_').slice(0, 60);
 const clip = (s, n = 600) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -176,29 +176,102 @@ export async function decomposeStep(env, scope, { prog = {}, limit = D.batch || 
   return { done: recs.length < limit, recs: recs.length, objects };
 }
 
-// CLINICAL PEARLS by the free AI, one concept per call, within the shared daily MKOS AI budget. Pending validation, never authoritative.
+// CLINICAL PEARLS: durable, governed educational assets (decomposition.json "pearls"). Recommendation -> pearl generation (free AI) ->
+// validation status -> classification -> versioning -> pearl registry -> storage (Drive with everything else). Generate once, validate,
+// store, reuse: a pearl is regenerated only when its basis moved materially (recommendation, guideline edition, evidence level,
+// objectives, competencies, the concept's relationships), when it is rejected at review or sent back for regeneration, or superseded.
 export const PEARL_PROMPT = (con, recs) => `You write clinical pearls for an internal medicine knowledge base. Concept: ${con.name}.
 Current guideline recommendations (the only basis you may use):
 ${recs.map((r, i) => `${i + 1}. ${r.statement} (${[r.strength_original, r.loe_original].filter(Boolean).join(', ')})`).join('\n')}
 Write 1 to 3 clinical pearls: practical, board-relevant insights a senior physician would teach, each grounded in the recommendations above, in your own words (never copy more than 8 consecutive words), with exact numbers. Reply with JSON only: {"pearls":[{"text":"","based_on":[recommendation numbers]}]}`;
+const CLINICAL = F.ontology.relationships.map((r) => r.key);
+const enc = new TextEncoder();
+const h10 = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)))].slice(0, 5).map((x) => x.toString(16).padStart(2, '0')).join('');
+const jac = (a, b) => { const A = new Set(a || []), B = new Set(b || []); if (!A.size && !B.size) return 1; let i = 0; for (const x of A) if (B.has(x)) i++; return i / (A.size + B.size - i); };
+const pearlKey = (cid) => cid.slice(2).replace(/[^a-z0-9]/gi, '_');
+async function conceptRecs(env, cid, limit = 8) {
+  const ids = (await env.DB.prepare("SELECT e.dst AS id FROM mk_edges e JOIN mk_objects r ON r.id = e.dst WHERE e.src = ? AND e.rel = 'recommended_by' AND e.status = 'current' AND r.status = 'current' AND r.gov = 'validated' ORDER BY r.trust DESC LIMIT ?").bind(cid, limit).all()).results.map((r) => r.id);
+  return Object.values(await getObjects(env, ids)).filter((r) => r.status === 'current');
+}
+// What a concept's pearls stand on: each recommendation's substance and evidence level, the guideline editions, the objectives and
+// competencies those recommendations yield, and the concept's clinical relationships.
+export async function pearlBasis(env, cid, recs) {
+  const out = { recs: {}, editions: {}, objs: [], comps: [], rels: [], bpts: [] };
+  for (const r of recs) out.recs[r.id] = { s: await h10([r.statement, r.strength, r.strength_original].join('|')), e: r.evidence_level || r.loe_original || '' };
+  const fams = await getObjects(env, [...new Set(recs.map((r) => r.guideline).filter(Boolean))]);
+  for (const [id, f] of Object.entries(fams)) out.editions[id] = f.current_edition || '';
+  const objs = Object.values(await getObjects(env, recs.flatMap((r) => [`obj.l.${keyOf(r)}`, `obj.a.${keyOf(r)}`]))).filter((o) => o.status === 'current');
+  out.objs = (await Promise.all(objs.map((o) => h10(o.id + '|' + o.statement)))).sort();
+  out.comps = [...new Set(objs.flatMap((o) => o.competencies || []))].sort();
+  out.bpts = [...new Set(objs.flatMap((o) => o.blueprint_topics || []))].sort();
+  const rl = (await env.DB.prepare(`SELECT rel, src, dst FROM mk_edges WHERE (src = ? OR dst = ?) AND status = 'current' AND rel IN (${CLINICAL.map(() => '?').join(',')}) LIMIT 300`).bind(cid, cid, ...CLINICAL).all()).results;
+  out.rels = (await Promise.all(rl.map((r) => h10(r.rel + '|' + r.src + '|' + r.dst)))).sort();
+  return out;
+}
+// Why a stored pearl basis no longer holds (null = it still holds).
+export function pearlChanged(b, now) {
+  if (!b) return 'no_basis';
+  const t = (F.decomposition.pearls || {}).material_change_jaccard_below ?? 0.8;
+  for (const [id, x] of Object.entries(b.recs || {})) { const y = now.recs[id]; if (!y) return 'recommendation_superseded'; if (y.s !== x.s) return 'recommendation_changed'; if (y.e !== x.e) return 'evidence_changed'; }
+  for (const [f, ed] of Object.entries(b.editions || {})) if (now.editions[f] !== undefined && now.editions[f] !== ed) return 'guideline_edition_changed';
+  if (jac(b.objs, now.objs) < t) return 'objectives_changed';
+  if (jac(b.comps, now.comps) < t) return 'competencies_changed';
+  if (jac(b.rels, now.rels) < t) return 'relationships_changed';
+  return null;
+}
+/* One concept per call: first a pearl sent back for regeneration, else a concept with enough validated recommendations and no pearl
+   record yet. Within the shared daily MKOS AI budget. */
 export async function pearlStep(env, deps, { actor = 'pearls' } = {}) {
   if (!deps.ai) return { done: true, note: 'no free AI service' };
   const b = await aiBudgetLeft(env); if (b.left <= 0) return { done: true, note: 'AI budget spent for today' };
-  const c = await env.DB.prepare(`SELECT e.src AS id, COUNT(*) AS n FROM mk_edges e JOIN mk_objects r ON r.id = e.dst WHERE e.rel = 'recommended_by' AND e.status = 'current' AND r.status = 'current'
-    AND r.gov = 'validated' AND NOT EXISTS (SELECT 1 FROM mk_objects p WHERE p.id = 'eo.pe.' || replace(substr(e.src, 3), '.', '_') || '.0') GROUP BY e.src HAVING n >= 2 ORDER BY n DESC LIMIT 1`).first();
-  if (!c) return { done: true, note: 'every concept with recommendations has its pearls' };
-  const con = await getObject(env, c.id), recIds = (await env.DB.prepare("SELECT dst FROM mk_edges WHERE src = ? AND rel = 'recommended_by' AND status = 'current' LIMIT 8").bind(c.id).all()).results.map((r) => r.dst);
-  const recs = Object.values(await getObjects(env, recIds)).filter((r) => r.status === 'current');
-  const reply = await deps.ai(PEARL_PROMPT(con, recs)); await b.spend();
-  const j = J(String(reply || '').replace(/^```(?:json)?|```$/g, '').trim(), null), pearls = (j && Array.isArray(j.pearls) ? j.pearls : []).filter((p) => p && p.text).slice(0, 3);
-  const key = c.id.slice(2).replace(/\./g, '_').replace(/[^a-z0-9_]/gi, '_'), at = nowIso();
-  const list = pearls.length ? pearls : [{ text: '', none: true }];
-  for (const [i, p] of list.entries()) {
-    const based = (p.based_on || []).map((x) => recs[Number(x) - 1]).filter(Boolean).map((r) => r.id);
-    await putObject(env, { id: `eo.pe.${key}.${i}`, type: 'EducationalObject', edu_kind: 'clinical_pearl', name: p.none ? `No pearl yet: ${con.name}` : `Pearl: ${clip(p.text, 110)}`, statement: p.none ? '' : clip(p.text, 800),
-      concepts: [c.id], source_recommendations: based.length ? based : recIds, specialty: con.specialty || [], status: p.none ? 'retired' : 'current', governance_status: 'pending_validation',
-      provenance: [{ source_id: (recs[0] && recs[0].source_id) || 'src.app_generation', method: 'ai_extraction', at, agent: 'free_ai', note: 'clinical pearl' }] }, { actor, audited: false, aliases: false, summary: 'clinical pearl (AI, pending validation)' });
-    if (!p.none) await addEdges(env, [{ src: `eo.pe.${key}.${i}`, rel: 'covers', dst: c.id, conf: 55, prov: { source_id: 'src.app_generation', method: 'ai_extraction', at } }, ...based.map((r) => ({ src: `eo.pe.${key}.${i}`, rel: 'derived_from', dst: r, conf: 55, prov: { source_id: 'src.app_generation', method: 'ai_extraction', at } }))]);
+  let cid = null, reason = 'new';
+  const back = await env.DB.prepare("SELECT body FROM mk_objects WHERE id LIKE 'eo.pe.%' AND status = 'current' AND json_extract(body, '$.needs') LIKE '%regenerate%' LIMIT 1").first();
+  if (back) { const o = J(back.body); cid = (o.concepts || [])[0]; reason = (o.data && o.data.regenerate_reason) || 'regenerate'; }
+  if (!cid) {
+    const c = await env.DB.prepare(`SELECT e.src AS id, COUNT(*) AS n FROM mk_edges e JOIN mk_objects r ON r.id = e.dst WHERE e.rel = 'recommended_by' AND e.status = 'current' AND r.status = 'current'
+      AND r.gov = 'validated' AND NOT EXISTS (SELECT 1 FROM mk_objects p WHERE p.id = 'eo.pe.' || replace(substr(e.src, 3), '.', '_') || '.0') GROUP BY e.src HAVING n >= 2 ORDER BY n DESC LIMIT 1`).first();
+    if (c) cid = c.id;
   }
-  return { done: false, concept: c.id, pearls: pearls.length };
+  if (!cid) return { done: true, note: 'every concept with recommendations has its pearls' };
+  const con = await getObject(env, cid), recs = await conceptRecs(env, cid);
+  const key = pearlKey(cid), at = nowIso(), basis = await pearlBasis(env, cid, recs);
+  let pearls = [];
+  if (recs.length) { const reply = await deps.ai(PEARL_PROMPT(con, recs)); await b.spend();
+    const j = J(String(reply || '').replace(/^```(?:json)?|```$/g, '').trim(), null); pearls = (j && Array.isArray(j.pearls) ? j.pearls : []).filter((p) => p && p.text).slice(0, 3); }
+  const list = pearls.length ? pearls : [{ text: '', none: true }], written = [];
+  for (const [i, p] of list.entries()) {
+    const id = `eo.pe.${key}.${i}`, based = (p.based_on || []).map((x) => recs[Number(x) - 1]).filter(Boolean).map((r) => r.id), prev = await getObject(env, id);
+    const o = { id, type: 'EducationalObject', edu_kind: 'clinical_pearl', name: p.none ? `No pearl yet: ${con.name}` : `Pearl: ${clip(p.text, 110)}`, statement: p.none ? '' : clip(p.text, 800), empty: !!p.none,
+      concepts: [cid], competencies: basis.comps, source_recommendations: based.length ? based : recs.map((r) => r.id), specialty: con.specialty || [], status: 'current', needs: [],
+      governance_status: 'pending_validation', review_status: 'unvalidated', basis, targets: ['lesson', 'question', 'flashcard', 'case', 'review'],
+      data: { ...((prev && prev.data) || {}), generated_for: reason, generations: ((prev && prev.data && prev.data.generations) || 0) + 1 },
+      provenance: [{ source_id: (recs[0] && recs[0].source_id) || 'src.app_generation', method: 'ai_extraction', at, agent: 'free_ai', note: 'clinical pearl' }] };
+    await putObject(env, o, { actor, audited: false, aliases: false, summary: (prev ? 'regenerated: ' + reason : 'generated') + ' (AI, pending validation)' });
+    written.push(o);
+    if (!p.none) {
+      const pv = { source_id: 'src.app_generation', method: 'ai_extraction', at };
+      await addEdges(env, [{ src: id, rel: 'covers', dst: cid, conf: 55, prov: pv }, ...based.map((r) => ({ src: id, rel: 'derived_from', dst: r, conf: 55, prov: pv })),
+        ...basis.comps.map((c) => ({ src: id, rel: 'develops', dst: c, conf: 50, prov: pv })), ...basis.bpts.slice(0, 20).map((t) => ({ src: id, rel: 'mapped_to_blueprint', dst: t, conf: 50, prov: pv }))]);
+    }
+  }
+  // Earlier pearls of this concept beyond the new set are superseded by it.
+  for (let i = list.length; i < 3; i++) { const old = await getObject(env, `eo.pe.${key}.${i}`); if (old && old.status === 'current') await putObject(env, { ...old, status: 'superseded', replaced_by: `eo.pe.${key}.0` }, { actor, audited: false, aliases: false, summary: 'superseded by regenerated pearls' }); }
+  await classifyBatch(env, written);
+  return { done: false, concept: cid, pearls: pearls.length, reason };
+}
+/* Daily: every concept's pearl basis is checked against today's knowledge; a material change sends that concept's pearls for
+   regeneration (the reason is kept). prog: {after}. */
+export async function pearlAudit(env, { prog = {}, limit = 30 } = {}) {
+  const { results } = await env.DB.prepare("SELECT body FROM mk_objects WHERE id LIKE 'eo.pe.%.0' AND status = 'current' AND id > ? ORDER BY id LIMIT ?").bind(prog.after || '', limit).all();
+  let flagged = 0; const reasons = {};
+  for (const r of results) {
+    const o = J(r.body); prog.after = o.id; if ((o.needs || []).length) continue;
+    const cid = (o.concepts || [])[0]; if (!cid) continue;
+    const why = pearlChanged(o.basis, await pearlBasis(env, cid, await conceptRecs(env, cid)));
+    if (!why) continue;
+    reasons[why] = (reasons[why] || 0) + 1; flagged++;
+    const key = pearlKey(cid);
+    for (let i = 0; i < 3; i++) { const p = await getObject(env, `eo.pe.${key}.${i}`); if (p && p.status === 'current') await putObject(env, { ...p, needs: ['regenerate'], data: { ...(p.data || {}), regenerate_reason: why, regenerate_at: nowIso() } }, { actor: 'reconcile', audited: false, aliases: false, summary: 'pearl regeneration queued: ' + why }); }
+  }
+  return { done: results.length < limit, checked: results.length, flagged, reasons };
 }

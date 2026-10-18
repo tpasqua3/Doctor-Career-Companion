@@ -2183,7 +2183,7 @@ function mkProgressCard(){if(!mkOn())return'';if(!MK)return mkWait();const s=MK.
 const mkKnowBlock=k=>{if(!k)return'';const li=(a,f)=>a.map(x=>`<li>${esc(f?f(x):x.statement)}</li>`).join(''),sec=(h,a,f,note)=>a.length?`<div class="small"><b>${h}</b>${note?` <span class="tiny muted">${note}</span>`:''}<ul class="pts">${li(a,f)}</ul></div>`:'';
   return sec('High-yield',A(k.high_yield).slice(0,5),x=>x.statement.replace(/^High-yield:\s*/,''))+sec('Common errors',A(k.common_errors).slice(0,4),x=>x.statement.replace(/^Common error to avoid \(acting against this recommendation\):\s*/,''))
     +sec('Criteria',A(k.criteria).slice(0,6),x=>x.kind.replace('_',' ')+': '+(A(x.values).length?x.values.join(', ')+' · ':'')+x.statement.slice(0,220))+sec('Objectives',A(k.objectives).slice(0,4))
-    +sec('Clinical pearls',A(k.pearls).slice(0,3),null,'AI-suggested, not yet validated')};
+    +sec('Clinical pearls',A(k.pearls).filter(x=>x.governance==='validated').slice(0,3))+sec('Clinical pearls',A(k.pearls).filter(x=>x.governance!=='validated').slice(0,3),null,'AI-suggested, not yet validated')};
 function mkTopicPanel(t){if(!mkOn())return'';const c=MKT[t.id];if(!c){mkTopic(t).then(()=>{if(S.tab==='learn'&&S.topic===t.id&&!S.busy)render()});return mkWait()||`<div class="card"><p class="small muted">${thinking('Reading MKOS…')}</p></div>`}
   const v=c.v;if(!v)return'';const sc=v.scores||{},bp=v.blueprint&&v.blueprint.mapping;
   return `<div class="card"><div class="row between"><h3>From MKOS</h3>${v.concept?`<button class="btn sm" data-kobj="${esc(v.concept.id)}">Open in Knowledge</button>`:''}</div>

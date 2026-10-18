@@ -18,6 +18,7 @@ import { decomposeStep, pearlStep } from './decompose.js';
 import { classifyStep } from './classify.js';
 import { reconcileStep, reconcileDue } from './reconcile.js';
 import { importOwnerAssets } from './assets.js';
+import { restoreStep } from './restore.js';
 
 export class BudgetSpent extends Error { constructor() { super('MKOS query budget spent for this run'); this.budget = true; } }
 // Only Cloudflare's own per-invocation limits count as a platform cap (a Google rate limit is an ordinary, retried error).
@@ -174,6 +175,10 @@ async function runJob(env, deps, job, meter = null) {
     if (job.kind === 'asset_import') { p.prog = p.prog || {}; let r;
       try { r = await importOwnerAssets(env, deps, { prog: p.prog }); } finally { await env.DB.prepare('UPDATE mk_jobs SET payload = ? WHERE id = ?').bind(JSON.stringify(p), job.id).run().catch(() => {}); }
       if (r.done) { await save('done', `${r.lessons || 0} lessons, ${r.questions || 0} questions imported; ${r.outdated || 0} citing older editions kept out`); return true; } await save('running'); return false; }
+    // Rebuild the operational database from canonical storage (owner-confirmed), or verify that it could be.
+    if (job.kind === 'restore') { p.prog = p.prog || {}; let r;
+      try { r = await restoreStep(env, deps, deps.mkosRoot, p.prog, { mode: p.mode || 'restore' }); } finally { await env.DB.prepare('UPDATE mk_jobs SET payload = ? WHERE id = ?').bind(JSON.stringify(p), job.id).run().catch(() => {}); }
+      if (r.done) { await save(r.error ? 'failed' : 'done', r.error || JSON.stringify(r.counts || r).slice(0, 400)); return true; } await save('running', `file ${r.file} of ${r.of}`); return false; }
     await save('failed', 'unknown job kind'); return true;
   } catch (e) {
     if (e.budget) {
@@ -231,7 +236,7 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
     if ((await getSetting(env, 'pron_gen_day')) !== day && booted) { await queue(env, 'pronounce', 'day:' + day, {}, 8); await setSetting(env, 'pron_gen_day', day); }
     if (booted) {
       // Retroactive processing, once per decomposition version: decompose and classify everything already in MKOS, import the owner's assets.
-      const bf = String(FRAMEWORK.frameworks.decomposition.version);
+      const bf = String(FRAMEWORK.frameworks.decomposition.decomposition.backfill_version || FRAMEWORK.frameworks.decomposition.version);
       if ((await getSetting(env, 'backfill_version')) !== bf) { await queue(env, 'decompose', 'all', {}, 5); await queue(env, 'classify', 'all', {}, 6); await queue(env, 'asset_import', 'owner', {}, 6); await setSetting(env, 'backfill_version', bf); }
       // Daily: reconciliation with the Life OS refresh, and clinical pearls within the free AI budget.
       const rd = await reconcileDue(env); if (rd) { await queue(env, 'reconcile', 'day:' + rd, {}, 2); await queue(env, 'pearls', 'day:' + rd, {}, 9); }
@@ -245,7 +250,7 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
       report.steps.push(`${job.kind} ${job.subject}${finished ? ' done' : ' continues'}`);
       if (!finished && job.kind === 'extract') break;     // one AI-bearing step per run
     }
-    if (mirrorRoot) { const m = await mirrorStep(env, deps, mirrorRoot, { max: 2 }); report.steps.push(`mirror ${m.written} written`); if (new Date().getUTCHours() === 7) await snapshot(env, deps, mirrorRoot).catch(() => {}); }
+    if (mirrorRoot) { const m = await mirrorStep(env, deps, mirrorRoot, { max: 4 }); report.steps.push(`mirror ${m.written} written`); if (new Date().getUTCHours() === 7) await snapshot(env, deps, mirrorRoot).catch(() => {}); }
   } catch (e) {
     if (e.budget) report.steps.push('budget spent');
     else if (PLATFORM.test(String(e.message || e))) { platformHit = true; report.steps.push('platform limit: ' + e.message); }

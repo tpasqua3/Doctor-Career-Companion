@@ -1,11 +1,20 @@
 {
   "id": "framework.decomposition",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "current",
   "created_date": "2026-10-18",
   "updated_date": "2026-10-18",
   "change_log": [
-    { "version": "1.0.0", "date": "2026-10-18", "summary": "Knowledge decomposition, classification, regeneration rules and daily reconciliation (MKOS Continuous Knowledge Ingestion, Decomposition, Knowledge Evolution, Dynamic Propagation and Daily Reconciliation Directive)." }
+    {
+      "version": "1.0.0",
+      "date": "2026-10-18",
+      "summary": "Knowledge decomposition, classification, regeneration rules and daily reconciliation (MKOS Continuous Knowledge Ingestion, Decomposition, Knowledge Evolution, Dynamic Propagation and Daily Reconciliation Directive)."
+    },
+    {
+      "version": "1.1.0",
+      "date": "2026-10-18",
+      "summary": "Clinical pearls as durable governed assets: basis fingerprints, regeneration rules, flag and review, wider links."
+    }
   ],
   "title": "Knowledge decomposition, classification and daily reconciliation",
   "principle": "Documents become source material; structured knowledge becomes the operational layer. Every recommendation is decomposed into criteria, objectives, competencies, teaching points and educational targets, deterministically wherever rules can; every object carries a classification; only what changed is reprocessed; a daily reconciliation repairs whatever slipped.",
@@ -22,41 +31,144 @@
       "EducationalObject review_target (board relevance at or above review_target_board)",
       "EducationalObject clinical_pearl (free AI only, within the daily MKOS AI budget; pending validation, never authoritative until reviewed)"
     ],
-    "per_section": [ "EducationalObject clinical_pathway: the recommendations of one guideline section in order (at least pathway_min_recs)" ],
+    "per_section": [
+      "EducationalObject clinical_pathway: the recommendations of one guideline section in order (at least pathway_min_recs)"
+    ],
     "high_yield_board": 50,
     "review_target_board": 60,
     "lesson_target_min_recs": 3,
     "pathway_min_recs": 3,
     "batch": 12,
     "pearls_per_day": 40,
-    "remediation_and_review_objectives": "learner-specific: computed from learner state by the adaptive curriculum (remediate, review) over these objectives rather than stored per learner"
+    "remediation_and_review_objectives": "learner-specific: computed from learner state by the adaptive curriculum (remediate, review) over these objectives rather than stored per learner",
+    "rules_version": 100,
+    "backfill_version": "1.0.0",
+    "note_versions": "rules_version marks how recommendations are decomposed (raise it to re-decompose everything); backfill_version marks the retroactive pass (raise it to run the backfill again)."
   },
   "competency_rules": [
-    { "competency": "comp.knowledge", "when": "always" },
-    { "competency": "comp.evidence", "when": "graded (class and level of evidence present)" },
-    { "competency": "comp.diagnostic", "when": "screening, testing, measurement, evaluation or diagnosis" },
-    { "competency": "comp.interpretation", "when": "a threshold, a test result or a measured value decides the action" },
-    { "competency": "comp.management", "when": "treatment, therapy, a drug, a dose, a procedure or a referral" },
-    { "competency": "comp.reasoning", "when": "class 2a or 2b, exceptions, or a weak recommendation (judgment required)" },
-    { "competency": "comp.clinical", "when": "a defined patient population" },
-    { "competency": "comp.board", "when": "board relevance at or above high_yield_board" }
+    {
+      "competency": "comp.knowledge",
+      "when": "always"
+    },
+    {
+      "competency": "comp.evidence",
+      "when": "graded (class and level of evidence present)"
+    },
+    {
+      "competency": "comp.diagnostic",
+      "when": "screening, testing, measurement, evaluation or diagnosis"
+    },
+    {
+      "competency": "comp.interpretation",
+      "when": "a threshold, a test result or a measured value decides the action"
+    },
+    {
+      "competency": "comp.management",
+      "when": "treatment, therapy, a drug, a dose, a procedure or a referral"
+    },
+    {
+      "competency": "comp.reasoning",
+      "when": "class 2a or 2b, exceptions, or a weak recommendation (judgment required)"
+    },
+    {
+      "competency": "comp.clinical",
+      "when": "a defined patient population"
+    },
+    {
+      "competency": "comp.board",
+      "when": "board relevance at or above high_yield_board"
+    }
   ],
   "classification": {
     "version": 1,
-    "fields": ["domain", "subdomain", "specialty", "topic", "subtopic", "object_type", "difficulty", "board_relevance", "educational_relevance", "evidence_strength", "authority_level", "confidence", "version", "status", "supersession_status", "validation_status", "governance_status"],
+    "fields": [
+      "domain",
+      "subdomain",
+      "specialty",
+      "topic",
+      "subtopic",
+      "object_type",
+      "difficulty",
+      "board_relevance",
+      "educational_relevance",
+      "evidence_strength",
+      "authority_level",
+      "confidence",
+      "version",
+      "status",
+      "supersession_status",
+      "validation_status",
+      "governance_status"
+    ],
     "batch": 60,
     "note": "Derived like scores: kept on the object without making a new content version."
   },
   "regeneration": {
-    "coverage_expanded": { "min_new": 3, "min_ratio": 1.25 },
+    "coverage_expanded": {
+      "min_new": 3,
+      "min_ratio": 1.25
+    },
     "set_change_jaccard_below": 0.8,
-    "rules": ["new guideline coverage", "recommendation changed or superseded", "evidence level changed", "board weighting moved materially", "objectives changed", "competencies changed", "clinical relationships changed", "topic coverage expanded"]
+    "rules": [
+      "new guideline coverage",
+      "recommendation changed or superseded",
+      "evidence level changed",
+      "board weighting moved materially",
+      "objectives changed",
+      "competencies changed",
+      "clinical relationships changed",
+      "topic coverage expanded"
+    ]
   },
   "reconciliation": {
     "utc_hour": 4,
     "note": "Runs with the Life OS daily refresh (midnight America/New_York); if a day is missed it runs at the next opportunity.",
-    "checks": ["new sources", "updated sources", "version changes", "knowledge changes", "blueprint changes", "recommendation changes", "relationship drift", "missing extractions", "failed jobs", "orphaned objects", "outdated educational assets", "unpropagated updates", "version integrity", "missing decomposition", "missing classification"],
+    "checks": [
+      "new sources",
+      "updated sources",
+      "version changes",
+      "knowledge changes",
+      "blueprint changes",
+      "recommendation changes",
+      "relationship drift",
+      "missing extractions",
+      "failed jobs",
+      "orphaned objects",
+      "outdated educational assets",
+      "unpropagated updates",
+      "version integrity",
+      "missing decomposition",
+      "missing classification",
+      "canonical storage behind"
+    ],
     "failed_job_retries_per_day": 1,
     "stale_extraction_hours": 48
+  },
+  "pearls": {
+    "principle": "Clinical pearls are durable educational assets: generate once, validate, classify, version, store in the pearl registry, reuse. Never regenerate an identical pearl.",
+    "chain": [
+      "Recommendation",
+      "Pearl Generation",
+      "Validation Status",
+      "Classification",
+      "Versioning",
+      "Pearl Registry",
+      "Storage"
+    ],
+    "registry": "EducationalObject records with edu_kind clinical_pearl (ids eo.pe.<concept>.<n>), linked derived_from their recommendations, covers their concept, develops the competencies and mapped_to_blueprint the blueprint topics of the objectives those recommendations yield; persisted to Drive with every other object.",
+    "reuse": "Served by topic context to every lesson, question, flashcard, case, review and tutor answer on the concept, and through the graph to anything reaching the same recommendation, objective, competency or blueprint topic.",
+    "regenerate_when": [
+      "the underlying recommendation changes",
+      "the guideline edition changes",
+      "the evidence level changes",
+      "the objectives change materially",
+      "the competency mapping changes materially",
+      "the concept's relationships change materially",
+      "the pearl is flagged for review and the owner sends it for regeneration",
+      "the pearl fails validation (rejected at review)",
+      "the pearl is superseded"
+    ],
+    "validation": "Generated pearls enter pending_validation and are labelled unvalidated wherever they are shown; the owner validates (asset_review ok) or rejects (asset_review regenerate, which regenerates it). A learner's flag withholds the pearl until reviewed.",
+    "material_change_jaccard_below": 0.8
   }
 }

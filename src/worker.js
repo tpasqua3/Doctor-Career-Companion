@@ -1437,6 +1437,9 @@ function mkDeps(env) {
     ownerSay: async ops => { const o = await ownerId(env); if (!o) throw new Error('No owner account.'); const r = await applySayOps(env, o, ops); syncSoon(env, null, o); return r; },
     ownerDocs: async prefixes => docsOf(await ownerId(env), prefixes),
     ownerId: () => ownerId(env),
+    // A file in the MKOS folder itself (canonical storage), read back only for a restore or its verification.
+    readMine: async fileId => await (await gfetch(env, 'files/' + fileId, { alt: 'media' })).json(),
+    mkosRoot: env.MKOS_DRIVE_FOLDER || null,
     changedUsers: async () => (await env.DB.prepare("SELECT user_id, MAX(updated) AS updated FROM docs WHERE path = 'med/state' OR path LIKE 'med/les_%' OR path LIKE 'med/bank_%' OR path LIKE 'med/cards_%' GROUP BY user_id").all()).results,
     /* Free services only (Gemini's free tier, then Cloudflare Workers AI), called directly so a paid service is never reached and the
        app's AI hierarchy is untouched. Usage is counted under the account 'mkos'. */
