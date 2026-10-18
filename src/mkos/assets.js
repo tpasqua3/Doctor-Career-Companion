@@ -13,6 +13,10 @@ const U = (uid) => 'u' + String(uid).replace(/[^a-z0-9]/gi, '').slice(0, 10).toL
 const enc = new TextEncoder();
 const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)))].map((x) => x.toString(16).padStart(2, '0')).join('');
 const KINDS = () => FRAMEWORK.frameworks.assets.kinds;
+const REGEN = () => FRAMEWORK.frameworks.decomposition.regeneration;
+const CLINICAL = FRAMEWORK.frameworks.ontology.relationships.map((r) => r.key);
+const h10 = async (s) => (await sha(s)).slice(0, 10);
+const jac = (a, b) => { const A = new Set(a || []), B = new Set(b || []); if (!A.size && !B.size) return 1; let i = 0; for (const x of A) if (B.has(x)) i++; return i / (A.size + B.size - i); };
 const tslug = (tid) => slug(String(tid).replace(/\./g, ' '), 48);
 const lessonId = (tid, variant, band) => `ea.s.les.${tslug(tid)}.${slug(variant, 8)}.${band}`;
 // What a recommendation says (its substance, not its governance bookkeeping): a change here means the guideline content changed.
@@ -32,7 +36,20 @@ async function basisNow(env, u, tid, name, pol) {
   const ro = await getObjects(env, (ctx.recommendations || []).slice(0, 12).map((r) => r.id)), recs = {};
   for (const [id, r] of Object.entries(ro)) recs[id] = await recSig(r);
   const priority = ctx.blueprint && ctx.blueprint.mapping ? Math.round(ctx.blueprint.mapping.priority_score) : null;
-  return { ctx, basis: { families, recs, priority, band: band(priority, pol.bands), blueprint_family: (ctx.blueprint && ctx.blueprint.selection && ctx.blueprint.selection.family) || null } };
+  // What the topic's knowledge looks like as structure: how many current recommendations cover it, which objectives teach or assess it,
+  // which competencies those develop, and its clinical relationships (decomposition.json regeneration rules).
+  const concepts = (ctx.node && ctx.node.concepts && ctx.node.concepts.length ? ctx.node.concepts : ctx.concept ? [ctx.concept.id] : []).slice(0, 20);
+  let cov = 0, objs = [], comps = [], rels = [];
+  if (concepts.length) {
+    const q = concepts.map(() => '?').join(',');
+    cov = ((await env.DB.prepare(`SELECT COUNT(DISTINCT e.dst) AS n FROM mk_edges e JOIN mk_objects r ON r.id = e.dst WHERE e.src IN (${q}) AND e.rel = 'recommended_by' AND e.status = 'current' AND r.status IN ('current','modified')`).bind(...concepts).first()) || {}).n || 0;
+    const ol = (await env.DB.prepare(`SELECT DISTINCT src FROM mk_edges WHERE dst IN (${q}) AND rel IN ('teaches','assesses') AND status = 'current' AND src LIKE 'obj.%' LIMIT 300`).bind(...concepts).all()).results.map((r) => r.src);
+    objs = (await Promise.all(ol.map(h10))).sort();
+    if (ol.length) { const p = ol.slice(0, 90); comps = (await env.DB.prepare(`SELECT DISTINCT dst FROM mk_edges WHERE src IN (${p.map(() => '?').join(',')}) AND rel = 'develops' AND status = 'current'`).bind(...p).all()).results.map((r) => r.dst).sort(); }
+    const rl = (await env.DB.prepare(`SELECT rel, src, dst FROM mk_edges WHERE (src IN (${q}) OR dst IN (${q})) AND status = 'current' AND rel IN (${CLINICAL.map(() => '?').join(',')}) LIMIT 400`).bind(...concepts, ...concepts, ...CLINICAL).all()).results;
+    rels = (await Promise.all(rl.map((r) => h10(r.rel + '|' + r.src + '|' + r.dst)))).sort();
+  }
+  return { ctx, basis: { families, recs, priority, band: band(priority, pol.bands), blueprint_family: (ctx.blueprint && ctx.blueprint.selection && ctx.blueprint.selection.family) || null, cov, objs, comps, rels } };
 }
 
 /* Why a stored asset may not be served (null = serve it). The order follows assets.json "regenerate_when". */
@@ -53,6 +70,12 @@ async function judge(o, now, live, pol, pool) {
     if (!r || r.status === 'superseded' || r.status === 'retired' || (sig && (await recSig(r)) !== sig)) return 'guideline_changed';
   }
   if (pool && b.priority != null && now.priority != null && Math.abs(b.priority - now.priority) >= pol.delta) return 'blueprint_changed';
+  // Structural change in the topic's knowledge (assets written before these fingerprints existed are judged on the rules above only).
+  const R = REGEN();
+  if (b.cov != null && now.cov != null && now.cov >= b.cov + Math.max(R.coverage_expanded.min_new, Math.ceil(b.cov * (R.coverage_expanded.min_ratio - 1)))) return 'coverage_expanded';
+  if (b.objs && now.objs && jac(b.objs, now.objs) < R.set_change_jaccard_below) return 'objectives_changed';
+  if (b.comps && b.comps.length && now.comps && jac(b.comps, now.comps) < 1) return 'competencies_changed';
+  if (b.rels && now.rels && jac(b.rels, now.rels) < R.set_change_jaccard_below) return 'relationships_changed';
   return null;
 }
 
@@ -193,4 +216,61 @@ export async function assetStats(env, u, owner) {
   const flagged = owner ? (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'EducationalAsset' AND id LIKE 'ea.s.%' AND json_array_length(COALESCE(json_extract(body, '$.needs'), '[]')) > 0 ORDER BY updated DESC LIMIT 50").all()).results
     .map((r) => { const o = JSON.parse(r.body); return { id: o.id, name: o.name, needs: o.needs, review_status: o.review_status, flags: (o.data && o.data.flags) || [] }; }) : undefined;
   return { library: by, served_7d: use, mine: Object.fromEntries(mine.results.map((r) => [r.kind, r.n])), flagged };
+}
+
+/* Daily reconciliation: every current shared asset is judged against today's knowledge; whatever no longer holds is flagged for
+   regeneration with the reason (it is rewritten the next time anyone asks for it, never served stale meanwhile). Board weighting is
+   judged per learner at request time, so it is not part of this sweep. prog: {after}. */
+export async function auditAssets(env, { prog = {}, limit = 40 } = {}) {
+  const pol = await policy(env), sys = { id: 'mkos-reconcile', email: 'mkos@system' };
+  const list = (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'EducationalAsset' AND id LIKE 'ea.s.%' AND id > ? AND status = 'current' ORDER BY id LIMIT ?").bind(prog.after || '', limit).all()).results.map((r) => JSON.parse(r.body));
+  const byTopic = {}; for (const o of list) (byTopic[o.app_topic] = byTopic[o.app_topic] || []).push(o);
+  let flagged = 0; const reasons = {};
+  for (const [tid, objs] of Object.entries(byTopic)) {
+    const { basis: now } = await basisNow(env, sys, tid, '', pol);
+    const live = await getObjects(env, [...new Set(objs.flatMap((o) => Object.keys((o.basis || {}).recs || {})))]);
+    for (const o of objs) {
+      if ((o.needs || []).length || o.review_status !== 'validated') continue;
+      const r = await judge(o, now, live, pol, false);
+      if (r && r !== 'unvalidated' && r !== 'flagged') { reasons[r] = (reasons[r] || 0) + 1; flagged++;
+        await putObject(env, { ...o, needs: ['regenerate'], review_status: 'needs_regenerate', data: { ...(o.data || {}), regenerate_reason: r, regenerate_at: nowIso() } }, { actor: 'reconcile', summary: 'regeneration queued: ' + r, audited: false }); }
+    }
+  }
+  if (list.length) prog.after = list[list.length - 1].id;
+  return { done: list.length < limit, checked: list.length, flagged, reasons };
+}
+
+/* RETROACTIVE ASSET IMPORT: the owner's existing reviewed lessons (with their check questions) and reviewed questions become shared
+   library assets, judged like anything newly written: personalized ones (a focus, a gap, a dig-deeper, a lesson being finished) are left
+   out, and anything citing an older guideline edition is stored as citation_outdated and never served. Flashcards are not imported:
+   the record does not show which passed review. prog: {at} index into the record's documents. */
+export async function importOwnerAssets(env, deps, { prog = {}, perStep = 6 } = {}) {
+  const oid = deps.ownerId ? await deps.ownerId() : null; if (!oid) return { done: true, note: 'no owner account' };
+  const u = { id: oid, email: 'owner' }, docs = await deps.ownerDocs(['med/les_', 'med/bank_']), paths = Object.keys(docs).sort();
+  const out = prog.out || (prog.out = { lessons: 0, questions: 0, skipped: 0, outdated: 0 });
+  const allQs = paths.filter((p) => /^med\/bank_/.test(p)).flatMap((p) => (docs[p] && docs[p].qs) || []);
+  const qOut = (q) => ({ stem: q.stem, opts: q.opts, ans: q.ans, exp: q.exp, obj: q.obj || '', cav: q.cav || '', src: q.src || [], ref: q.ref || '', d: q.d || null });
+  let n = 0;
+  for (prog.at = prog.at || 0; prog.at < paths.length && n < perStep; prog.at++) {
+    const path = paths[prog.at], d = docs[path]; if (!d || typeof d !== 'object') continue;
+    if (/^med\/les_/.test(path)) {
+      if (!d.tid || !d.len || d.focus || d.parent || d.deeper || d.part || !d.rev || !d.rev.done || !Array.isArray(d.segs) || !d.segs.length || d.mk) { out.skipped++; continue; }
+      const checks = allQs.filter((q) => q.les === d.id).map(qOut);
+      const r = await putAssets(env, u, { kind: 'lesson', tid: d.tid, name: '', len: d.len, validated: true, generated_by: (d.by && d.by.w) || 'legacy_record', reviewed_by: (d.by && d.by.r) || '', sources: d.src || [], title: d.title,
+        content: { title: d.title, len: d.len, min: d.min, rev: d.rev, segs: d.segs, pts: d.pts || [], pit: d.pit || [], src: d.src || [], unc: d.unc || [], ref: d.ref || '', by: d.by || null, checks, cards: [] } });
+      const st = (r.stored || [])[0] || {}; if (st.review_status === 'citation_outdated') out.outdated++; else if (st.id) out.lessons++; n++;
+    } else if (/^med\/bank_/.test(path)) {
+      const by = {};
+      for (const q of d.qs || []) { if (!q.tid || !q.rev || q.gap || q.les || q.from || q.mk || q.lib || !Array.isArray(q.opts) || q.opts.length < 4) { out.skipped++; continue; } const k = q.tid + '|' + (q.d || 3); (by[k] = by[k] || []).push(q); }
+      for (const [k, qs] of Object.entries(by)) {
+        const [tid, lvl] = k.split('|');
+        for (let i = 0; i < qs.length; i += 30) {
+          const r = await putAssets(env, u, { kind: 'question', tid, name: '', level: Number(lvl), generated_by: 'legacy_record', items: qs.slice(i, i + 30).map((q) => ({ content: qOut(q), validated: true, sources: q.src || [] })) });
+          for (const st of r.stored || []) { if (st.review_status === 'citation_outdated') out.outdated++; else if (st.id) out.questions++; }
+        }
+      }
+      n++;
+    }
+  }
+  return { done: prog.at >= paths.length, ...out };
 }

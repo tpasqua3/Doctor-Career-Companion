@@ -43,6 +43,9 @@ licensed). The server reads the library from Drive itself.
 | `pronounce.js` | The pronunciation registry and its governance (below) |
 | `bridge.js` | The app bridge: one call per screen (`app_bundle`), the governed topic package handed to the app's AI (`topic_context`), citation checks, asset flags |
 | `assets.js` | Educational assets as governed MKOS objects: retrieve first, generate only when needed (below) |
+| `decompose.js` | Knowledge decomposition: criteria, objectives, competencies, teaching points, targets, pathways, pearls (below) |
+| `classify.js` | Classification and subclassification of every object (below) |
+| `reconcile.js` | The daily reconciliation engine (below) |
 | `routes.js` | `/api/mkos/<op>` and the connector tool `mkos` |
 
 The cron gives MKOS its turn in each 5-minute run in which no account records were waiting to be copied to Drive. Each run:
@@ -116,7 +119,7 @@ per version in `mk_asset_store`, linked to the concepts they teach and to the gu
   weighting band that is current, validated and guideline-current. Questions and flashcards come from a pool: the items this learner
   has not been served (`mk_asset_usage`), at the requested difficulty; only the shortfall is written.
 - **Generate only when** there is no asset; it was superseded or flagged for regeneration; a guideline family it relied on has a new
-  current edition, a guideline family now covers the topic that did not when it was written (the library was indexed later), or a recommendation it relied on changed; the board weighting moved materially (`blueprint_material_delta`, default
+  current edition, a guideline family now covers the topic that did not when it was written (the library was indexed later), a recommendation or its evidence level changed, the topic's coverage expanded, or its objectives, competencies or clinical relationships changed; the board weighting moved materially (`blueprint_material_delta`, default
   20; lessons are kept per weighting band so two blueprints never overwrite each other); or the request is a personalized adaptation
   (a focus, a knowledge gap, a basis lesson, a lesson being finished).
 - **Validate, then store.** `asset_put` stores what was written. *Validated* means the app's independent accuracy review ran over the
@@ -130,6 +133,36 @@ per version in `mk_asset_store`, linked to the concepts they teach and to the gu
   result: ok | regenerate | retire}`), or until a fresh validated version replaces it. `asset_stats` shows the library, reuse and the
   review queue. In the app: a reused lesson says it came from the MKOS library (with "Write a fresh version" and "Report a problem"),
   question sets say how many came from the bank, and the Knowledge tab shows the library.
+
+## Knowledge decomposition and classification (src/mkos/decompose.js, classify.js, mkos/ontology/decomposition.json)
+
+Documents are source material; structured knowledge is the operational layer. After a source is extracted, each recommendation is
+decomposed by rules (no AI) into Claims (eligibility, contraindication, not recommended, exception, monitoring, threshold), a learning
+and an assessment Objective (difficulty from class and evidence, competencies and subcompetencies, blueprint topics), a teaching
+point carrying its targets (question, flashcard, case, review), and high-yield and common-error objects where the class of
+recommendation calls for them; each concept gets lesson and review targets, each guideline section a clinical pathway, and concepts
+with enough recommendations get clinical pearls from the free AI (pending validation, never authoritative until reviewed). Everything
+is linked in the graph (derived_from, teaches, assesses, develops, mapped_to_blueprint, covers, precedes). Delta processing: each
+recommendation records the version it was decomposed at, so only new or changed ones are reprocessed, and objects a changed
+recommendation no longer yields are retired. Every object carries a classification (domain, subdomain, specialty, topic, subtopic,
+object type, difficulty, board and educational relevance, evidence strength, authority, confidence, version, status, supersession,
+validation, governance), derived like the scores and recomputed only when the object changes. The decomposed knowledge reaches the
+app through `topic_context` (prompt blocks and the topic panel) and the Knowledge tab. Operation: `decomposition` (progress and counts).
+
+Extraction never waits on the AI budget: when the day's free AI budget is spent, parts are processed by rules and recorded for later
+AI enrichment (`enrich` jobs); guideline parts without recommendation language get rules only; parts done by rules alone continue
+while the run's query budget has room, and each run takes jobs until its budget is nearly used.
+
+## Daily reconciliation (src/mkos/reconcile.js)
+
+Once a day, at the Life OS refresh hour (`reconciliation.utc_hour`, 04:00 UTC = midnight New York), MKOS checks and repairs: new and
+updated sources (a full library sweep if none finished in a day), guideline families whose supersession contradicts itself, blueprint
+registries without mappings, recommendations not yet decomposed and objects not yet classified, relationship drift (edges touching
+superseded, retired or missing objects), sources whose extraction went missing, failed jobs (one fresh attempt a day, except those
+needing the owner), orphaned derived knowledge, outdated educational assets (flagged for regeneration with the reason), change
+events never carried through to impact analysis, and version integrity. A full pass also runs once when MKOS first boots, and
+retroactively MKOS decomposes, classifies and imports the owner's reviewed lessons and questions once per decomposition version.
+Owner: `reconcile {run: true}` queues a pass now and returns the last report.
 
 ## Retiring the legacy guideline registry (`guidelines_registry_v6_CURRENT.json`)
 

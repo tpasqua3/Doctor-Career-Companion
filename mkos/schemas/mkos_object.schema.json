@@ -134,6 +134,118 @@
     },
     "data": {
       "type": "object"
+    },
+    "classification": {
+      "type": "object",
+      "description": "CLASSIFICATION AND SUBCLASSIFICATION (decomposition.json): derived, kept without a content version.",
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "subdomain": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "specialty": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "topic": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subtopic": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "object_type": {
+          "type": "string"
+        },
+        "difficulty": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "board_relevance": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "educational_relevance": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "evidence_strength": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "authority_level": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "supersession_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "validation_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "governance_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "v": {
+          "type": "integer"
+        },
+        "at": {
+          "type": "string"
+        }
+      }
+    },
+    "decomposition": {
+      "type": "object",
+      "description": "Delta-processing bookkeeping: the fingerprint a recommendation was last decomposed at."
     }
   },
   "required": [

@@ -2179,11 +2179,17 @@ function mkProgressCard(){if(!mkOn())return'';if(!MK)return mkWait();const s=MK.
    <p class="tiny muted">Knowledge base: ${ko.Source||0} sources (${ks.extracted||0} read so far), ${ko.Guideline||0} guideline families, ${ko.Concept||0} concepts, ${ko.Recommendation||0} graded recommendations, ${ko.BlueprintTopic||0} blueprint topics.</p></div>`}
 
 /* A topic: what MKOS holds for it (current guidelines and superseded editions, graded recommendations, board weight, pronunciations). */
+// The topic's decomposed knowledge: high-yield points, common errors, criteria, objectives, and AI pearls awaiting validation.
+const mkKnowBlock=k=>{if(!k)return'';const li=(a,f)=>a.map(x=>`<li>${esc(f?f(x):x.statement)}</li>`).join(''),sec=(h,a,f,note)=>a.length?`<div class="small"><b>${h}</b>${note?` <span class="tiny muted">${note}</span>`:''}<ul class="pts">${li(a,f)}</ul></div>`:'';
+  return sec('High-yield',A(k.high_yield).slice(0,5),x=>x.statement.replace(/^High-yield:\s*/,''))+sec('Common errors',A(k.common_errors).slice(0,4),x=>x.statement.replace(/^Common error to avoid \(acting against this recommendation\):\s*/,''))
+    +sec('Criteria',A(k.criteria).slice(0,6),x=>x.kind.replace('_',' ')+': '+(A(x.values).length?x.values.join(', ')+' · ':'')+x.statement.slice(0,220))+sec('Objectives',A(k.objectives).slice(0,4))
+    +sec('Clinical pearls',A(k.pearls).slice(0,3),null,'AI-suggested, not yet validated')};
 function mkTopicPanel(t){if(!mkOn())return'';const c=MKT[t.id];if(!c){mkTopic(t).then(()=>{if(S.tab==='learn'&&S.topic===t.id&&!S.busy)render()});return mkWait()||`<div class="card"><p class="small muted">${thinking('Reading MKOS…')}</p></div>`}
   const v=c.v;if(!v)return'';const sc=v.scores||{},bp=v.blueprint&&v.blueprint.mapping;
   return `<div class="card"><div class="row between"><h3>From MKOS</h3>${v.concept?`<button class="btn sm" data-kobj="${esc(v.concept.id)}">Open in Knowledge</button>`:''}</div>
    ${A(v.guidelines).map(g=>`<p class="small"><b>Current guideline:</b> ${esc(g.current)}${A(g.superseded).length?`<br><span class="muted">${g.superseded.map(s=>(s.status==='modified'?'Partly updated: ':'Superseded: ')+esc(s.label)).join('<br>')}</span>`:''}</p>`).join('')||'<p class="small muted">No guideline family matched yet.</p>'}
    ${A(v.recommendations).length?`<div style="display:flex;flex-direction:column;gap:6px">${v.recommendations.slice(0,6).map(r=>`<div class="small"><span class="chip ${r.strength==='strong'?'good':r.strength.startsWith('against')?'off':''}">${esc(r.strength_original||r.strength)} · ${esc(r.loe_original||r.evidence_level)}</span> ${esc(r.statement)} <span class="tiny muted">${esc(r.cite?r.cite.label:'')}${r.governance==='pending_validation'?' · pending validation':''}</span></div>`).join('')}</div>`:''}
+   ${mkKnowBlock(v.knowledge)}
    <p class="tiny muted">${bp?`Board priority ${Math.round(sc.board_priority||0)} (${esc(mkExam())}) · questions ${Math.round(sc.question||0)} · cards ${Math.round(sc.flashcard||0)} · lessons ${Math.round(sc.lesson||0)}. `:''}${v.learner?`Your mastery ${Math.round(v.learner.mastery)}, system confidence ${Math.round(v.learner.confidence)}. `:''}${A(v.pronunciations).length?'Pronunciations: '+v.pronunciations.map(p=>esc(p.w)+' → '+esc(p.s)).join(', ')+'. ':''}${A(v.existing_assets).length?v.existing_assets.length+' of your lessons, questions and cards teach this. ':''}Lessons, questions and cards on this topic are written from this knowledge.</p></div>`}
 
 /* Questions and Cards: what to practice next, by the blueprint-weighted question and flashcard scores. */
@@ -2192,7 +2198,7 @@ function mkQueueCard(kind){if(!mkOn())return'';if(!MK)return mkWait();const i=ki
 
 /* Knowledge: the structured knowledge base itself (concepts, guidelines and editions, recommendations, evidence, sources, blueprint
    topics, pronunciations), with confidence, currency, authority, relationships and version history. */
-const KTYPES=[['','Everything'],['Concept','Concepts'],['Guideline','Guidelines'],['Recommendation','Recommendations'],['Source','Sources'],['BlueprintTopic','Blueprint topics'],['EvidenceObject','Evidence'],['Pronunciation','Pronunciations']];
+const KTYPES=[['','Everything'],['Concept','Concepts'],['Guideline','Guidelines'],['Recommendation','Recommendations'],['Objective','Objectives'],['EducationalObject','Teaching points and targets'],['Claim','Criteria and facts'],['Source','Sources'],['BlueprintTopic','Blueprint topics'],['EvidenceObject','Evidence'],['Pronunciation','Pronunciations']];
 const kChip=s=>`<span class="chip ${s==='current'?'good':s==='superseded'||s==='retired'?'off':''}">${esc(s)}</span>`;
 function vKnowledge(){if(!mkOn())return `<div class="plain"><h1>Knowledge</h1><p class="small muted">The knowledge base lives on the server. Open the app from its website or inside Claude with the connector.</p></div>`;
   if(KN.cur)return kObject();

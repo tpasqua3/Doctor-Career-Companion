@@ -32,6 +32,27 @@
       "items": {
         "type": "string"
       }
+    },
+    "claim_kind": {
+      "enum": [
+        "eligibility",
+        "contraindication",
+        "not_recommended",
+        "exception",
+        "monitoring",
+        "threshold",
+        "facet"
+      ]
+    },
+    "recommendation": {
+      "type": "string",
+      "x-ref": "Recommendation"
+    },
+    "values": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [

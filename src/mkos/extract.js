@@ -94,6 +94,8 @@ export async function aiBudgetLeft(env) {
 
 /* Process the next chunk of a source. Returns {done, chunk, used_ai}. Rules first; AI only when the chunk is substantive, rules found
    nothing, the source's depth calls for it, and budget remains. */
+// Language that marks a part of a guideline as carrying recommendations (graded statements, recommendation verbs).
+const REC_SIGNAL = /\b(COR|LOE|class\s+(?:I{1,3}|1|2a|2b|3)\b|level of evidence|grade\s+[A-D]\b|we (?:recommend|suggest)|is recommended|are recommended|is reasonable|may be considered|is not recommended|should (?:be|not)|strong recommendation|conditional recommendation)\b/i;
 export async function extractStep(env, deps, src, { actor = 'extractor', event_id = null, allowAI = true } = {}) {
   const row = await env.DB.prepare('SELECT chunk, text FROM mk_text WHERE source_id = ? AND done = 0 ORDER BY chunk LIMIT 1').bind(src.id).first();
   if (!row) return { done: true };
@@ -108,7 +110,10 @@ export async function extractStep(env, deps, src, { actor = 'extractor', event_i
     && !(depth === 'index_only' && row.chunk >= (pol.index_only_parts || 3));
   // Rule-parsed recommendations get their concepts by alias matching against the ontology (no AI).
   for (const r of rules.recommendations) if (!r.concepts.length) r.concepts = await linkConcepts(env, r.statement);
-  if (wantsAI) {
+  // A guideline part with no recommendation language is background or references: rules only, no AI.
+  const worthAI = wantsAI && (depth !== 'recommendations' || REC_SIGNAL.test(row.text));
+  let aiPending = false;
+  if (worthAI) {
     const b = await aiBudgetLeft(env);
     if (b.left > 0) {
       const known = (await env.DB.prepare("SELECT name FROM mk_objects WHERE type = 'Concept' AND specialty = ? ORDER BY trust DESC LIMIT 80").bind((src.specialty || [])[0] || '').all()).results.map((r) => r.name);
@@ -121,14 +126,14 @@ export async function extractStep(env, deps, src, { actor = 'extractor', event_i
         ai.recommendations = rules.recommendations.length ? rules.recommendations : (j.recommendations || []).map((r) => ({ ...r, _ai: true }));
         result = ai; result._ai = true;
       }
-    } else return { done: false, waiting: 'ai_budget' };
+    } else aiPending = true;   // the day's AI budget is spent: rules now, AI enrichment later (the source never waits on it)
   }
   const errs = validate(result, FRAMEWORK.schemas['extraction_result.schema.json'], FRAMEWORK.schemas);
   const applied = errs.length ? { skipped: errs.slice(0, 3) } : await applyExtraction(env, src, result, { actor, event_id, method: usedAI ? 'ai_extraction' : 'deterministic_parse' });
   await env.DB.prepare('UPDATE mk_text SET done = 1 WHERE source_id = ? AND chunk = ?').bind(src.id, row.chunk).run();
   // An index-only source (textbook, question bank) is indexed from its first parts; the rest of its text is not mined.
   if (depth === 'index_only' && row.chunk + 1 >= (pol.index_only_parts || 3)) await env.DB.prepare('UPDATE mk_text SET done = 1 WHERE source_id = ?').bind(src.id).run();
-  return { done: false, chunk: row.chunk, used_ai: usedAI, applied };
+  return { done: false, chunk: row.chunk, used_ai: usedAI, ai_pending: aiPending, applied };
 }
 
 // Concepts named in a sentence: every 1-6 word span is looked up in the alias table (one query), longest spans win.

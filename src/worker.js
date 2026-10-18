@@ -1436,6 +1436,7 @@ function mkDeps(env) {
     ownerUpdated: async paths => { const o = await ownerId(env); if (!o) return ''; const r = await env.DB.prepare(`SELECT MAX(updated) AS t FROM docs WHERE user_id = ? AND path IN (${paths.map(() => '?').join(',')})`).bind(o, ...paths).first(); return (r && r.t) || ''; },
     ownerSay: async ops => { const o = await ownerId(env); if (!o) throw new Error('No owner account.'); const r = await applySayOps(env, o, ops); syncSoon(env, null, o); return r; },
     ownerDocs: async prefixes => docsOf(await ownerId(env), prefixes),
+    ownerId: () => ownerId(env),
     changedUsers: async () => (await env.DB.prepare("SELECT user_id, MAX(updated) AS updated FROM docs WHERE path = 'med/state' OR path LIKE 'med/les_%' OR path LIKE 'med/bank_%' OR path LIKE 'med/cards_%' GROUP BY user_id").all()).results,
     /* Free services only (Gemini's free tier, then Cloudflare Workers AI), called directly so a paid service is never reached and the
        app's AI hierarchy is untouched. Usage is counted under the account 'mkos'. */

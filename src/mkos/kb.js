@@ -15,7 +15,8 @@ export const slug = (s, n = 60) => norm(s).replace(/ /g, '_').slice(0, n).replac
 const enc = new TextEncoder();
 const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)))].map((x) => x.toString(16).padStart(2, '0')).join('');
 // Content hash: everything except the envelope fields that change on every write.
-const VOLATILE = new Set(['version', 'updated', 'change_log', 'scores', 'confidence', 'created']);
+// classification and decomposition bookkeeping are derived values too (decomposition.json), like the scores.
+const VOLATILE = new Set(['version', 'updated', 'change_log', 'scores', 'confidence', 'created', 'classification', 'decomposition']);
 // Timestamps inside provenance steps and facet items ('at') are not content: a rewrite that changes only them is not a new version.
 const canon = (v) => Array.isArray(v) ? '[' + v.map(canon).join(',') + ']' : v && typeof v === 'object' ? '{' + Object.keys(v).filter((k) => k !== 'at').sort().map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}' : JSON.stringify(v);
 export const contentHash = (o) => sha(canon(Object.fromEntries(Object.entries(o).filter(([k]) => !VOLATILE.has(k)))));
@@ -52,7 +53,7 @@ export async function scoreObject(env, o, srcScores) {
    - Changed content gets a new version (patch by default; `part` minor/major), a change_log line, a mk_versions row and an audit row.
    - Schema errors are returned; with `strict` the write is refused (stop-the-line), otherwise the object is stored with
      governance_status 'stopped' so it is never served as authoritative until fixed. */
-export async function putObject(env, input, { actor = 'system', event_id = null, summary = '', part = 'patch', strict = false, srcScores = null, audited = true, rescore = false } = {}) {
+export async function putObject(env, input, { actor = 'system', event_id = null, summary = '', part = 'patch', strict = false, srcScores = null, audited = true, rescore = false, aliases = true } = {}) {
   const now = nowIso(), prev = await getObject(env, input.id);
   const o = { ...input };
   o.version = prev ? prev.version : (o.version || '1.0.0');
@@ -91,7 +92,8 @@ export async function putObject(env, input, { actor = 'system', event_id = null,
       .bind(o.id, o.type, String(o.name).slice(0, 300), norm(o.name).slice(0, 300), spec, o.status, o.governance_status, o.version, o.scores.trust_score, o.confidence.confidence_score, hash, body, o.created, now),
     env.DB.prepare('INSERT OR REPLACE INTO mk_versions (id, version, hash, body, at, event_id, actor) VALUES (?,?,?,?,?,?,?)').bind(o.id, o.version, hash, body, now, event_id, actor),
   ]);
-  await indexAliases(env, o);
+  // Derived objects (objectives, teaching points, criteria) are not names a concept can be found by.
+  if (aliases) await indexAliases(env, o);
   if (audited) await audit(env, actor, prev ? 'update' : 'create', o.id, prev?.version, o.version, errors.length ? { errors: errors.slice(0, 5) } : summary ? { summary } : null);
   return { id: o.id, version: o.version, changed: true, created: !prev, errors };
 }

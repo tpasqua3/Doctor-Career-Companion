@@ -4,7 +4,7 @@
 // value if the platform's per-run limit is hit (free and paid Cloudflare plans both work).
 import { FRAMEWORK } from './framework.js';
 import { mkInit, J, nowIso, getSetting, setSetting, audit } from './db.js';
-import { getObject } from './kb.js';
+import { getObject, putObject } from './kb.js';
 import { scanStep, refreshFamily, importLegacyRegistry, queue, event } from './ingest.js';
 import { loadText, extractStep, finishSource } from './extract.js';
 import { analyzeImpact, rescore } from './impact.js';
@@ -14,6 +14,10 @@ import { mirrorStep, snapshot } from './mirror.js';
 import { syncOwner, generateCandidates, termsNeedingPronunciation } from './pronounce.js';
 import { aiBudgetLeft } from './extract.js';
 import { projectBlueprint, evolve, parseBlueprintText, familyOf } from './blueprint.js';
+import { decomposeStep, pearlStep } from './decompose.js';
+import { classifyStep } from './classify.js';
+import { reconcileStep, reconcileDue } from './reconcile.js';
+import { importOwnerAssets } from './assets.js';
 
 export class BudgetSpent extends Error { constructor() { super('MKOS query budget spent for this run'); this.budget = true; } }
 // Only Cloudflare's own per-invocation limits count as a platform cap (a Google rate limit is an ordinary, retried error).
@@ -70,7 +74,7 @@ async function bootstrap(env, deps, B) {
 }
 
 // One job. Returns true when the job is finished (or permanently failed), false to continue it next run.
-async function runJob(env, deps, job) {
+async function runJob(env, deps, job, meter = null) {
   const p = J(job.payload, {}) || {};
   const save = (state, note) => env.DB.prepare('UPDATE mk_jobs SET state = ?, tries = tries + 1, payload = ?, note = ?, updated = ? WHERE id = ?').bind(state, JSON.stringify(p), note ? String(note).slice(0, 500) : null, nowIso(), job.id).run();
   try {
@@ -86,11 +90,20 @@ async function runJob(env, deps, job) {
       if (!src || src.status === 'retired' || src.ingest_state === 'skipped') { await save('done', 'nothing to extract'); return true; }
       if ((src.bytes || 0) > 25e6) { await save('failed', 'file over 25 MB: split it into chapters (or keep it as Google Docs) to have it read'); return true; }
       if (!p.loaded) { try { p.chunks = await loadText(env, deps, src, { complete: false }); p.loaded = true; await save('running'); } catch (e) { if (e.budget) throw e; await save(job.tries >= 3 ? 'failed' : 'queued', 'text: ' + (e.message || e)); return job.tries >= 3; } }
+      // Up to parts_per_run parts that use the AI; parts done by rules alone continue while the run's query budget has room.
       const per = Number(FRAMEWORK.frameworks.ingestion.extraction.parts_per_run) || 1;
-      for (let k = 0; k < per; k++) {
-        const r = await extractStep(env, deps, src, { event_id: p.event_id, allowAI: !!deps.ai });
-        if (r.waiting) { await save('queued', 'waiting for tomorrow\'s AI budget'); await env.DB.prepare('UPDATE mk_jobs SET not_before = ? WHERE id = ?').bind(Date.now() + 3600e3, job.id).run(); return false; }
-        if (r.done) { await finishSource(env, src, { event_id: p.event_id }); await save('done', `${p.chunks || 0} parts`); return true; }
+      let aiParts = 0;
+      for (let k = 0; k < 60; k++) {
+        if (aiParts >= per || (k >= per && meter && meter.n > meter.max * 0.7)) break;
+        const r = await extractStep(env, deps, src, { event_id: p.event_id, allowAI: !!deps.ai && aiParts < per });
+        if (r.done) {
+          await finishSource(env, src, { event_id: p.event_id }); await queue(env, 'decompose', src.id, { event_id: p.event_id }, 4);
+          // Parts that wanted the AI on a day its budget was spent are enriched later; the rules' knowledge is already in place.
+          if ((p.ai_pending || []).length) { const cur = await getObject(env, src.id); await putObject(env, { ...cur, ai_pending: p.ai_pending.slice(0, 400) }, { summary: `${p.ai_pending.length} parts await AI enrichment`, audited: false }); await queue(env, 'enrich', src.id, {}, 8); }
+          await save('done', `${p.chunks || 0} parts${(p.ai_pending || []).length ? ', ' + p.ai_pending.length + ' await AI enrichment' : ''}`); return true;
+        }
+        if (r.used_ai) aiParts++;
+        if (r.ai_pending) (p.ai_pending = p.ai_pending || []).push(r.chunk);
         p.done_chunks = (p.done_chunks || 0) + 1;
       }
       await save('running'); return false;
@@ -131,6 +144,36 @@ async function runJob(env, deps, job) {
       try { await mapLearnerAssets(env, job.subject, docs, { prog: p.prog }); } finally { await env.DB.prepare('UPDATE mk_jobs SET payload = ? WHERE id = ?').bind(JSON.stringify(p), job.id).run().catch(() => {}); }
       await save('done'); await queue(env, 'learner', job.subject, {}, 6); return true;
     }
+    // AI ENRICHMENT of parts that were processed by rules alone because the day's free AI budget was spent.
+    if (job.kind === 'enrich') {
+      const src = await getObject(env, job.subject), pend = new Set((src && src.ai_pending) || []);
+      if (!src || !pend.size || src.status === 'retired') { await save('done', 'nothing to enrich'); return true; }
+      const b = await aiBudgetLeft(env);
+      if (!deps.ai || b.left <= 0) { await env.DB.prepare("UPDATE mk_jobs SET state = 'queued', not_before = ?, note = 'waiting for the free AI budget', updated = ? WHERE id = ?").bind(Date.now() + 3600e3, nowIso(), job.id).run(); return false; }
+      if (!p.loaded) { await loadText(env, deps, src, { complete: false }); await env.DB.prepare(`UPDATE mk_text SET done = 1 WHERE source_id = ? AND chunk NOT IN (${[...pend].slice(0, 90).map(() => '?').join(',')})`).bind(src.id, ...[...pend].slice(0, 90)).run(); p.loaded = true; }
+      const per = Number(FRAMEWORK.frameworks.ingestion.extraction.parts_per_run) || 1;
+      for (let k = 0; k < per; k++) {
+        if ((await aiBudgetLeft(env)).left <= 0) break;   // never spend a pending part on rules alone: stop and wait for budget
+        const r = await extractStep(env, deps, src, { event_id: p.event_id, allowAI: true });
+        if (r.done) { await finishSource(env, src, {}); const cur = await getObject(env, src.id); await putObject(env, { ...cur, ai_pending: [] }, { summary: 'AI enrichment complete', audited: false }); await queue(env, 'decompose', src.id, {}, 5); await save('done', 'enriched'); return true; }
+      }
+      await save('running'); return false;
+    }
+    // Knowledge decomposition (delta): one source's recommendations, or every recommendation not yet decomposed at this version ('all').
+    if (job.kind === 'decompose') { p.prog = p.prog || {}; let r;
+      try { r = await decomposeStep(env, job.subject, { prog: p.prog }); } finally { await env.DB.prepare('UPDATE mk_jobs SET payload = ? WHERE id = ?').bind(JSON.stringify(p), job.id).run().catch(() => {}); }
+      p.recs = (p.recs || 0) + r.recs; p.objects = (p.objects || 0) + r.objects;
+      if (r.done) { await save('done', `${p.recs} recommendations, ${p.objects} objects`); await queue(env, 'classify', 'all', {}, 6); return true; }
+      await save('running', `${p.recs} recommendations so far`); return false; }
+    if (job.kind === 'classify') { const r = await classifyStep(env); p.n = (p.n || 0) + r.classified; if (!r.more) { await save('done', `${p.n} classified`); return true; } await save('running', `${p.n} classified so far`); return false; }
+    if (job.kind === 'pearls') { const cap = Number(FRAMEWORK.frameworks.decomposition.decomposition.pearls_per_day) || 40; const r = await pearlStep(env, deps); p.concepts = (p.concepts || 0) + (r.concept ? 1 : 0);
+      if (r.done || p.concepts >= cap) { await save('done', `${p.concepts} concepts${r.note ? '; ' + r.note : ''}`); return true; } await save('running'); return false; }
+    if (job.kind === 'reconcile') { let fin;
+      try { fin = await reconcileStep(env, deps, p); } finally { await env.DB.prepare('UPDATE mk_jobs SET payload = ? WHERE id = ?').bind(JSON.stringify(p), job.id).run().catch(() => {}); }
+      if (fin) { await save('done', 'daily reconciliation complete'); return true; } await save('running', 'step ' + (p.step + 1)); return false; }
+    if (job.kind === 'asset_import') { p.prog = p.prog || {}; let r;
+      try { r = await importOwnerAssets(env, deps, { prog: p.prog }); } finally { await env.DB.prepare('UPDATE mk_jobs SET payload = ? WHERE id = ?').bind(JSON.stringify(p), job.id).run().catch(() => {}); }
+      if (r.done) { await save('done', `${r.lessons || 0} lessons, ${r.questions || 0} questions imported; ${r.outdated || 0} citing older editions kept out`); return true; } await save('running'); return false; }
     await save('failed', 'unknown job kind'); return true;
   } catch (e) {
     if (e.budget) {
@@ -159,6 +202,10 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot } = {}) {
   const tickSt = J(await getSetting(rawEnv, 'tick'), {}) || {};
   if (tickSt.capped && Date.now() - Date.parse(tickSt.capped_at || 0) > 864e5) tickSt.capped = false;   // a platform cap is re-tested daily
   if ((await getSetting(rawEnv, 'paused')) === '1') return { paused: true };
+  // One run at a time: a manual run and the scheduled run never work on the same jobs at once (the lease expires after 2 minutes).
+  const lease = J(await getSetting(rawEnv, 'tick_lease'), null);
+  if (lease && Date.now() - lease.t < 120e3) return { skipped: 'another run is in progress' };
+  const leaseId = Math.random().toString(36).slice(2); await setSetting(rawEnv, 'tick_lease', JSON.stringify({ t: Date.now(), id: leaseId }));
   const budget = Math.max(25, Math.min(880, Number(tickSt.budget) || 30));
   const { env, meter, tick } = metered(rawEnv, budget);
   // Queries the Worker makes on MKOS's behalf (learner records) count against the same budget.
@@ -179,11 +226,21 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot } = {}) {
       for (const r of results) await queue(env, 'bp_project', r.id, {}, 3); }
     // Pronunciation: mirror the owner's list whenever it changes; one generation job per day for terms without a record.
     if (deps.ownerUpdated) { const t = await deps.ownerUpdated(['med/says', 'med/saylog']); if (t && t > ((await getSetting(env, 'pron_sync_t')) || '')) { await queue(env, 'pron_sync', 'owner', {}, 4); await setSetting(env, 'pron_sync_t', t); } }
-    const day = nowIso().slice(0, 10); if ((await getSetting(env, 'pron_gen_day')) !== day && J(await getSetting(env, 'bootstrap'), {})?.curriculum?.done) { await queue(env, 'pronounce', 'day:' + day, {}, 8); await setSetting(env, 'pron_gen_day', day); }
-    for (let k = 0; k < 6; k++) {
+    const day = nowIso().slice(0, 10), booted = J(await getSetting(env, 'bootstrap'), {})?.curriculum?.done;
+    if ((await getSetting(env, 'pron_gen_day')) !== day && booted) { await queue(env, 'pronounce', 'day:' + day, {}, 8); await setSetting(env, 'pron_gen_day', day); }
+    if (booted) {
+      // Retroactive processing, once per decomposition version: decompose and classify everything already in MKOS, import the owner's assets.
+      const bf = String(FRAMEWORK.frameworks.decomposition.version);
+      if ((await getSetting(env, 'backfill_version')) !== bf) { await queue(env, 'decompose', 'all', {}, 5); await queue(env, 'classify', 'all', {}, 6); await queue(env, 'asset_import', 'owner', {}, 6); await setSetting(env, 'backfill_version', bf); }
+      // Daily: reconciliation with the Life OS refresh, and clinical pearls within the free AI budget.
+      const rd = await reconcileDue(env); if (rd) { await queue(env, 'reconcile', 'day:' + rd, {}, 2); await queue(env, 'pearls', 'day:' + rd, {}, 9); }
+    }
+    // Jobs in priority order while the run's query budget has room (at least six steps; small steps no longer waste a run).
+    for (let k = 0; k < 60; k++) {
+      if (k >= 6 && meter.n > meter.max * 0.8) break;
       const job = await env.DB.prepare("SELECT * FROM mk_jobs WHERE state IN ('queued','running') AND not_before <= ? ORDER BY priority, id LIMIT 1").bind(Date.now()).first();
       if (!job) break;
-      const finished = await runJob(env, deps, job);
+      const finished = await runJob(env, deps, job, meter);
       report.steps.push(`${job.kind} ${job.subject}${finished ? ' done' : ' continues'}`);
       if (!finished && job.kind === 'extract') break;     // one AI-bearing step per run
     }
@@ -197,5 +254,6 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot } = {}) {
   const next = platformHit ? 28 : meter.n >= budget && !tickSt.capped ? Math.round(budget * 1.25) : budget;
   report.used = meter.n;
   await setSetting(rawEnv, 'tick', JSON.stringify({ budget: next, capped: platformHit || tickSt.capped || false, capped_at: platformHit ? nowIso() : tickSt.capped_at || null, last: report }));
+  const cur = J(await getSetting(rawEnv, 'tick_lease'), null); if (cur && cur.id === leaseId) await setSetting(rawEnv, 'tick_lease', null);
   return report;
 }

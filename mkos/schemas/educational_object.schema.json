@@ -20,7 +20,14 @@
         "flashcard",
         "simulation",
         "curriculum",
-        "learning_path"
+        "learning_path",
+        "teaching_point",
+        "clinical_pearl",
+        "high_yield",
+        "common_error",
+        "lesson_target",
+        "review_target",
+        "clinical_pathway"
       ]
     },
     "concepts": {
@@ -53,6 +60,63 @@
       "items": {
         "type": "string"
       }
+    },
+    "objective_type": {
+      "enum": [
+        "learning",
+        "assessment",
+        "board",
+        "remediation",
+        "review"
+      ]
+    },
+    "subcompetencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "source_recommendations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "Recommendation"
+    },
+    "blueprint_topics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "x-ref": "BlueprintTopic"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "question",
+          "flashcard",
+          "case",
+          "review",
+          "lesson"
+        ]
+      },
+      "description": "Educational targets this knowledge is suited to."
+    },
+    "source_id": {
+      "type": "string"
+    },
+    "strength": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "evidence_level": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

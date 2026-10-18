@@ -24,6 +24,9 @@ intelligence, confidence, blueprint, pronunciation, curriculum and competency la
   kind) asks `asset_find` before writing and stores what it writes with `asset_put` after its accuracy review (`src/mkos/assets.js`,
   `mkos/ontology/assets.json`; app helpers `mkA`, `mkShare`, `mkStore`). Generate only when no asset exists, it was superseded, the
   guideline changed, the blueprint weighting changed materially, or the learner needs a personalized adaptation (stored as their own).
+- Sources are decomposed into structured knowledge (`decompose.js`, `classify.js`, `mkos/ontology/decomposition.json`) and MKOS
+  reconciles itself daily with the Life OS refresh (`reconcile.js`). New knowledge features extend these rather than parsing documents
+  again; new object kinds get a classification and a place in the graph.
 - Existing features that do not yet consume MKOS are migration candidates; migrate them progressively, without breaking them.
 - In the app, the MKOS layer is the block headed "MKOS: the app's knowledge and learning operating system" in `app/companion.html`
   (`mk()`, `mkLoad()`, `mkTopic()`, `mkBlock()`, the MKOS cards and the Knowledge tab). Generation, the tutor, the planner weights,
