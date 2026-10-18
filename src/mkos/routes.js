@@ -113,8 +113,10 @@ const OPS = {
   outline_probe: { owner: true, run: async (env, u, a, x) => {
     const id = String(a.file_id || ''); if (!/^[A-Za-z0-9_-]{10,200}$/.test(id)) return { error: 'file_id required' };
     const size = Number(a.size) || 0; if (!size) return { error: 'size (bytes) required' };
-    const t0 = Date.now(), r = await pdfOutline((s, e) => x.deps.readRange(id, s, e), size);
-    return { items: r.items.length, chapters: r.items.filter((i) => i.level === 1).length, pages: r.pages || null, reason: r.reason || null, reads: r.reads, ms: Date.now() - t0, first: r.items.slice(0, Math.min(40, Number(a.n) || 15)) };
+    const t0 = Date.now(), log = [], limit = Math.min(150e3, Number(a.ms) || 90e3);
+    const read = async (s, e) => { if (Date.now() - t0 > limit) throw new Error('time limit reached'); const t = Date.now(); const b = await x.deps.readRange(id, s, e); log.push({ at: s, ms: Date.now() - t, bytes: b.length }); return b; };
+    let r; try { r = await pdfOutline(read, size, { maxReads: Number(a.max_reads) || 400 }); } catch (e) { return { error: String(e.message || e), reads: log.length, ms: Date.now() - t0, read_log: log.slice(0, 30) }; }
+    return { items: r.items.length, chapters: r.items.filter((i) => i.level === 1).length, pages: r.pages || null, reason: r.reason || null, reads: log.length, ms: Date.now() - t0, read_ms: log.map((l) => l.ms).slice(0, 20), first: r.items.slice(0, Math.min(40, Number(a.n) || 15)) };
   } },
   // The persistence ledger: every file's queued, persisted, failed, retried and reconciled entries (newest first).
   persistence: { owner: true, run: async (env, u, a) => ({ ledger: (await env.DB.prepare(`SELECT at, key, state, detail FROM mk_persist_log ${a.state ? 'WHERE state = ?' : ''} ORDER BY id DESC LIMIT ?`).bind(...(a.state ? [String(a.state)] : []), Math.max(1, Math.min(500, Number(a.limit) || 100))).all()).results,
