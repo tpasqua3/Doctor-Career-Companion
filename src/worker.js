@@ -1497,6 +1497,8 @@ function mkDeps(env) {
     ownerId: () => ownerId(env),
     // A file in the MKOS folder itself (canonical storage), read back only for a restore or its verification.
     readMine: async fileId => await (await gfetch(env, 'files/' + fileId, { alt: 'media' })).json(),
+    /* A byte range of a library file: large sources are indexed from their table of contents without downloading them whole. */
+    readRange: async (fileId, start, end) => new Uint8Array(await (await driveBytes(env, fileId, 'bytes=' + start + '-' + end)).arrayBuffer()),
     mkosRoot: env.MKOS_DRIVE_FOLDER || null,
     changedUsers: async () => (await env.DB.prepare("SELECT user_id, MAX(updated) AS updated FROM docs WHERE path = 'med/state' OR path LIKE 'med/les_%' OR path LIKE 'med/bank_%' OR path LIKE 'med/cards_%' GROUP BY user_id").all()).results,
     /* Free services only (Gemini's free tier, then Cloudflare Workers AI), called directly so a paid service is never reached and the

@@ -1,0 +1,640 @@
+MKOS LARGE SOURCE GOVERNANCE, CONFIDENCE SCORING, KNOWLEDGE OBJECT GENERATION, AND ONTOLOGY EXPANSION DIRECTIVE
+
+Purpose
+
+Large educational sources should never be skipped solely because of file size.
+
+The objective is not to ingest entire textbooks as narrative content.
+
+The objective is to transform educational resources into structured, retrievable, ontology-linked knowledge assets that participate in the knowledge graph, curriculum, assessment systems, educational functionality, confidence scoring systems, and retrieval engines.
+
+Large files should be routed according to source category rather than rejected based on size.
+
+==================================================
+SOURCE ROUTING GOVERNANCE
+==================================================
+
+Every discovered source must be categorized before processing.
+
+Source Categories:
+
+1. Clinical Guidelines
+2. Consensus Statements
+3. Position Statements
+4. Clinical Practice Recommendations
+5. MKSAP
+6. ACP Educational Assets
+7. Textbooks
+8. Board Review Resources
+9. Blueprint Sources
+10. Curriculum Sources
+11. Educational Media
+12. Other Registered Sources
+
+File size alone must never determine whether a source is processed.
+
+File size only determines processing method.
+
+==================================================
+GUIDELINE PROCESSING POLICY
+==================================================
+
+Guidelines remain primary clinical truth sources.
+
+For guidelines:
+
+Allow:
+
+- full extraction
+- recommendation extraction
+- evidence extraction
+- algorithm extraction
+- threshold extraction
+- risk stratification extraction
+- decision pathway extraction
+- knowledge object generation
+- relationship generation
+
+If large:
+
+- chunk automatically
+- process incrementally
+- continue extraction
+
+Do not skip guidelines because of size.
+
+==================================================
+MKSAP PROCESSING POLICY
+==================================================
+
+MKSAP serves as the primary educational interpretation layer.
+
+For MKSAP:
+
+Generate:
+
+- source records
+- chapter records
+- section records
+- topic records
+- objective records
+- concept records
+- educational mappings
+- blueprint mappings
+- competency mappings
+- curriculum mappings
+
+Create knowledge objects around:
+
+- diseases
+- syndromes
+- diagnoses
+- treatments
+- medications
+- procedures
+- pathophysiology
+- epidemiology
+- prevention
+- prognosis
+- clinical reasoning
+- board-focused concepts
+- educational objectives
+
+Store structured concepts and mappings.
+
+Do not depend on re-reading MKSAP to answer educational questions.
+
+==================================================
+TEXTBOOK PROCESSING POLICY
+==================================================
+
+Textbooks remain INDEX-FIRST.
+
+Large textbooks must not be skipped.
+
+Large textbooks must instead use index-first processing.
+
+For every textbook:
+
+Generate:
+
+- source record
+- textbook record
+- edition record
+- chapter records
+- section records
+- subsection records
+- topic records
+- concept records
+
+Extract:
+
+- table of contents
+- chapter names
+- section names
+- topic names
+- index entries
+- glossary terms
+- metadata
+
+Create:
+
+- ontology mappings
+- blueprint mappings
+- curriculum mappings
+- specialty mappings
+- competency mappings
+
+Do not store textbook chapters as narrative content.
+
+Do not reproduce textbook content.
+
+Instead create structured educational representations.
+
+==================================================
+KNOWLEDGE OBJECT GENERATION
+==================================================
+
+For every concept identified in:
+
+- Guidelines
+- MKSAP
+- Textbooks
+- Board Resources
+- Educational Sources
+
+Generate normalized knowledge objects.
+
+Knowledge object categories include:
+
+Disease Objects
+Diagnosis Objects
+Treatment Objects
+Medication Objects
+Procedure Objects
+Monitoring Objects
+Risk Stratification Objects
+Pathophysiology Objects
+Epidemiology Objects
+Prevention Objects
+Prognosis Objects
+Complication Objects
+Clinical Reasoning Objects
+Board-Relevant Concept Objects
+Educational Concept Objects
+Learning Objective Objects
+
+All objects must be:
+
+- versioned
+- source linked
+- auditable
+- retrievable
+- ontology mapped
+- confidence scored
+
+==================================================
+CONFIDENCE SCORING FRAMEWORK
+==================================================
+
+Every source, concept, relationship, knowledge object, learning objective, educational asset, recommendation, graph edge, and AI-generated artifact must carry a confidence score.
+
+Confidence scores should not be generated solely by AI.
+
+Confidence scores should be calculated deterministically whenever possible.
+
+Confidence Score Components:
+
+Source Confidence
+Extraction Confidence
+Mapping Confidence
+Relationship Confidence
+Educational Confidence
+Retrieval Confidence
+Consensus Confidence
+Review Confidence
+
+==================================================
+SOURCE CONFIDENCE
+==================================================
+
+Example weighting:
+
+Clinical Guidelines:
+95-100
+
+Major Society Recommendations:
+90-98
+
+Consensus Statements:
+85-95
+
+MKSAP:
+80-95
+
+Board Review Resources:
+75-90
+
+Textbooks:
+75-95
+
+Educational Assets:
+70-90
+
+AI Generated Content:
+30-70 initially
+unless reviewed
+
+User Generated Content:
+20-60 initially
+unless reviewed
+
+Source confidence should be adjustable through governance.
+
+==================================================
+EXTRACTION CONFIDENCE
+==================================================
+
+Confidence should increase when:
+
+- structured extraction succeeds
+- multiple extraction passes agree
+- source formatting is clear
+- recommendation language is explicit
+
+Confidence decreases when:
+
+- extraction is ambiguous
+- OCR quality is poor
+- parsing failures occur
+- conflicting results appear
+
+==================================================
+MAPPING CONFIDENCE
+==================================================
+
+For every ontology mapping determine confidence.
+
+Examples:
+
+Heart Failure
+→ Cardiology
+
+High Confidence
+
+Heart Failure
+→ Pulmonary
+
+Lower Confidence
+
+Consider:
+
+- ontology specificity
+- specialty alignment
+- concept overlap
+- source agreement
+
+==================================================
+RELATIONSHIP CONFIDENCE
+==================================================
+
+Graph edges should contain confidence values.
+
+Examples:
+
+Disease
+→ Management
+
+Disease
+→ Medication
+
+Disease
+→ Complication
+
+Disease
+→ Risk Factor
+
+Disease
+→ Diagnostic Test
+
+Confidence should increase when supported by:
+
+- multiple guideline sources
+- multiple educational sources
+- repeated graph references
+
+==================================================
+EDUCATIONAL CONFIDENCE
+==================================================
+
+Every learning objective should contain:
+
+- confidence score
+- source support count
+- blueprint support count
+- educational support count
+
+Objectives supported by:
+
+Guidelines
++
+MKSAP
++
+Blueprint
+
+should score higher than objectives supported by a single source.
+
+==================================================
+REVIEW CONFIDENCE
+==================================================
+
+Human review should affect confidence.
+
+Reviewed and approved:
+increase confidence
+
+Flagged:
+lower confidence
+
+Superseded:
+lower confidence
+
+Retired:
+confidence approaches zero
+
+==================================================
+KNOWLEDGE GRAPH CONFIDENCE
+==================================================
+
+Graph traversal should prioritize:
+
+Higher confidence nodes
+Higher confidence edges
+Higher confidence educational assets
+
+Traversal ranking should include:
+
+Relationship Strength
+Source Confidence
+Educational Confidence
+Review Confidence
+
+==================================================
+ONTOLOGY EXPANSION
+==================================================
+
+Every knowledge object should be placed into the ontology.
+
+Generate:
+
+- parent relationships
+- child relationships
+- prerequisite relationships
+- related concept relationships
+- disease relationships
+- competency relationships
+- blueprint relationships
+- curriculum relationships
+- educational relationships
+
+Examples:
+
+Heart Failure
+→ Disease Category
+→ Cardiology Specialty
+→ ABIM Blueprint Topic
+→ MKSAP Topic
+→ Harrison's Chapter
+
+Acute Kidney Injury
+→ Nephrology
+→ Pathophysiology Concepts
+→ Diagnostic Concepts
+→ Management Concepts
+→ Board Objectives
+
+==================================================
+NESTED KNOWLEDGE GRAPH GENERATION
+==================================================
+
+For every disease, syndrome, medication, therapy, procedure, and educational topic:
+
+Generate nested components.
+
+Example:
+
+Heart Failure
+
+Pathophysiology
+→ systolic dysfunction
+→ diastolic dysfunction
+→ neurohormonal activation
+
+Diagnosis
+→ symptoms
+→ signs
+→ laboratory findings
+→ imaging findings
+
+Management
+→ lifestyle interventions
+→ pharmacologic management
+→ device management
+
+Monitoring
+→ symptoms
+→ laboratory markers
+→ imaging follow-up
+
+Complications
+→ arrhythmias
+→ hospitalization
+→ mortality
+
+Risk Stratification
+→ prognostic factors
+→ severity scoring
+→ hospitalization risk
+
+Board Concepts
+→ high-yield facts
+→ common questions
+→ pitfalls
+
+Educational Objectives
+→ beginner
+→ intermediate
+→ advanced
+
+Assessment Objectives
+→ ABIM
+→ LKA
+→ CERT
+
+All become graph-linked entities.
+
+==================================================
+CURRICULUM GENERATION
+==================================================
+
+Curricula should not be manually created.
+
+Curricula should be generated from:
+
+Ontology
+→ Knowledge Objects
+→ Graph Relationships
+→ Blueprint Mappings
+→ Competency Mappings
+
+Generate:
+
+- learning pathways
+- prerequisite trees
+- objective sequences
+- remediation pathways
+- specialty tracks
+
+Confidence scores should influence:
+
+- sequencing
+- recommendation priority
+- objective ordering
+- curriculum generation
+
+==================================================
+ASSESSMENT GENERATION
+==================================================
+
+Every knowledge object should support:
+
+- questions
+- flashcards
+- quizzes
+- board review
+- competency assessment
+
+Assessments should map directly to:
+
+Knowledge Objects
+→ Curriculum Objectives
+→ Blueprint Objectives
+
+Assessment confidence should also be stored.
+
+==================================================
+RETRIEVAL-FIRST REQUIREMENT
+==================================================
+
+When a learner requests:
+
+- tutoring
+- board review
+- assessments
+- explanations
+- lessons
+- concept reviews
+
+System should first retrieve:
+
+1. ontology entities
+2. knowledge objects
+3. graph relationships
+4. educational assets
+5. blueprint mappings
+6. curriculum mappings
+7. MKSAP mappings
+8. textbook mappings
+
+Rank retrieval results by:
+
+- confidence score
+- source quality
+- relationship strength
+- review status
+- educational relevance
+
+Only then invoke AI.
+
+==================================================
+AI CONFIDENCE GOVERNANCE
+==================================================
+
+AI-generated outputs should never automatically become trusted knowledge.
+
+AI-generated content:
+
+- starts with reduced confidence
+- enters review queues
+- receives source validation
+- receives ontology validation
+- receives graph validation
+
+Confidence increases only after validation.
+
+AI confidence must not exceed source confidence.
+
+==================================================
+TEXTBOOK SIZE GOVERNANCE
+==================================================
+
+Files above 25 MB must not be listed as failed solely because of size.
+
+Instead:
+
+1. Register source.
+2. Record metadata.
+3. Record file size.
+4. Record source category.
+5. Route to correct processing method.
+
+Large textbooks:
+→ Index-first workflow
+
+Large MKSAP resources:
+→ Educational extraction workflow
+
+Large guidelines:
+→ Chunked extraction workflow
+
+Objective:
+
+Never Skip
+Always Register
+Always Map
+Always Index
+Process According To Source Type
+
+==================================================
+SUCCESS CRITERIA
+==================================================
+
+Every educational source discovered by MKOS should eventually support:
+
+Source
+→ Ontology
+→ Knowledge Objects
+→ Knowledge Graph
+→ Confidence Scores
+→ Blueprint Mapping
+→ Curriculum Mapping
+→ Educational Assets
+→ Assessment Assets
+→ Retrieval
+→ Frontend Functionality
+
+No source should exist solely as a file.
+
+Every source should become a structured educational asset provider.
+
+Target Philosophy
+
+Database First
+Ontology First
+Knowledge Graph First
+Knowledge Object First
+Confidence First
+Retrieval First
+AI Last
+
+The system should continuously move knowledge from documents into structured, reusable, versioned, confidence-ranked, citable, auditable, retrievable educational entities whose confidence evolves based upon source quality, validation, review status, graph support, and educational performance.

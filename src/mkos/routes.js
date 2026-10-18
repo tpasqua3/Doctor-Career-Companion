@@ -17,6 +17,7 @@ import { ttsList } from './pronounce.js';
 import { findAsset, putAssets, flagAsset, reviewAsset, assetStats } from './assets.js';
 import { durability, mirrorStep, persistNow } from './mirror.js';
 import { progress } from './progress.js';
+import { pdfOutline } from './outline.js';
 import { restoreStep, drillStep } from './restore.js';
 import { dashboard as pronDashboard, flag as pronFlag, approve as pronApprove, rejectCandidate, syncOwner, pronId } from './pronounce.js';
 
@@ -108,6 +109,13 @@ const OPS = {
     catch (e) { await noteMirrorError(env, e); return { error: String(e.message || e).slice(0, 300) }; } }) },
   // How far the knowledge build has come: percent per stage and overall, the milestones reached, failed jobs (progress.js).
   progress: { owner: false, run: async (env) => progress(env) },
+  // Owner: read a large library PDF's table of contents without indexing it (headings and page numbers only), to check a file.
+  outline_probe: { owner: true, run: async (env, u, a, x) => {
+    const id = String(a.file_id || ''); if (!/^[A-Za-z0-9_-]{10,200}$/.test(id)) return { error: 'file_id required' };
+    const size = Number(a.size) || 0; if (!size) return { error: 'size (bytes) required' };
+    const t0 = Date.now(), r = await pdfOutline((s, e) => x.deps.readRange(id, s, e), size);
+    return { items: r.items.length, chapters: r.items.filter((i) => i.level === 1).length, pages: r.pages || null, reason: r.reason || null, reads: r.reads, ms: Date.now() - t0, first: r.items.slice(0, Math.min(40, Number(a.n) || 15)) };
+  } },
   // The persistence ledger: every file's queued, persisted, failed, retried and reconciled entries (newest first).
   persistence: { owner: true, run: async (env, u, a) => ({ ledger: (await env.DB.prepare(`SELECT at, key, state, detail FROM mk_persist_log ${a.state ? 'WHERE state = ?' : ''} ORDER BY id DESC LIMIT ?`).bind(...(a.state ? [String(a.state)] : []), Math.max(1, Math.min(500, Number(a.limit) || 100))).all()).results,
     counts_7d: (await env.DB.prepare('SELECT state, COUNT(*) AS n FROM mk_persist_log WHERE at >= ? GROUP BY state').bind(new Date(Date.now() - 7 * 864e5).toISOString()).all()).results }) },

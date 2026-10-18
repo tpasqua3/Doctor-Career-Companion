@@ -101,7 +101,7 @@ async function familiesFor(env, words) {
 
 // Decomposed knowledge for a set of concepts: what teaches, assesses or covers them, and the criteria parsed from their recommendations.
 export async function topicKnowledge(env, concepts) {
-  const out = { high_yield: [], common_errors: [], pearls: [], objectives: [], criteria: [], targets: [], counts: {} };
+  const out = { high_yield: [], common_errors: [], pearls: [], objectives: [], criteria: [], targets: [], references: [], counts: {} };
   const cs = [...new Set(concepts)].filter(Boolean).slice(0, 20); if (!cs.length) return out;
   const q = cs.map(() => '?').join(',');
   const { results } = await env.DB.prepare(`SELECT o.body FROM mk_objects o WHERE o.id IN (SELECT src FROM mk_edges WHERE dst IN (${q}) AND rel IN ('covers','teaches','assesses') AND status = 'current' AND (src LIKE 'eo.%' OR src LIKE 'obj.%'))
@@ -112,6 +112,11 @@ export async function topicKnowledge(env, concepts) {
     else if (o.type === 'Objective' && o.objective_type !== 'assessment' && o.objective_type !== 'board') out.objectives.push(x); else if (/_target$/.test(o.edu_kind || '')) out.targets.push(x); }
   const cl = await env.DB.prepare(`SELECT body FROM mk_objects WHERE type = 'Claim' AND status = 'current' AND json_extract(body, '$.concept') IN (${q}) AND json_extract(body, '$.claim_kind') IN ('contraindication','not_recommended','monitoring','threshold','exception') LIMIT 40`).bind(...cs).all().catch(() => ({ results: [] }));
   for (const r of cl.results) { const o = J(r.body); if (o) out.criteria.push({ id: o.id, kind: o.claim_kind, statement: o.statement, values: o.values || [] }); }
+  // Where the indexed textbooks and educational sources treat these concepts: chapter and section references (headings and pages only).
+  const ss = await env.DB.prepare(`SELECT s.id, s.name, json_extract(s.body, '$.page') AS page, json_extract(s.body, '$.section_kind') AS kind, src.name AS source, src.id AS source_id, MAX(e.conf) AS conf
+    FROM mk_edges e JOIN mk_objects s ON s.id = e.src JOIN mk_objects src ON src.id = json_extract(s.body, '$.source_id')
+    WHERE e.dst IN (${q}) AND e.rel = 'covers' AND e.status = 'current' AND e.src LIKE 'ss.%' AND s.status = 'current' GROUP BY s.id ORDER BY conf DESC, s.trust DESC LIMIT 12`).bind(...cs).all().catch(() => ({ results: [] }));
+  out.references = ss.results.map((r) => ({ id: r.id, source: r.source, source_id: r.source_id, heading: r.name, kind: r.kind, page: r.page }));
   return out;
 }
 
@@ -137,7 +142,7 @@ export async function topicContext(env, u, tid, { name = '' } = {}) {
   if (!recs.length && !fams.length) lines.push('- No extracted recommendations or matching guideline families yet; rely on the reference text and current major-society guidance, and list anything to verify.');
   if (bp) lines.push(`- Board weighting (${sel.family}): priority ${Math.round(bp.priority_score)}/100, frequency ${Math.round(bp.frequency_score)}/100.`);
   // The topic's decomposed knowledge (decompose.js): high-yield points, common errors, criteria, objectives, and AI pearls (unvalidated).
-  const dk = await topicKnowledge(env, node ? (node.concepts || []).length ? node.concepts : cid ? [cid] : [] : cid ? [cid] : []);
+  const dk = await topicKnowledge(env, [...(node ? (node.concepts || []).length ? node.concepts : cid ? [cid] : [] : cid ? [cid] : []), ...(node ? [node.id] : [])]);
   if (dk.high_yield.length) lines.push('- High-yield (teach these): ' + dk.high_yield.slice(0, 5).map((x) => x.statement.replace(/^High-yield:\s*/, '')).join(' | '));
   if (dk.common_errors.length) lines.push('- Common errors to address: ' + dk.common_errors.slice(0, 4).map((x) => x.statement.replace(/^Common error to avoid \(acting against this recommendation\):\s*/, '')).join(' | '));
   if (dk.criteria.length) lines.push('- Criteria: ' + dk.criteria.slice(0, 6).map((x) => `${x.kind}: ${x.values && x.values.length ? x.values.join(', ') + ' (' + x.statement.slice(0, 160) + ')' : x.statement.slice(0, 200)}`).join(' | '));
@@ -145,6 +150,7 @@ export async function topicContext(env, u, tid, { name = '' } = {}) {
   { const pv = dk.pearls.filter((x) => x.governance === 'validated'), pu = dk.pearls.filter((x) => x.governance !== 'validated');
     if (pv.length) lines.push('- Clinical pearls (validated): ' + pv.slice(0, 3).map((x) => x.statement).join(' | '));
     if (pu.length) lines.push('- Clinical pearls (AI-suggested, not yet validated; use only where they agree with the recommendations above): ' + pu.slice(0, 3).map((x) => x.statement).join(' | ')); }
+  if (dk.references.length) lines.push('- Where the library\'s textbooks and educational sources treat this (cite by source and chapter; do not quote them): ' + dk.references.slice(0, 6).map((x) => `${x.source}, "${x.heading}"${x.page ? ' (p. ' + x.page + ')' : ''}`).join(' | '));
   // A shared educational asset is written from everything above but not from one learner's state (assets.json shared_prompt_excludes_learner_state).
   const shared = lines.slice();
   if (st) lines.push(`- This learner: mastery ${Math.round(st.mastery)}/100, system confidence ${Math.round(st.confidence)}/100, state ${st.knowledge_state}${st.calibration && st.calibration.incorrect_confident ? ', has been wrong while confident here (address the misconception)' : ''}.`);

@@ -189,6 +189,17 @@ hash); differing files are rewritten and logged as reconciled.
 
 Governing directives are kept in `mkos/directives/`.
 
+## Large sources (src/mkos/outline.js)
+
+Size decides how a source is processed, never whether. A PDF or Office file over 25 MB, too large to convert to text in one piece
+inside the Worker, is indexed from its embedded table of contents. The PDF outline is parsed from a few byte ranges of the file,
+never the whole file. It covers classic and stream cross-references, compressed object streams and named destinations. Each item
+becomes a `SourceSection` (chapter, section or subsection, with its page), `part_of` its parent. It is linked through the alias
+index to the concepts, domains, blueprint topics and curriculum nodes its heading names. Only headings and page numbers are kept.
+The source becomes `indexed` (method `pdf_outline`), or `title_only` with the reason when the file has no outline. Topic context
+returns these as `knowledge.references`, which the prompt cites by source and chapter and the topic panel lists under "In the
+library". Owner op `outline_probe {file_id, size}` reads a file's outline without indexing it.
+
 ## Clinical pearls (decompose.js, decomposition.json "pearls")
 
 Pearls are durable governed assets in the pearl registry (`eo.pe.<concept>.<n>`): generated once by the free AI, pending validation

@@ -12,6 +12,9 @@ import { seedFramework, importBlueprint, importCurriculum, mapLearnerAssets } fr
 import { deriveFromRecord } from './learner.js';
 import { mirrorStep, snapshot } from './mirror.js';
 import { checkMilestones } from './progress.js';
+import { indexLargeSource } from './outline.js';
+// Above this a PDF or Office file is not converted to text in one piece inside the Worker (memory); it is indexed instead.
+const LARGE_FILE = 25e6;
 import { syncOwner, generateCandidates, termsNeedingPronunciation } from './pronounce.js';
 import { aiBudgetLeft } from './extract.js';
 import { projectBlueprint, evolve, parseBlueprintText, familyOf } from './blueprint.js';
@@ -93,7 +96,14 @@ async function runJob(env, deps, job, meter = null) {
     if (job.kind === 'extract') {
       const src = await getObject(env, job.subject);
       if (!src || src.status === 'retired' || src.ingest_state === 'skipped') { await save('done', 'nothing to extract'); return true; }
-      if ((src.bytes || 0) > 25e6) { await save('failed', 'file over 25 MB: split it into chapters (or keep it as Google Docs) to have it read'); return true; }
+      // Size decides how a source is processed, never whether (Large Source Governance directive): a file too large to convert to
+      // text in one piece is indexed from its table of contents instead (outline.js), a few byte ranges at a time.
+      if ((src.bytes || 0) > LARGE_FILE && !/google-apps|^text\/|json/i.test(src.mime_type || '')) {
+        const r = await indexLargeSource(env, deps, src, p);
+        if (!r.done) { await save('running', `indexing: ${r.sections}/${r.of} sections`); return false; }
+        if (r.sections) await queue(env, 'classify', 'all', {}, 6);
+        await save('done', r.sections ? `${r.sections} chapters and sections indexed from the table of contents` : `registered and mapped by title: ${r.reason}`); return true;
+      }
       if (!p.loaded) { try { p.chunks = await loadText(env, deps, src, { complete: false }); p.loaded = true; await save('running'); } catch (e) { if (e.budget) throw e; await save(job.tries >= 3 ? 'failed' : 'queued', 'text: ' + (e.message || e)); return job.tries >= 3; } }
       // Up to parts_per_run parts that use the AI; parts done by rules alone continue while the run's query budget has room.
       const per = Number(FRAMEWORK.frameworks.ingestion.extraction.parts_per_run) || 1;
