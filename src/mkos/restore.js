@@ -14,7 +14,8 @@ const rank = (k) => { const i = ORDER.findIndex((p) => k.startsWith(p)); return 
 
 async function readManifest(deps, root) {
   let token = null, file = null;
-  do { const page = await deps.list(root, token); file = (page.files || []).find((f) => f.name === 'manifest.json'); token = page.nextPageToken; } while (!file && token);
+  // The worker's listing names files 'title' and pages 'next' (Drive's own API says 'name' and 'nextPageToken'): accept both.
+  do { const page = await deps.list(root, token); file = (page.files || []).find((f) => (f.title || f.name) === 'manifest.json'); token = page.next || page.nextPageToken; } while (!file && token);
   if (!file) return null;
   return deps.readMine(file.id);
 }
