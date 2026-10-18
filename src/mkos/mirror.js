@@ -256,7 +256,9 @@ export async function mirrorStep(env, deps, root, { max = 4, only = null } = {})
     env.DB.prepare('INSERT OR REPLACE INTO mk_mirror (key, file_id, hash, synced) VALUES (?, NULL, ?, ?)').bind('pend:' + f.key, '0', at),
     ...(SELF(f.key) ? [] : [env.DB.prepare('INSERT INTO mk_persist_log (at, key, state, detail) VALUES (?, ?, ?, NULL)').bind(at, f.key, 'queued')])]));
   for (const f of fresh) known['pend:' + f.key] = { hash: '0', synced: at };
-  const todo = only ? dirty.filter((f) => only.some((p) => f.key === p || f.key.startsWith(p))) : dirty;
+  // Oldest pending first, so a file that keeps changing never starves the ones behind it.
+  const since = (f) => (known['pend:' + f.key] || {}).synced || '';
+  const todo = (only ? dirty.filter((f) => only.some((p) => f.key === p || f.key.startsWith(p))) : dirty).slice().sort((a, b) => since(a).localeCompare(since(b)));
   let written = 0, failed = 0;
   for (const f of todo.slice(0, max + 6)) {
     if (written >= max) break;

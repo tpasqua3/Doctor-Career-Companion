@@ -240,10 +240,10 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
   let platformHit = false;
   // Canonical storage first, on its own small budget: persisting to Drive (the system of record) never waits behind other work.
   if (mirrorRoot) {
-    // Up to 8 files a run (about 7 queries each): during bootstrap and ingestion many files change every run, and every change must
+    // Up to 20 files a run (about 7 queries each): during bootstrap and ingestion many files change every run, and every change must
     // reach Drive within the hour the daily check allows.
-    const mm = metered(rawEnv, 160);
-    try { const m = await mirrorStep(mm.env, rawDeps, mirrorRoot, { max: 8 }); report.steps.push(`drive ${m.written} written, ${Math.max(0, m.dirty - m.written)} behind` + (m.failed ? `, ${m.failed} failed (pending, retried next run)` : ''));
+    const mm = metered(rawEnv, 240);
+    try { const m = await mirrorStep(mm.env, rawDeps, mirrorRoot, { max: 20 }); report.steps.push(`drive ${m.written} written, ${Math.max(0, m.dirty - m.written)} behind` + (m.failed ? `, ${m.failed} failed (pending, retried next run)` : ''));
       if (m.failed) { const l = J(await getSetting(rawEnv, 'mirror_errors'), []) || []; l.push({ at: nowIso(), error: `${m.failed} file(s) not confirmed by Drive; see the persistence ledger` }); await setSetting(rawEnv, 'mirror_errors', JSON.stringify(l.slice(-20))); }
       if (new Date().getUTCHours() === 7) await snapshot(mm.env, rawDeps, mirrorRoot); }
     catch (e) { if (!e.budget) { if (PLATFORM.test(String(e.message || e))) platformHit = true; report.steps.push('drive: ' + String(e.message || e).slice(0, 120));
@@ -272,13 +272,17 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
       const rd = await reconcileDue(env); if (rd) { await queue(env, 'reconcile', 'day:' + rd, {}, 2); await queue(env, 'pearls', 'day:' + rd, {}, 9); }
     }
     // Jobs in priority order while the run's query budget has room (at least six steps; small steps no longer waste a run).
+    let extracts = 0;
     for (let k = 0; k < 60; k++) {
       if (k >= 6 && meter.n > meter.max * 0.8) break;
       const job = await env.DB.prepare("SELECT * FROM mk_jobs WHERE state IN ('queued','running') AND not_before <= ? ORDER BY priority, id LIMIT 1").bind(Date.now()).first();
       if (!job) break;
       const finished = await runJob(env, deps, job, meter);
       report.steps.push(`${job.kind} ${job.subject}${finished ? ' done' : ' continues'}`);
-      if (!finished && job.kind === 'extract') break;     // one AI-bearing step per run
+      // Several sources a run (each limits its own AI parts and the day's free AI budget caps the total); a source that is not finished
+      // waits for the next run so the others get their turn.
+      if (job.kind === 'extract' && ++extracts >= 4) break;
+      if (!finished && job.kind === 'extract') await env.DB.prepare('UPDATE mk_jobs SET not_before = ? WHERE id = ?').bind(Date.now() + 60e3, job.id).run();
     }
   } catch (e) {
     if (e.budget) report.steps.push('budget spent');
