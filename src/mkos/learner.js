@@ -88,11 +88,18 @@ export async function deriveFromRecord(env, uid, docs, { actor = 'learner' } = {
     for (const e of results) { const s = rows.find((r) => r.object_id === e.src); if (s) (up[e.dst] = up[e.dst] || { level: 'competency', parts: [] }).parts.push([s, e.conf / 100]); }
   }
   for (const [id, a] of Object.entries(up)) { const r = roll(a.parts); rows.push({ object_id: id, level: a.level, ...r, knowledge_state: knowledgeState(r.mastery, r.confidence), updated: now, model_version: MODEL }); }
-  // Priority (Confidence Aware Curriculum Rule) on concept and blueprint-topic rows.
+  // Priority (Confidence Aware Curriculum Rule) on concept and blueprint-topic rows; board relevance comes from the learner's selected
+  // blueprint (Blueprint Governance), falling back to the topic's own share of the exam.
   const bps = await getObjects(env, bpts);
+  const sel = await env.DB.prepare('SELECT selected_blueprint_id AS b FROM mk_learner_blueprint WHERE learner_id = ?').bind(uid).first().catch(() => null);
+  const bpId = (sel && sel.b) || ((await env.DB.prepare("SELECT blueprint_id AS b FROM mk_blueprint_registries WHERE blueprint_family = 'abim_im_cert' AND current_status = 'current' LIMIT 1").first().catch(() => null)) || {}).b;
+  const bpMap = {};
+  if (bpId) { const ids = [...new Set(rows.map((r) => r.object_id))]; for (let i = 0; i < ids.length; i += 90) { const part = ids.slice(i, i + 90);
+    for (const r of (await env.DB.prepare(`SELECT concept_id AS id, priority_score AS p FROM mk_blueprint_concept_mappings WHERE blueprint_id = ? AND concept_id IN (${part.map(() => '?').join(',')})`).bind(bpId, ...part).all()).results) bpMap[r.id] = r.p;
+    for (const r of (await env.DB.prepare(`SELECT objective_id AS id, priority_score AS p FROM mk_blueprint_objectives WHERE blueprint_id = ? AND objective_id IN (${part.map(() => '?').join(',')})`).bind(bpId, ...part).all()).results) bpMap[r.id] = r.p; } }
   for (const r of rows) {
     const rel = r.level === 'blueprint_topic' ? (bps[r.object_id]?.est_pct || 0) : r.level === 'concept' ? (concepts[r.object_id]?.board?.lka_weight || concepts[r.object_id]?.board?.abim_weight || 0) : 0;
-    r.board_relevance = clamp(Math.min(100, rel * 40));
+    r.board_relevance = bpMap[r.object_id] != null ? clamp(bpMap[r.object_id]) : clamp(Math.min(100, rel * 40));
     r.priority = clamp(P.w.knowledge_deficit * (100 - r.mastery) + P.w.retention_risk * (r.retention?.forgetting_risk || (100 - r.recency)) + P.w.board_relevance * r.board_relevance + P.w.competency_importance * 50 + P.w.low_confidence * (100 - r.confidence));
   }
   await writeStates(env, uid, rows);

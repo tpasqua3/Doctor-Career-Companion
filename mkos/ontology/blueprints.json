@@ -1,0 +1,276 @@
+{
+  "id": "framework.blueprints",
+  "type": "Framework",
+  "name": "Board blueprint governance",
+  "version": "1.0.0",
+  "status": "current",
+  "created_date": "2026-10-17",
+  "updated_date": "2026-10-17",
+  "supersedes": null,
+  "replaced_by": null,
+  "source_attribution": [
+    "MKOS Board Blueprint Governance Implementation Directive",
+    "Blueprint Execution Engine Technical Implementation Specification (10/17/2026)"
+  ],
+  "change_log": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-17",
+      "summary": "Initial blueprint governance: families, discovery, versioning, weighting, scoring, events."
+    }
+  ],
+  "principle": [
+    "Teach Medicine",
+    "Filter Through Current Blueprint",
+    "Weight Delivery According To Blueprint",
+    "Personalize Using Learner State"
+  ],
+  "governs": [
+    "Educational Priorities",
+    "Question Priorities",
+    "Lesson Priorities",
+    "Flashcard Priorities",
+    "Review Priorities",
+    "Competency Priorities",
+    "Knowledge Gap Priorities",
+    "Recommendation Priorities",
+    "Board Readiness Priorities"
+  ],
+  "never": "Blueprints never determine medical truth; they determine emphasis, repetition, reinforcement, assessment, recommendation and review.",
+  "families": [
+    {
+      "id": "abim_im_cert",
+      "board_name": "ABIM Internal Medicine Certification Examination",
+      "board_type": "initial_certification",
+      "app_kind": "cert",
+      "match": [
+        "certification",
+        "\\bcert\\b",
+        "initial certification"
+      ],
+      "requires": [
+        "abim|internal medicine"
+      ]
+    },
+    {
+      "id": "abim_im_lka",
+      "board_name": "ABIM Internal Medicine Longitudinal Knowledge Assessment / MOC",
+      "board_type": "maintenance_of_certification",
+      "app_kind": "moc",
+      "match": [
+        "\\blka\\b",
+        "longitudinal knowledge",
+        "\\bmoc\\b",
+        "maintenance of certification",
+        "knowledge check-in"
+      ],
+      "requires": [
+        "abim|internal medicine"
+      ]
+    },
+    {
+      "id": "abim_cardiology",
+      "board_name": "ABIM Cardiovascular Disease Certification",
+      "board_type": "subspecialty",
+      "match": [
+        "cardiovascular disease",
+        "cardiology"
+      ],
+      "requires": [
+        "abim|blueprint|exam"
+      ]
+    },
+    {
+      "id": "abim_pulmonary",
+      "board_name": "ABIM Pulmonary Disease Certification",
+      "board_type": "subspecialty",
+      "match": [
+        "pulmonary disease"
+      ],
+      "requires": [
+        "abim|blueprint|exam"
+      ]
+    },
+    {
+      "id": "abim_critical_care",
+      "board_name": "ABIM Critical Care Medicine Certification",
+      "board_type": "subspecialty",
+      "match": [
+        "critical care"
+      ],
+      "requires": [
+        "abim|blueprint|exam"
+      ]
+    },
+    {
+      "id": "abim_gastroenterology",
+      "board_name": "ABIM Gastroenterology Certification",
+      "board_type": "subspecialty",
+      "match": [
+        "gastroenterology"
+      ],
+      "requires": [
+        "abim|blueprint|exam"
+      ]
+    },
+    {
+      "id": "abim_nephrology",
+      "board_name": "ABIM Nephrology Certification",
+      "board_type": "subspecialty",
+      "match": [
+        "nephrology"
+      ],
+      "requires": [
+        "abim|blueprint|exam"
+      ]
+    },
+    {
+      "id": "usmle",
+      "board_name": "USMLE",
+      "board_type": "licensing",
+      "match": [
+        "usmle",
+        "step 1",
+        "step 2",
+        "step 3"
+      ],
+      "requires": []
+    }
+  ],
+  "default_family": "abim_im_cert",
+  "discovery": {
+    "document_types": [
+      "Board Blueprints",
+      "Exam Specifications",
+      "Question Distribution Documents",
+      "Content Outlines",
+      "Exam Objective Documents",
+      "Blueprint Updates",
+      "Future Exam Sources"
+    ],
+    "title_signals": [
+      "blueprint",
+      "content outline",
+      "exam specification",
+      "examination content",
+      "question distribution",
+      "exam objectives"
+    ],
+    "registry_files": "ABIM_IM_<CERT|LKA>_blueprint_registry_vN_CURRENT.json (owner-curated) are imported as authoritative; a blueprint document without a registry is parsed (rules first, then free AI) into a pending registry."
+  },
+  "versioning_fields": [
+    "Blueprint ID",
+    "Blueprint Family",
+    "Year",
+    "Version",
+    "Publication Date",
+    "Effective Date",
+    "Confidence",
+    "Current Status",
+    "Historical Status",
+    "Supersession Status"
+  ],
+  "confidence_fields": [
+    "source_confidence",
+    "classification_confidence",
+    "version_confidence",
+    "objective_extraction_confidence",
+    "weighting_confidence",
+    "priority_confidence",
+    "trust_score",
+    "overall_blueprint_confidence"
+  ],
+  "confidence_by_source": {
+    "owner_registry": {
+      "source_confidence": 98,
+      "objective_extraction_confidence": 97,
+      "weighting_confidence": 90
+    },
+    "parsed_document": {
+      "source_confidence": 90,
+      "objective_extraction_confidence": 80,
+      "weighting_confidence": 70
+    },
+    "ai_extracted": {
+      "source_confidence": 85,
+      "objective_extraction_confidence": 60,
+      "weighting_confidence": 55
+    }
+  },
+  "importance_points": {
+    "H": 3,
+    "M": 1,
+    "L": 0
+  },
+  "low_frequency_factor": 0.75,
+  "scores": {
+    "board_priority": {
+      "blueprint_frequency": 0.3,
+      "blueprint_importance": 0.25,
+      "competency_priority": 0.15,
+      "learner_weakness": 0.15,
+      "retention_risk": 0.1,
+      "confidence_deficit": 0.05
+    },
+    "question": {
+      "blueprint_frequency": 0.35,
+      "blueprint_importance": 0.25,
+      "learner_weakness": 0.2,
+      "retention_risk": 0.1,
+      "confidence_deficit": 0.1
+    },
+    "flashcard": {
+      "blueprint_frequency": 0.3,
+      "retention_risk": 0.2,
+      "confidence_deficit": 0.2,
+      "learner_weakness": 0.2,
+      "competency_importance": 0.1
+    },
+    "lesson": {
+      "blueprint_importance": 0.35,
+      "objective_priority": 0.2,
+      "competency_gap": 0.2,
+      "learner_weakness": 0.15,
+      "confidence_deficit": 0.1
+    },
+    "recommendation": {
+      "learner_model": 0.4,
+      "blueprint_weight": 0.3,
+      "competency_gap": 0.15,
+      "retention_risk": 0.1,
+      "confidence_deficit": 0.05
+    }
+  },
+  "unknown_learner_defaults": {
+    "learner_weakness": 60,
+    "retention_risk": 50,
+    "confidence_deficit": 80,
+    "competency_gap": 50,
+    "learner_model": 50
+  },
+  "events": {
+    "activation": [
+      "BlueprintDetected",
+      "BlueprintClassified",
+      "BlueprintVersioned",
+      "BlueprintValidated",
+      "BlueprintActivated"
+    ],
+    "supersession": [
+      "BlueprintSuperseded",
+      "ImpactAnalysisStarted",
+      "AffectedAssetsIdentified",
+      "AffectedLearnersIdentified",
+      "RecommendationsUpdated",
+      "CurriculumUpdated"
+    ],
+    "objective_change": [
+      "BlueprintObjectiveChanged",
+      "ConceptMappingsUpdated",
+      "QuestionWeightsUpdated",
+      "FlashcardWeightsUpdated",
+      "LessonWeightsUpdated"
+    ]
+  },
+  "board_review_mode": "MKOS Curriculum + Blueprint Filtering + Blueprint Weighting + Board Asset Prioritization + Learner Personalization (no separate system)"
+}

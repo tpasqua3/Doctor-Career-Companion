@@ -58,6 +58,24 @@ export const TABLES = [
   `CREATE TABLE IF NOT EXISTS mk_routes (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, user_id TEXT, request TEXT NOT NULL, decision TEXT NOT NULL, conf REAL NOT NULL, body TEXT NOT NULL)`,
   // The Drive mirror: which shard files exist and the hash last written.
   `CREATE TABLE IF NOT EXISTS mk_mirror (key TEXT PRIMARY KEY, file_id TEXT, hash TEXT, synced TEXT)`,
+  // Board Blueprint registry projection (Blueprint Execution Engine tables).
+
+  `CREATE TABLE IF NOT EXISTS mk_blueprint_registries (blueprint_id TEXT PRIMARY KEY, blueprint_family TEXT NOT NULL, board_name TEXT, board_type TEXT, year INTEGER, version TEXT,
+     publication_date TEXT, effective_date TEXT, current_status TEXT NOT NULL, supersession_status TEXT, source_confidence REAL, overall_blueprint_confidence REAL, confidence TEXT, created_at TEXT, updated_at TEXT)`,
+  `CREATE INDEX IF NOT EXISTS blueprint_family_current ON mk_blueprint_registries (blueprint_family, current_status)`,
+  `CREATE TABLE IF NOT EXISTS mk_blueprint_domains (domain_id TEXT NOT NULL, blueprint_id TEXT NOT NULL, domain_name TEXT, blueprint_weight REAL, frequency_score REAL, importance_score REAL,
+     question_distribution_weight REAL, confidence_score REAL, PRIMARY KEY (blueprint_id, domain_id))`,
+  `CREATE INDEX IF NOT EXISTS domain_weight ON mk_blueprint_domains (blueprint_id, blueprint_weight DESC)`,
+  `CREATE TABLE IF NOT EXISTS mk_blueprint_objectives (objective_id TEXT NOT NULL, blueprint_id TEXT NOT NULL, domain_id TEXT, objective_text TEXT, objective_type TEXT, frequency_score REAL,
+     importance_score REAL, priority_score REAL, confidence_score REAL, PRIMARY KEY (blueprint_id, objective_id))`,
+  `CREATE INDEX IF NOT EXISTS objective_priority ON mk_blueprint_objectives (blueprint_id, priority_score DESC)`,
+  `CREATE TABLE IF NOT EXISTS mk_blueprint_concept_mappings (blueprint_id TEXT NOT NULL, concept_id TEXT NOT NULL, relevance_score REAL, weight_score REAL, frequency_score REAL, priority_score REAL,
+     confidence_score REAL, PRIMARY KEY (blueprint_id, concept_id))`,
+  `CREATE INDEX IF NOT EXISTS concept_priority ON mk_blueprint_concept_mappings (blueprint_id, priority_score DESC)`,
+  `CREATE TABLE IF NOT EXISTS mk_blueprint_asset_mappings (blueprint_id TEXT NOT NULL, asset_id TEXT NOT NULL, asset_type TEXT, blueprint_weight REAL, priority_score REAL, confidence_score REAL,
+     PRIMARY KEY (blueprint_id, asset_id))`,
+  `CREATE TABLE IF NOT EXISTS mk_learner_blueprint (learner_id TEXT PRIMARY KEY, selected_blueprint_family TEXT NOT NULL, selected_blueprint_id TEXT, source TEXT, updated TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS learner_blueprint ON mk_learner_blueprint (learner_id, selected_blueprint_id)`,
 ];
 
 let ready = '';

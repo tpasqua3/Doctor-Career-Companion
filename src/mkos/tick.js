@@ -13,6 +13,7 @@ import { deriveFromRecord } from './learner.js';
 import { mirrorStep, snapshot } from './mirror.js';
 import { syncOwner, generateCandidates, termsNeedingPronunciation } from './pronounce.js';
 import { aiBudgetLeft } from './extract.js';
+import { projectBlueprint, evolve, parseBlueprintText, familyOf } from './blueprint.js';
 
 export class BudgetSpent extends Error { constructor() { super('MKOS query budget spent for this run'); this.budget = true; } }
 // Only Cloudflare's own per-invocation limits count as a platform cap (a Google rate limit is an ordinary, retried error).
@@ -94,6 +95,25 @@ async function runJob(env, deps, job) {
       }
       await save('running'); return false;
     }
+    if (job.kind === 'bp_project') {
+      p.prog = p.prog || { at: 0 };
+      try { await projectBlueprint(env, job.subject, { prog: p.prog, kind: p.kind || 'owner_registry' }); } finally { await env.DB.prepare('UPDATE mk_jobs SET payload = ? WHERE id = ?').bind(JSON.stringify(p), job.id).run().catch(() => {}); }
+      const bp = await getObject(env, job.subject), fam = (await env.DB.prepare('SELECT blueprint_family FROM mk_blueprint_registries WHERE blueprint_id = ?').bind(job.subject).first() || {}).blueprint_family;
+      if (bp && bp.status === 'current' && fam) { const old = (await env.DB.prepare("SELECT blueprint_id FROM mk_blueprint_registries WHERE blueprint_family = ? AND current_status = 'current' AND blueprint_id != ?").bind(fam, job.subject).all()).results;
+        for (const o of old) await evolve(env, job.subject, o.blueprint_id); }
+      await save('done'); return true;
+    }
+    if (job.kind === 'bp_extract') {
+      // A blueprint document without a curated registry: rules first (the app's own table reading); the owner's registry always governs.
+      const src = await getObject(env, job.subject); if (!src) { await save('done'); return true; }
+      const fam = familyOf(src.title, src.drive_path).family, owned = await env.DB.prepare("SELECT 1 FROM mk_blueprint_registries WHERE blueprint_family = ? AND current_status = 'current' AND CAST(source_confidence AS INTEGER) >= 95").bind(fam).first();
+      if (owned) { await save('done', 'the curated registry for ' + fam + ' governs; document kept as its source'); return true; }
+      const reg = parseBlueprintText(await deps.readText(src.drive_file_id), fam);
+      if (!reg) { await save('done', 'no blueprint tables found by rules'); return true; }
+      reg.blueprint_edition = String(src.year || ''); reg.source_document = { drive_file_id: src.drive_file_id, title: src.title };
+      p.prog = p.prog || { at: 0 }; await importBlueprint(env, reg, fam, { registryFileId: src.drive_file_id, prog: p.prog });
+      await save('done', 'parsed by rules'); return true;
+    }
     if (job.kind === 'pron_sync') { p.prog = p.prog || {}; await syncOwner(env, deps, { prog: p.prog }); await save('done'); return true; }
     if (job.kind === 'pronounce') {
       // Up to pronunciation.generation.batch terms per AI call, one call per run, within the shared daily AI budget.
@@ -154,6 +174,9 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot } = {}) {
     const scanDue = !scan || Date.now() - Date.parse(scan.finished) > 30 * 60e3 || J(await getSetting(env, 'scan'), {})?.cur;
     if (scanDue && root) { const s = await scanStep(env, deps, root, { pages: 1 }); report.steps.push(`scan +${s.files} files, ${s.changes.length} changes`); }
     await learnerWatch(env, deps);
+    // Blueprint registry projection follows the Blueprint objects (new edition, or a changed one).
+    { const { results } = await env.DB.prepare("SELECT o.id, o.version FROM mk_objects o LEFT JOIN mk_blueprint_registries r ON r.blueprint_id = o.id WHERE o.type = 'Blueprint' AND (r.blueprint_id IS NULL OR r.version != o.version) LIMIT 3").all();
+      for (const r of results) await queue(env, 'bp_project', r.id, {}, 3); }
     // Pronunciation: mirror the owner's list whenever it changes; one generation job per day for terms without a record.
     if (deps.ownerUpdated) { const t = await deps.ownerUpdated(['med/says', 'med/saylog']); if (t && t > ((await getSetting(env, 'pron_sync_t')) || '')) { await queue(env, 'pron_sync', 'owner', {}, 4); await setSetting(env, 'pron_sync_t', t); } }
     const day = nowIso().slice(0, 10); if ((await getSetting(env, 'pron_gen_day')) !== day && J(await getSetting(env, 'bootstrap'), {})?.curriculum?.done) { await queue(env, 'pronounce', 'day:' + day, {}, 8); await setSetting(env, 'pron_gen_day', day); }

@@ -11,6 +11,9 @@ import { queue } from './ingest.js';
 import { buildCompatRegistry, validateCutover, retireLegacy, rollbackCutover } from './cutover.js';
 import { mkTick } from './tick.js';
 import { FRAMEWORK, FRAMEWORK_HASH } from './framework.js';
+import { listBlueprints, blueprintDetail, boardPlan, boardRecommendations, select as selectBlueprint, selection as bpSelection, scoresFor } from './blueprint.js';
+import { appBundle, topicContext, checkCitations, assetFlags } from './bridge.js';
+import { ttsList } from './pronounce.js';
 import { dashboard as pronDashboard, flag as pronFlag, approve as pronApprove, rejectCandidate, syncOwner, pronId } from './pronounce.js';
 
 const OPS = {
@@ -51,6 +54,19 @@ const OPS = {
   pron_approve: { owner: true, run: async (env, u, a, x) => pronApprove(env, x.deps, String(a.term || ''), { index: a.index ?? null, simplified: a.simplified || null, ipa: a.ipa || '', lock: a.lock !== false, user: 'owner:' + u.email }) },
   pron_reject: { owner: true, run: async (env, u, a) => rejectCandidate(env, String(a.term || ''), a.index, { user: 'owner:' + u.email }) },
   pron_sync: { owner: true, run: async (env, u, a, x) => syncOwner(env, x.deps, {}) },
+  // ---- Board Blueprint Governance (Blueprint Execution Engine API contracts)
+  blueprints: { owner: false, run: async (env, u, a) => a.id ? blueprintDetail(env, a.id, { limit: Math.min(800, Number(a.limit) || 200) }) : listBlueprints(env) },
+  learners: { owner: false, run: async (env, u, a, x) => { const [lid, what] = String(a.id || '').split('/'); const id = lid === 'me' ? u.id : lid;
+    if (id !== u.id && !x.owner) return { error: 'You can see your own plan only.' };
+    if (what === 'board-plan') return boardPlan(env, id, { limit: Math.min(50, Number(a.limit) || 15) }); return { error: 'unknown learner resource' }; } },
+  'board-review': { owner: false, run: async (env, u, a) => boardRecommendations(env, u.id, { limit: Math.min(40, Number(a.limit) || 12) }) },
+  select_blueprint: { owner: false, run: async (env, u, a) => selectBlueprint(env, u.id, { family: a.family || null, app_kind: a.app_kind || null, source: a.source || 'app' }) },
+  // ---- The app bridge (one call per screen; everything computed from MKOS, no AI)
+  app_bundle: { owner: false, run: async (env, u, a, x) => appBundle(env, u, { owner: x.owner, app_kind: a.app_kind || null }) },
+  topic_context: { owner: false, run: async (env, u, a) => topicContext(env, u, String(a.tid || ''), { name: String(a.name || '') }) },
+  check_citations: { owner: false, run: async (env, u, a) => checkCitations(env, Array.isArray(a.citations) ? a.citations.slice(0, 40) : []) },
+  asset_flags: { owner: false, run: async (env, u) => assetFlags(env, u) },
+  pron_tts: { owner: false, run: async (env) => ({ list: await ttsList(env) }) },
   framework: { owner: false, run: async () => ({ framework_hash: FRAMEWORK_HASH, versions: Object.fromEntries(Object.entries(FRAMEWORK.frameworks).map(([k, v]) => [k, v.version])), ontology: FRAMEWORK.frameworks.ontology }) },
 };
 

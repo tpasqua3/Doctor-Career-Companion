@@ -21,7 +21,7 @@ const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } ca
 const fw = {}; for (const f of readdirSync(join(MK, "ontology")).sort()) if (f.endsWith(".json")) fw[f.slice(0, -5)] = readJson(join(MK, "ontology", f));
 const schemas = {}; for (const f of readdirSync(join(MK, "schemas")).sort()) if (f.endsWith(".json")) schemas[f] = readJson(join(MK, "schemas", f));
 const O = fw.ontology;
-for (const name of ["ontology", "specialties", "source_classes", "scoring", "competencies", "ingestion", "pronunciation"]) if (!fw[name]) err("mkos/ontology", `missing ${name}.json`);
+for (const name of ["ontology", "specialties", "source_classes", "scoring", "competencies", "ingestion", "pronunciation", "blueprints"]) if (!fw[name]) err("mkos/ontology", `missing ${name}.json`);
 
 // Every framework file carries the version envelope.
 for (const [k, v] of Object.entries(fw)) for (const f of ["id", "version", "status", "created_date", "updated_date", "change_log"]) if (!(f in v)) err(`ontology/${k}.json`, `missing ${f}`);

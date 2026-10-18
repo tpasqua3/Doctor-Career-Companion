@@ -127,6 +127,10 @@ export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep
   if (src.ingest_state === 'queued' && (changed === 'source_added' || changed === 'source_modified')) await queue(env, 'extract', id, { event_id: ev }, src.copyright === 'licensed_no_verbatim' ? 7 : 4);
   if (changed === 'source_added' || changed === 'source_modified') await queue(env, 'family', id, { event_id: ev }, 3);
   if (changed === 'source_modified') await queue(env, 'impact', id, { event_id: ev }, 2);
+  if (src.source_class === 'board_blueprint' && (changed === 'source_added' || changed === 'source_modified') && !/json/i.test(f.mimeType || '')) {
+    await event(env, 'blueprint_detected', id, { title: f.title, path, chain: ['BlueprintDetected', 'BlueprintClassified'] }, 'classified');
+    await queue(env, 'bp_extract', id, { event_id: ev }, 4);
+  }
   await touch();   // last, so an interrupted run sees the change again next time
   return { id, changed, event_id: ev };
 }
