@@ -116,7 +116,7 @@ per version in `mk_asset_store`, linked to the concepts they teach and to the gu
   weighting band that is current, validated and guideline-current. Questions and flashcards come from a pool: the items this learner
   has not been served (`mk_asset_usage`), at the requested difficulty; only the shortfall is written.
 - **Generate only when** there is no asset; it was superseded or flagged for regeneration; a guideline family it relied on has a new
-  current edition or a recommendation it relied on changed; the board weighting moved materially (`blueprint_material_delta`, default
+  current edition, a guideline family now covers the topic that did not when it was written (the library was indexed later), or a recommendation it relied on changed; the board weighting moved materially (`blueprint_material_delta`, default
   20; lessons are kept per weighting band so two blueprints never overwrite each other); or the request is a personalized adaptation
   (a focus, a knowledge gap, a basis lesson, a lesson being finished).
 - **Validate, then store.** `asset_put` stores what was written. *Validated* means the app's independent accuracy review ran over the

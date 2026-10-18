@@ -45,6 +45,9 @@ async function judge(o, now, live, pol, pool) {
   if (o.review_status !== 'validated' && !(pol.unreviewed && o.review_status === 'unreviewed')) return 'unvalidated';
   const b = o.basis || {};
   for (const [fam, ed] of Object.entries(b.families || {})) if (now.families[fam] && now.families[fam] !== ed) return 'guideline_changed';
+  // A guideline family that now speaks to the topic but did not when the asset was written (the library was indexed later, or a new
+  // guideline arrived): the asset was written without it, so it is regenerated.
+  for (const fam of Object.keys(now.families || {})) if (!(fam in (b.families || {}))) return 'guideline_changed';
   for (const [rid, sig] of Object.entries(b.recs || {})) {
     const r = live[rid];
     if (!r || r.status === 'superseded' || r.status === 'retired' || (sig && (await recSig(r)) !== sig)) return 'guideline_changed';
