@@ -202,9 +202,9 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
   const tickSt = J(await getSetting(rawEnv, 'tick'), {}) || {};
   if (tickSt.capped && Date.now() - Date.parse(tickSt.capped_at || 0) > 864e5) tickSt.capped = false;   // a platform cap is re-tested daily
   if ((await getSetting(rawEnv, 'paused')) === '1') return { paused: true };
-  // One run at a time: a manual run and the scheduled run never work on the same jobs at once (the lease expires after 2 minutes).
+  // One run at a time: a manual run and the scheduled run never work on the same jobs at once (the lease expires after 6 minutes; a run can take minutes when the database is far away).
   const lease = J(await getSetting(rawEnv, 'tick_lease'), null);
-  if (lease && Date.now() - lease.t < 120e3) return { skipped: 'another run is in progress' };
+  if (lease && Date.now() - lease.t < 360e3) return { skipped: 'another run is in progress' };
   const leaseId = Math.random().toString(36).slice(2); await setSetting(rawEnv, 'tick_lease', JSON.stringify({ t: Date.now(), id: leaseId }));
   // Cloudflare allows 1,000 queries per invocation; a run that shares its invocation with other work (the cron's Drive sweep) gets less.
   const budget = Math.max(25, Math.min(maxBudget, Number(tickSt.budget) || 30));
