@@ -12,6 +12,7 @@
 // The AI models hold no Google credential at all; when one asks for a record, this server answers from the caller's rows only.
 import { mkosApi, mkosCall, MKOS_TOOLS } from './mkos/routes.js';
 import { mkTick } from './mkos/tick.js';
+import { persistNow } from './mkos/mirror.js';
 import { ttsList as mkosSays } from './mkos/pronounce.js';
 const enc = new TextEncoder();
 const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
@@ -215,10 +216,10 @@ function accountTools(env, user) {
   const run = async (name, a) => {
     a = a && typeof a === 'object' ? a : {};
     try {
-      if (name === 'list_my_records') return { records: (await env.DB.prepare('SELECT path, length(body) AS size, updated FROM docs WHERE user_id = ? ORDER BY path').bind(user.id).all()).results };
+      if (name === 'list_my_records') { const h = await holders(env, user.id); return { records: (await env.DB.prepare(`SELECT path, length(body) AS size, updated FROM docs WHERE user_id IN (${HOLD(h)}) ORDER BY path`).bind(...h).all()).results }; }
       if (name === 'read_my_record') {
         const path = str(a.path, 130); if (!PATH_OK.test(path)) return { error: 'No record has that name.' };
-        const r = await env.DB.prepare('SELECT body, updated FROM docs WHERE user_id = ? AND path = ?').bind(user.id, path).first(); if (!r) return { error: 'No record has that name.' };
+        const r = await env.DB.prepare('SELECT body, updated FROM docs WHERE user_id = ? AND path = ?').bind(await homeOf(env, user.id, path), path).first(); if (!r) return { error: 'No record has that name.' };
         const o = at(a.offset); return { path, updated: r.updated, text: r.body.slice(o, o + CUT), next: o + CUT < r.body.length ? o + CUT : null };
       }
       if (lib && name === 'search_library') {
@@ -400,8 +401,8 @@ async function googleSpeak(env, user, text) {
    swap the words in the app itself), each listed word is swapped for its respelling: whole words only, any capitalisation, a plural
    s carried over. The text on screen is never touched. */
 async function sayList(env, user) {
-  /* The list has its own document (med/says, {list}); an older record keeps it inside med/state as `says`. */
-  try { const row = await env.DB.prepare("SELECT json_extract(body, '$.list') AS s FROM docs WHERE user_id = ? AND path = 'med/says'").bind(user.id).first();
+  /* The list has its own document (med/says, {list}); an older record keeps it inside med/state as `says`. The owner's is central. */
+  try { const row = await env.DB.prepare("SELECT json_extract(body, '$.list') AS s FROM docs WHERE user_id = ? AND path = 'med/says'").bind(await homeOf(env, user.id, 'med/says')).first();
     if (row && row.s) { const a = JSON.parse(row.s); if (Array.isArray(a)) return a; } } catch (e) { }
   try { const row = await env.DB.prepare("SELECT json_extract(body, '$.says') AS s FROM docs WHERE user_id = ? AND path = 'med/state'").bind(user.id).first();
     const a = row && row.s ? JSON.parse(row.s) : []; return Array.isArray(a) ? a : []; } catch (e) { return []; }
@@ -412,6 +413,50 @@ async function sayList(env, user) {
 async function ownerId(env) {
   if (!env.OWNER_EMAIL) return null;
   try { const r = await env.DB.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(String(env.OWNER_EMAIL).trim().toLowerCase()).first(); return r ? r.id : null; } catch (e) { return null; }
+}
+/* ---------- Central registry records (MKOS Data Domain Separation) ----------
+   The owner's pronunciation list (med/says), its change log (med/saylog) and their daily copies (bak/says-<day>, bak/saylog-<day>)
+   are platform knowledge used for every account, so they are not kept in the owner's account: they live under the reserved record
+   holder CENTRAL, which no login reaches and deleting an account never touches. MKOS persists them to Drive (Doctor Companion App
+   Central Registry Data > MKOS > central) and restores them from there. The owner still edits them in the app as before: every
+   record path below resolves the owner's copy of these names to the central one. Anyone else's list stays in their own account. */
+const CENTRAL = '_central';
+const centralPath = p => p === 'med/says' || p === 'med/saylog' || /^bak\/(says|saylog)-/.test(String(p || ''));
+async function homeOf(env, uid, path) {
+  if (!centralPath(path) || !uid || uid !== await ownerId(env)) return uid;
+  await centralize(env);   // never write a central record before the owner's older copy has moved, or the guard would compare against nothing
+  return CENTRAL;
+}
+/* Whose records a bulk read covers: the account, plus the central records when the account is the owner's. The central rows sort
+   last so they win over any leftover copy. */
+async function holders(env, uid) { const o = await ownerId(env); return o && o === uid ? [uid, CENTRAL] : [uid]; }
+const HOLD = ids => ids.map(() => '?').join(',');
+/* One-time move (repeated harmlessly): any of these records still in the owner's account go to the central holder (a newer
+   central copy is kept), and the owner's copies and their account Drive files are removed. */
+let centralized = false;
+async function centralize(env) {
+  if (centralized) return; const o = await ownerId(env); if (!o) return;
+  const { results } = await env.DB.prepare("SELECT path, body, updated FROM docs WHERE user_id = ? AND (path IN ('med/says','med/saylog') OR path LIKE 'bak/says-%' OR path LIKE 'bak/saylog-%')").bind(o).all();
+  for (const r of results) {
+    await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated WHERE excluded.updated > docs.updated').bind(CENTRAL, r.path, r.body, r.updated).run();
+    await env.DB.prepare('DELETE FROM docs WHERE user_id = ? AND path = ?').bind(o, r.path).run();   // the account Drive sync moves its file to the trash
+  }
+  /* The ABIM blueprint document the MKOS curriculum is built from: a central copy (the owner's own choice of outline in the app stays
+     his, in his account). */
+  await env.DB.prepare("INSERT OR IGNORE INTO docs (user_id, path, body, updated) SELECT ?, 'mkos/abim_blueprint', body, updated FROM docs WHERE user_id = ? AND path = 'med/blueprint'").bind(CENTRAL, o).run();
+  /* Cached copies of the shared sources registry (med/libreg) keep only entries for files MKOS does not know (a person's own library). */
+  try {
+    const known = new Set((await env.DB.prepare("SELECT json_extract(body, '$.drive_file_id') AS f FROM mk_objects WHERE type = 'Source' AND json_extract(body, '$.drive_file_id') IS NOT NULL").all()).results.map(r => r.f));
+    if (known.size) for (const r of (await env.DB.prepare("SELECT user_id, body FROM docs WHERE path = 'med/libreg'").all()).results) {
+      let d = null; try { d = JSON.parse(r.body); } catch { } const map = (d && d.map) || {}, own = {};
+      for (const [k, v] of Object.entries(map)) if (!known.has(k)) own[k] = v;
+      if (Object.keys(own).length === Object.keys(map).length) continue;
+      if (Object.keys(own).length) await env.DB.prepare("UPDATE docs SET body = ?, updated = ? WHERE user_id = ? AND path = 'med/libreg'").bind(JSON.stringify({ ...d, map: own }), new Date().toISOString(), r.user_id).run();
+      else await env.DB.prepare("DELETE FROM docs WHERE user_id = ? AND path = 'med/libreg'").bind(r.user_id).run();
+    }
+  } catch (e) { console.log('libreg: ' + String(e && e.message || e).slice(0, 120)); }
+  centralized = true;
+  return results.length;
 }
 /* After the account's list and the owner's central list come the MKOS pronunciation records cleared for speech (src/mkos/pronounce.js):
    respell keeps the first entry it meets for a word, so a person's own entries, then the owner's, always win. */
@@ -465,6 +510,7 @@ const SAY_DROP_MAX = 3;
 const sayKey = x => x && typeof x.w === 'string' ? x.w.replace(/\s+/g, ' ').trim().toLowerCase() : '';
 async function guardSays(env, uid, path, obj) {
   if (path !== 'med/says' && path !== 'med/saylog') return obj;
+  uid = await homeOf(env, uid, path);
   let old = null;
   try { const row = await env.DB.prepare('SELECT body FROM docs WHERE user_id = ? AND path = ?').bind(uid, path).first(); old = row ? JSON.parse(row.body) : null; } catch (e) { old = null; }
   if (!old || typeof old !== 'object') return obj;
@@ -499,6 +545,7 @@ async function guardSays(env, uid, path, obj) {
    saylog.asis is the list of words checked as sounding right as written. */
 async function applySayOps(env, uid, ops) {
   if (!Array.isArray(ops) || !ops.length) return { ok: true, n: 0 };
+  uid = await homeOf(env, uid, 'med/says');
   const read = async path => { try { const r = await env.DB.prepare('SELECT body FROM docs WHERE user_id = ? AND path = ?').bind(uid, path).first(); const o = r ? JSON.parse(r.body) : null; return o && typeof o === 'object' ? o : null; } catch (e) { return null; } };
   const write = (path, o) => env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(uid, path, JSON.stringify(o), new Date().toISOString()).run();
   const says = (await read('med/says')) || { v: 1, list: [] }, log = (await read('med/saylog')) || { v: 1, learn: [], tried: [], asis: [] };
@@ -839,25 +886,27 @@ async function gsend(env, method, path, body) {
 const mkdir = (env, name, parent, props) => gsend(env, 'POST', 'files', { name, mimeType: FOLDER, parents: [parent], ...(props ? { appProperties: props } : {}) });
 const trash = (env, id) => gsend(env, 'PATCH', 'files/' + id, { trashed: true }).catch(e => { if (!e.gone) throw e; });
 /* Write one file: a new one in `parent`, or new contents for the file `id`. */
-async function gupload(env, { id, name, parent, text, props, mime }) {
+async function gupload(env, { id, name, parent, text, props, mime, full }) {
   const type = mime || 'application/json', meta = id ? {} : { name, parents: [parent], mimeType: type, ...(props ? { appProperties: props } : {}) }, bytes = enc.encode(text);
   const base = 'https://www.googleapis.com/upload/drive/v3/files' + (id ? '/' + id : ''), auth = 'Bearer ' + await googleToken(env), method = id ? 'PATCH' : 'POST';
   let r;
   if (bytes.length < 4e6) {
     const b = 'dcc' + rand(12);
-    r = await fetch(base + '?uploadType=multipart&supportsAllDrives=true&fields=id', { method, headers: { Authorization: auth, 'Content-Type': 'multipart/related; boundary=' + b },
+    r = await fetch(base + '?uploadType=multipart&supportsAllDrives=true&fields=' + (full ? 'id,size,md5Checksum' : 'id'), { method, headers: { Authorization: auth, 'Content-Type': 'multipart/related; boundary=' + b },
       body: `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\nContent-Type: ${type}\r\n\r\n${text}\r\n--${b}--` });
   } else {
-    const start = await fetch(base + '?uploadType=resumable&supportsAllDrives=true&fields=id', { method, headers: { Authorization: auth, 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': type }, body: JSON.stringify(meta) });
+    const start = await fetch(base + '?uploadType=resumable&supportsAllDrives=true&fields=' + (full ? 'id,size,md5Checksum' : 'id'), { method, headers: { Authorization: auth, 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': type }, body: JSON.stringify(meta) });
     const to = start.headers.get('Location'); if (!start.ok || !to) { const e = gfail(start, await start.json().catch(() => ({}))); e.gone = start.status === 404; throw e; }
     r = await fetch(to, { method: 'PUT', headers: { 'Content-Type': type }, body: bytes });
   }
   const j = await r.json().catch(() => ({})); if (!r.ok || !j.id) { const e = gfail(r, j); e.gone = r.status === 404; throw e; }
-  return j.id;
+  /* `full`: Drive's own record of what it stored (size and MD5), so canonical storage can confirm each write (src/mkos/mirror.js). */
+  return full ? { id: j.id, size: j.size ?? null, md5: j.md5Checksum || null } : j.id;
 }
 const storeOn = env => !!DRIVE.mode && !!ACCTS(env);
 const fileName = path => path.replace(/\//g, '__') + '.json';
-const DIRTY = 'FROM docs d LEFT JOIN drive_docs x ON x.user_id = d.user_id AND x.path = d.path WHERE (x.synced IS NULL OR x.synced != d.updated)';
+/* Central registry records ('_central') are not an account: MKOS persists them to the Central Registry Data folder instead. */
+const DIRTY = "FROM docs d LEFT JOIN drive_docs x ON x.user_id = d.user_id AND x.path = d.path WHERE (x.synced IS NULL OR x.synced != d.updated) AND d.user_id != '_central'";
 /* Copy one account's waiting records into its own Drive folder. `B.n` is how many Google requests this run may still make. */
 async function syncUser(env, uid, B) {
   if (!storeOn(env)) return { on: false };
@@ -1290,6 +1339,7 @@ async function api(request, env, url, ctx) {
       JOBS.forEach(j => { const n = body.jobs && TIERS.includes(body.jobs[j.id]) ? body.jobs[j.id] : H.jobs[j.id]; if (n !== j.need) jobs[j.id] = n; });
       await setSetting(env, 'ai_hierarchy', JSON.stringify({ tiers, jobs }));
     }
+    persistSoon(env, ctx);   // configuration belongs in Drive (Central Registry Data > MKOS > config)
     return json(chart(env, await hierarchy(env, true)));
   }
   /* The owner reads and rewrites the privacy policy and the terms of service. DELETE goes back to the built-in wording. */
@@ -1302,6 +1352,7 @@ async function api(request, env, url, ctx) {
       await setSetting(env, 'page_' + name, JSON.stringify({ text, date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/New_York' }) }));
     } else if (request.method === 'DELETE') await setSetting(env, 'page_' + name, null);
     else if (request.method !== 'GET') return fail(405, 'Not allowed.');
+    if (request.method !== 'GET') persistSoon(env, ctx);
     return json({ name, title: PAGES[name].title, ...(await pageText(env, name)) });
   }
   /* Every account and how much of it is in Drive, for the owner. Counts and folder links only: no record is read here. */
@@ -1347,8 +1398,9 @@ async function api(request, env, url, ctx) {
     if (!LANG_OK.test(lang)) return fail(400, 'Bad area.');
     /* `only` (a comma-separated list of document names, e.g. says,saylog) returns just those, for the app's quick refresh of the pronunciation list. */
     const only = (url.searchParams.get('only') || '').split(',').filter(n => /^[A-Za-z0-9_\-]{1,60}$/.test(n)).slice(0, 10).map(n => lang + '/' + n);
-    const { results } = only.length ? await env.DB.prepare('SELECT path, body FROM docs WHERE user_id = ? AND path IN (' + only.map(() => '?').join(',') + ')').bind(user.id, ...only).all()
-      : await env.DB.prepare('SELECT path, body FROM docs WHERE user_id = ? AND path LIKE ?').bind(user.id, lang + '/%').all();
+    const h = await holders(env, user.id);
+    const { results } = only.length ? await env.DB.prepare(`SELECT path, body FROM docs WHERE user_id IN (${HOLD(h)}) AND path IN (` + only.map(() => '?').join(',') + `) ORDER BY user_id = '${CENTRAL}'`).bind(...h, ...only).all()
+      : await env.DB.prepare(`SELECT path, body FROM docs WHERE user_id IN (${HOLD(h)}) AND path LIKE ? ORDER BY user_id = '${CENTRAL}'`).bind(...h, lang + '/%').all();
     const docs = {}; for (const r of results) { try { docs[r.path] = JSON.parse(r.body); } catch { } }
     return json({ now: Date.now(), docs });
   }
@@ -1356,11 +1408,11 @@ async function api(request, env, url, ctx) {
     const path = url.searchParams.get('path') || '';
     if (!PATH_OK.test(path)) return fail(400, 'Bad path.');
     if (request.method === 'DELETE' && (path === 'med/says' || path === 'med/saylog')) return fail(400, 'The pronunciation list is not deleted as a whole.');
-    if (request.method === 'DELETE') { await env.DB.prepare('DELETE FROM docs WHERE user_id = ? AND path = ?').bind(user.id, path).run(); syncSoon(env, ctx, user.id); return json({ ok: true }); }
-    if (path === 'med/sayop') { const r = await applySayOps(env, user.id, body && body.ops); syncSoon(env, ctx, user.id); return json(r); }
+    if (request.method === 'DELETE') { await env.DB.prepare('DELETE FROM docs WHERE user_id = ? AND path = ?').bind(await homeOf(env, user.id, path), path).run(); syncSoon(env, ctx, user.id); return json({ ok: true }); }
+    if (path === 'med/sayop') { const r = await applySayOps(env, user.id, body && body.ops); syncSoon(env, ctx, user.id); persistSoon(env, ctx); return json(r); }
     const text = JSON.stringify(await guardSays(env, user.id, path, body)); if (text.length > MAX_DOC) return fail(413, 'That is too large to save.');
-    await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(user.id, path, text, new Date().toISOString()).run();
-    syncSoon(env, ctx, user.id);
+    await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(await homeOf(env, user.id, path), path, text, new Date().toISOString()).run();
+    syncSoon(env, ctx, user.id); if (centralPath(path)) persistSoon(env, ctx);
     return json({ ok: true });
   }
   if (route === 'POST /api/ai') {
@@ -1418,8 +1470,8 @@ function mkDeps(env) {
   const shape = f => ({ id: f.id, title: f.name, mimeType: f.mimeType, parentId: (f.parents || [])[0] || '', fileSize: f.size || '', md5: f.md5Checksum || '', modifiedTime: f.modifiedTime || '' });
   const docsOf = async (uid, prefixes) => {
     if (!uid) return {};
-    const where = prefixes.map(p => p.endsWith('_') ? 'path LIKE ?' : 'path = ?').join(' OR ');
-    const { results } = await env.DB.prepare(`SELECT path, body FROM docs WHERE user_id = ? AND (${where})`).bind(uid, ...prefixes.map(p => p.endsWith('_') ? p + '%' : p)).all();
+    const where = prefixes.map(p => p.endsWith('_') ? 'path LIKE ?' : 'path = ?').join(' OR '), h = await holders(env, uid);
+    const { results } = await env.DB.prepare(`SELECT path, body FROM docs WHERE user_id IN (${HOLD(h)}) AND (${where}) ORDER BY user_id = '${CENTRAL}'`).bind(...h, ...prefixes.map(p => p.endsWith('_') ? p + '%' : p)).all();
     const out = {}; for (const r of results) { try { out[r.path] = JSON.parse(r.body); } catch { } } return out;
   };
   return {
@@ -1428,12 +1480,18 @@ function mkDeps(env) {
     readJson: async fileId => { await inLibrary(env, fileId); return await (await gfetch(env, 'files/' + fileId, { alt: 'media' })).json(); },
     findJson: async q => { const j = await (await gfetch(env, 'files', { q: driveQuery(q), pageSize: 20, fields: 'files(id,name,mimeType,parents)', includeItemsFromAllDrives: 'true' })).json();
       for (const f of j.files || []) if (/json/i.test(f.mimeType + f.name) && await inside(env, (f.parents || [])[0], KNOW(env))) return { id: f.id, title: f.name }; return null; },
-    upload: ({ id, name, parent, text, mime }) => gupload(env, { id, name, parent, text, mime }),
+    upload: ({ id, name, parent, text, mime }) => gupload(env, { id, name, parent, text, mime, full: true }),
+    /* The AI order of operations as built (SERVICES, TIERS, JOBS, AI_ORDER) and as the owner has adjusted it: configuration that
+       canonical storage keeps in Drive (config/configuration.json). Read only; nothing here changes the order. */
+    appConfig: async () => ({ services: SERVICES.map(x => ({ id: x.id, tier: x.tier, ...(x.name ? { name: x.name } : {}) })), tiers: TIERS, jobs: JOBS.map(j => ({ id: j.id, need: j.need })),
+      ai_order: { setting: str(env.AI_ORDER, 200) || null, resolved: aiOrder(env) }, effective: await hierarchy(env, true),
+      /* Model choices set as Worker variables (names only, never keys). */
+      models: Object.fromEntries(Object.entries(env).filter(([k, v]) => /_MODEL(_|$)/.test(k) && typeof v === 'string' && !/KEY|TOKEN|SECRET/.test(k)).map(([k, v]) => [k, v.slice(0, 120)])) }),
     mkdir: (name, parent) => mkdir(env, name, parent),
     patch: async (id, { name, addParents, removeParents }) => gsend(env, 'PATCH', 'files/' + id + '?' + form({ ...(addParents ? { addParents } : {}), ...(removeParents ? { removeParents } : {}) }), name ? { name } : {}),
     folders: { registry: str(env.MKOS_REGISTRY_FOLDER, 200), oldVersions: str(env.MKOS_REGISTRY_OLD_FOLDER, 200), mkos: str(env.MKOS_DRIVE_FOLDER, 200) },
     userDocs: docsOf,
-    ownerUpdated: async paths => { const o = await ownerId(env); if (!o) return ''; const r = await env.DB.prepare(`SELECT MAX(updated) AS t FROM docs WHERE user_id = ? AND path IN (${paths.map(() => '?').join(',')})`).bind(o, ...paths).first(); return (r && r.t) || ''; },
+    ownerUpdated: async paths => { const o = await ownerId(env); if (!o) return ''; const r = await env.DB.prepare(`SELECT MAX(updated) AS t FROM docs WHERE user_id IN (?, ?) AND path IN (${paths.map(() => '?').join(',')})`).bind(o, CENTRAL, ...paths).first(); return (r && r.t) || ''; },
     ownerSay: async ops => { const o = await ownerId(env); if (!o) throw new Error('No owner account.'); const r = await applySayOps(env, o, ops); syncSoon(env, null, o); return r; },
     ownerDocs: async prefixes => docsOf(await ownerId(env), prefixes),
     ownerId: () => ownerId(env),
@@ -1455,9 +1513,14 @@ function mkDeps(env) {
   };
 }
 async function mkTickSafe(env) {
-  try { await init(env); await driveState(env); if (!DRIVE.mode) return; await mkTick(env, mkDeps(env), { ...mkRoots(env), maxBudget: 480 }); }
+  try { await init(env); await centralize(env); await driveState(env); if (!DRIVE.mode) return; await mkTick(env, mkDeps(env), { ...mkRoots(env), maxBudget: 480 }); }
   catch (e) { console.error('mkos', e); }
 }
+/* A durable change made outside the engine (configuration, the central records) is persisted to Drive straight after the reply
+   instead of waiting for the next run; it is already queued (src/mkos/mirror.js keeps it pending until Drive confirms it), so if
+   this attempt fails the next run retries it. */
+const persistSoon = (env, ctx) => { if (ctx && env.MKOS !== 'off' && env.MKOS_DRIVE_FOLDER) ctx.waitUntil(mkPersist(env).catch(e => console.error('persist', e))); };
+async function mkPersist(env) { await init(env); await driveState(env); if (!DRIVE.mode) return; await persistNow(env, mkDeps(env), env.MKOS_DRIVE_FOLDER, { only: ['config', 'central/'] }); }
 
 /* ---------- MCP connector at /mcp/<token> ----------
    A small Model Context Protocol server (JSON over HTTP POST). The token in the address is the only credential,
@@ -1505,7 +1568,8 @@ async function mcpServer(request, env, token, ctx) {
     if (name === 'load_progress') {
       const lang = String(a.area || 'med'); if (!LANG_OK.test(lang)) return bad('Give an area such as "med".');
       const since = Number(a.since) || 0, docs = {}, paths = [];
-      const { results } = await env.DB.prepare('SELECT path, body, updated FROM docs WHERE user_id = ? AND path LIKE ?').bind(uid, lang + '/%').all();
+      const h = await holders(env, uid);
+      const { results } = await env.DB.prepare(`SELECT path, body, updated FROM docs WHERE user_id IN (${HOLD(h)}) AND path LIKE ? ORDER BY user_id = '${CENTRAL}'`).bind(...h, lang + '/%').all();
       const only = Array.isArray(a.only) ? new Set(a.only.filter(n => typeof n === 'string').slice(0, 10).map(n => lang + '/' + n)) : null;
       for (const r of results) { paths.push(r.path); if (only ? only.has(r.path) : (!since || Date.parse(r.updated) > since)) { try { docs[r.path] = JSON.parse(r.body); } catch { } } }
       return out({ now: Date.now(), area: lang, paths, docs });
@@ -1536,14 +1600,14 @@ async function mcpServer(request, env, token, ctx) {
     if (!PATH_OK.test(path)) return bad('That is not a valid document path. It must start with the area, like med/state.');
     if (name === 'save_doc') {
       if (!a.body || typeof a.body !== 'object' || Array.isArray(a.body)) return bad('The document must be an object.');
-      if (path === 'med/sayop') { const r = await applySayOps(env, uid, a.body.ops); syncSoon(env, ctx, uid); return out(r); }
+      if (path === 'med/sayop') { const r = await applySayOps(env, uid, a.body.ops); syncSoon(env, ctx, uid); persistSoon(env, ctx); return out(r); }
       const body = JSON.stringify(await guardSays(env, uid, path, a.body)); if (body.length > MAX_DOC) return bad('That document is too large to save.');
-      await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(uid, path, body, new Date().toISOString()).run();
-      syncSoon(env, ctx, uid);
+      await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(await homeOf(env, uid, path), path, body, new Date().toISOString()).run();
+      syncSoon(env, ctx, uid); if (centralPath(path)) persistSoon(env, ctx);
       return out({ ok: true });
     }
     if (name === 'delete_doc' && (path === 'med/says' || path === 'med/saylog')) return bad('The pronunciation list is not deleted as a whole.');
-    if (name === 'delete_doc') { await env.DB.prepare('DELETE FROM docs WHERE user_id = ? AND path = ?').bind(uid, path).run(); syncSoon(env, ctx, uid); return out({ ok: true }); }
+    if (name === 'delete_doc') { await env.DB.prepare('DELETE FROM docs WHERE user_id = ? AND path = ?').bind(await homeOf(env, uid, path), path).run(); syncSoon(env, ctx, uid); return out({ ok: true }); }
     return err(-32602, 'Unknown tool');
   };
   if (Array.isArray(msg)) { const r = (await Promise.all(msg.map(one))).filter(Boolean); return r.length ? json(r) : new Response(null, { status: 202 }); }

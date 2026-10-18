@@ -58,6 +58,10 @@ export const TABLES = [
   `CREATE TABLE IF NOT EXISTS mk_routes (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, user_id TEXT, request TEXT NOT NULL, decision TEXT NOT NULL, conf REAL NOT NULL, body TEXT NOT NULL)`,
   // The Drive mirror: which shard files exist and the hash last written.
   `CREATE TABLE IF NOT EXISTS mk_mirror (key TEXT PRIMARY KEY, file_id TEXT, hash TEXT, synced TEXT)`,
+  // The persistence ledger: every file of canonical storage as it moves through queued -> persisted (confirmed by Drive), or failed ->
+  // retried, and files the daily reconciliation sent back (reconciled). Kept 60 days; mirrored to Drive (governance/persistence_<month>).
+  `CREATE TABLE IF NOT EXISTS mk_persist_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, key TEXT NOT NULL, state TEXT NOT NULL, detail TEXT)`,
+  `CREATE INDEX IF NOT EXISTS mk_persist_log_at ON mk_persist_log (at)`,
   // Board Blueprint registry projection (Blueprint Execution Engine tables).
 
   `CREATE TABLE IF NOT EXISTS mk_blueprint_registries (blueprint_id TEXT PRIMARY KEY, blueprint_family TEXT NOT NULL, board_name TEXT, board_type TEXT, year INTEGER, version TEXT,

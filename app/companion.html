@@ -1208,9 +1208,13 @@ async function libInit(force){if(!LIB()||!st.prefs.lib)return null;if(st.libx&&s
   st.libx={sig:libSig(),roots,missing,t:Date.now()};saveState();
   try{const all={};roots.forEach(R=>Object.assign(all,R.folders));const r=await drive('search_files',{query:"title contains 'registry' and title contains 'CURRENT'",excludeContentSnippets:true,pageSize:20}),f=A(r.files).find(x=>all[x.parentId]&&/json/i.test((x.mimeType||'')+(x.title||'')));
     if(f){const j=JSON.parse(new TextDecoder('utf-8').decode(await fileBytes(f.id,Number(f.fileSize)||1))),map={};A(j&&j.sources).forEach(x=>{if(x&&x.drive_file_id)map[x.drive_file_id]={l:String(x.short_label||x.title||'').slice(0,90),c:String(x.citation||'').slice(0,120),d:String(x.doi||'').slice(0,80),o:A(x.responsible_orgs).map(String).slice(0,5).join('/'),s:String(x.status||'active').slice(0,20),y:yearOf(x.issue_date,x.published_online,x.short_label)}});
-      if(Object.keys(map).length)put('libreg',{map,name:f.title,t:Date.now()})}}catch(e){}
+      if(Object.keys(map).length)libRegKeep(map,f.title)}}catch(e){}
   return st.libx}
-const libReg=()=>(docs.libreg&&docs.libreg.map)||{};
+/* The sources registry is shared knowledge: MKOS serves it to every account (MK.registry). This account keeps only entries for files
+   MKOS does not know (its own library), so no account holds a copy of the central registry. */
+const libReg=()=>Object.assign({},(docs.libreg&&docs.libreg.map)||{},(MK&&MK.registry)||{});
+function libRegKeep(map,name){const known=(MK&&MK.registry)||{},own={};Object.keys(map||{}).forEach(id=>{if(!known[id])own[id]=map[id]});
+  if(Object.keys(own).length)put('libreg',{map:own,name:name||(docs.libreg&&docs.libreg.name)||'',t:Date.now()});else if(docs.libreg)del('libreg')}
 const words=s=>String(s).toLowerCase().split(/[^a-z0-9]+/).filter(w=>w.length>3&&!/^(with|from|that|this|other|disease|diseases|disorders|management|evaluation|approach|common|care|medicine)$/.test(w));
 function excerpt(text,keys,max=12000){text=text.replace(/^—$/gm,'-').replace(/^Mark this topic completed\s*$/gm,'').replace(/^Test your knowledge:\s*\n+\s*\d+ answered of \d+ questions?\s*$/gm,'').replace(/\]\(https?:[^)]*\)/g,']').replace(/\\([<>*\[\]])/g,'$1').replace(/\n{3,}/g,'\n\n');
   const parts=text.split(/\n(?=#{1,4} )/);if(text.length<=max)return text;
@@ -2090,7 +2094,7 @@ async function mk(op,args){if(!mkOn())return null;args=args||{};
 const mkKind=()=>{const k=bpKind();return k==='moc'?'moc':k==='cert'?'cert':null};
 const MKTABS=['today','boards','progress','questions','cards','knowledge','learn','settings'];
 async function mkLoad(force){if(!mkOn()||MKLOAD)return;if(!force&&MKAT&&Date.now()-MKAT<300000)return;MKLOAD=true;
-  try{MK=await mk('app_bundle',{app_kind:mkKind()})}catch(e){console.warn('MKOS',e)}
+  try{MK=await mk('app_bundle',{app_kind:mkKind()});if(MK&&MK.registry&&Object.keys(MK.registry).length&&docs.libreg&&docs.libreg.map&&Object.keys(docs.libreg.map).some(id=>MK.registry[id]))libRegKeep(docs.libreg.map)}catch(e){console.warn('MKOS',e)}
   MKAT=Date.now();MKLOAD=false;if(MKTABS.includes(S.tab)&&!S.busy&&!S.quiz&&!S.lesson&&!S.deck)render()}
 // The governed context for one topic (cached ten minutes). Never blocks a lesson for long: after 8 seconds the app goes on without it.
 async function mkTopic(t){if(!t||!mkOn())return null;const c=MKT[t.id];if(c&&Date.now()-c.t<600000)return c.v;

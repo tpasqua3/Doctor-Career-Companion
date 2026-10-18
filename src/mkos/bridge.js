@@ -71,7 +71,19 @@ export async function appBundle(env, u, { owner = false, app_kind = null } = {})
     flags: (await assetFlags(env, u)).flags, pronunciations: await ttsList(env),
     knowledge: { objects: kn, sources: ingest },
     assets: await assetSummary(env, u),
+    registry: await sourceRegistry(env),
   };
+}
+
+// The library's sources registry as the app reads it (drive file id -> label, citation, DOI, organisations, status, year): one shared
+// registry in MKOS instead of a copy cached in every account (the app keeps only entries for files MKOS does not know).
+async function sourceRegistry(env) {
+  const { results } = await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'Source' AND json_extract(body, '$.drive_file_id') IS NOT NULL").all().catch(() => ({ results: [] }));
+  const out = {};
+  for (const r of results) { const x = J(r.body); if (!x || !x.drive_file_id) continue;
+    out[x.drive_file_id] = { l: String(x.short_label || x.title || x.name || '').slice(0, 90), c: String(x.citation || '').slice(0, 120), d: String(x.doi || '').slice(0, 80), o: (x.responsible_orgs || []).map(String).slice(0, 5).join('/'),
+      s: x.status === 'superseded' || x.status === 'withdrawn' ? x.status : 'active', y: x.year ? String(x.year) : '' }; }
+  return out;
 }
 
 // Guideline families that speak to a topic: by its concepts' recommendations, else by topic words in the family name/topic key.

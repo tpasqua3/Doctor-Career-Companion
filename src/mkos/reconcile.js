@@ -6,9 +6,9 @@
 import { FRAMEWORK } from './framework.js';
 import { J, nowIso, getSetting, setSetting, audit } from './db.js';
 import { putObject } from './kb.js';
-import { queue } from './ingest.js';
+import { queue, event } from './ingest.js';
 import { auditAssets } from './assets.js';
-import { durability } from './mirror.js';
+import { durability, driveCheck } from './mirror.js';
 import { restoreStep } from './restore.js';
 import { pearlAudit } from './decompose.js';
 
@@ -112,23 +112,35 @@ const STEPS = [
     return true;
   }],
   ['canonical', async (env, p, rep, deps) => {
-    // Canonical storage, verified against Drive itself: read manifest.json back from the MKOS folder, compare what it says each file
-    // holds with the database, and send every file that is missing or out of date back to be rewritten (repair). Also how far Drive is
-    // behind, and the write errors of the last day.
-    rep.canonical = await durability(env);
+    // Canonical storage, verified against Drive itself (Canonical vs Operational Storage directive, auditing requirement):
+    //   Drive exists      every folder is listed and every file the database believes is there is found (missing files are rewritten)
+    //   Drive is current  manifest.json is read back; nothing has been pending longer than an hour
+    //   Drive matches D1  each object file's row count, and the configuration and central records' content hashes, match the database
+    // Knowledge objects, objectives, competencies, relationships, assets, version history and configuration are all files in that
+    // manifest, so a file that is missing or out of date is sent back to be rewritten (repair) and noted in the ledger as reconciled.
+    rep.canonical = await durability(env, deps);
     const errs = (J(await getSetting(env, 'mirror_errors'), []) || []).filter((e) => Date.now() - Date.parse(e.at) < 864e5);
     rep.canonical.write_errors_24h = errs.length; if (errs.length) rep.canonical.last_error = errs[errs.length - 1];
+    rep.canonical.overdue = rep.canonical.oldest_pending_minutes > 60;
+    if (rep.canonical.overdue) await event(env, 'persistence_overdue', 'canonical_storage', { oldest_pending_since: rep.canonical.oldest_pending_since, pending: rep.canonical.pending, failing: rep.canonical.failing });
     if (deps && deps.mkosRoot && deps.readMine && deps.list) {
       try {
         const v = await restoreStep(env, deps, deps.mkosRoot, {}, { mode: 'verify' });
         if (v.error) rep.canonical.verify = { error: v.error };
         else {
           const redo = [...v.differences.map((d) => d.file), ...v.not_yet_persisted];
-          for (const k of redo) await env.DB.prepare('DELETE FROM mk_mirror WHERE key = ?').bind('fp:' + k).run();
-          rep.canonical.verify = { manifest_written: v.manifest_written, files: v.files, object_files_matching: v.object_files_matching, sent_back_for_rewrite: redo.length, differences: v.differences.slice(0, 10) };
+          // Forget both the fingerprint and the hash of what was written, so the file is rewritten even when the database content is
+          // the same as last time (it is Drive that differs).
+          for (const k of redo) await env.DB.batch([env.DB.prepare('DELETE FROM mk_mirror WHERE key = ?').bind('fp:' + k), env.DB.prepare("UPDATE mk_mirror SET hash = '' WHERE key = ?").bind(k),
+            env.DB.prepare('INSERT INTO mk_persist_log (at, key, state, detail) VALUES (?, ?, ?, ?)').bind(nowIso(), k, 'reconciled', 'Drive manifest differs from the database; rewritten')]);
+          rep.canonical.verify = { manifest_written: v.manifest_written, files: v.files, object_files_matching: v.object_files_matching, sent_back_for_rewrite: redo.length, differences: v.differences.slice(0, 10),
+            configuration: redo.includes('config') ? 'sent back' : 'matches', central_records: redo.some((k) => k.startsWith('central/')) ? 'sent back' : 'match' };
         }
       } catch (e) { rep.canonical.verify = { error: String(e.message || e).slice(0, 200) }; }
+      try { rep.canonical.drive_exists = await driveCheck(env, deps, deps.mkosRoot); } catch (e) { rep.canonical.drive_exists = { error: String(e.message || e).slice(0, 200) }; }
     }
+    // The ledger keeps 60 days (each month's ledger is also a file in Drive).
+    await env.DB.prepare('DELETE FROM mk_persist_log WHERE at < ?').bind(new Date(Date.now() - 60 * 864e5).toISOString()).run();
     return true;
   }],
   ['integrity', async (env, p, rep) => {

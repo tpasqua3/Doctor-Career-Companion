@@ -1,0 +1,404 @@
+==================================================
+MKOS DATA DOMAIN SEPARATION
+AND STORAGE GOVERNANCE DIRECTIVE
+==================================================
+
+PURPOSE
+
+The audit identified that the boundary between:
+
+Platform Knowledge
+
+and
+
+Account Data
+
+needs to be explicitly defined.
+
+MKOS should separate:
+
+Shared Medical Knowledge
+
+from
+
+User-Specific Data.
+
+The goal is to prevent central knowledge from being duplicated, fragmented, or incorrectly tied to individual accounts.
+
+==================================================
+CORE PRINCIPLE
+==================================================
+
+Shared Knowledge
+
+≠
+
+Account Data
+
+Shared Educational Assets
+
+≠
+
+Account Data
+
+Knowledge Graph Objects
+
+≠
+
+Account Data
+
+Objectives
+
+≠
+
+Account Data
+
+Competencies
+
+≠
+
+Account Data
+
+Relationships
+
+≠
+
+Account Data
+
+==================================================
+DOMAIN 1
+MEDICAL KNOWLEDGE DATABASE
+==================================================
+
+Purpose:
+
+Source Material Repository
+
+Contains:
+
+Guidelines
+
+MKSAP
+
+Textbooks
+
+Board Specifications
+
+Reference Materials
+
+Source Registries
+
+Knowledge Sources
+
+MKOS reads from this layer.
+
+MKOS should not treat this layer as operational storage.
+
+==================================================
+DOMAIN 2
+MKOS CENTRAL REGISTRY DATA
+==================================================
+
+Purpose:
+
+Shared Knowledge Repository
+
+Canonical MKOS Repository
+
+Contains:
+
+Knowledge Objects
+
+Recommendations
+
+Evidence Statements
+
+Evidence Levels
+
+Classes Of Recommendation
+
+Objectives
+
+Assessment Objectives
+
+Board Objectives
+
+Competencies
+
+Subcompetencies
+
+Relationships
+
+Concept Graphs
+
+Blueprint Mappings
+
+Clinical Pearls
+
+Teaching Points
+
+High-Yield Concepts
+
+Common Errors
+
+Clinical Pathways
+
+Question Targets
+
+Lesson Targets
+
+Case Targets
+
+Review Targets
+
+Shared Lessons
+
+Shared Flashcards
+
+Shared Questions
+
+Shared Cases
+
+Shared Educational Assets
+
+Version Records
+
+Governance Records
+
+Audit Records
+
+Classification Records
+
+Knowledge Graph Exports
+
+Recovery Artifacts
+
+This data belongs to MKOS.
+
+This data does not belong to an individual user.
+
+==================================================
+DOMAIN 3
+ACCOUNT-LEVEL DATA
+==================================================
+
+Purpose:
+
+Personalization Layer
+
+Contains:
+
+Progress
+
+Mastery
+
+Retention
+
+Review History
+
+User Preferences
+
+User State
+
+Pronunciation History
+
+Bookmarks
+
+Personal Notes
+
+Saved Content
+
+Personalized Assets
+
+User-Specific Lessons
+
+User-Specific Questions
+
+User-Specific Flashcards
+
+Learner-State Data
+
+Recommendation History
+
+Confidence Scores
+
+Personal Overrides
+
+Account data should remain account-specific.
+
+==================================================
+SHARED ASSET RULE
+==================================================
+
+If an asset can be reused across users:
+
+It belongs in MKOS Central Registry Data.
+
+Examples:
+
+Lessons
+
+Question Banks
+
+Flashcard Banks
+
+Clinical Pearls
+
+Teaching Points
+
+Cases
+
+Educational Assets
+
+Review Assets
+
+Shared assets should not be owned by any individual account.
+
+==================================================
+PERSONAL ASSET RULE
+==================================================
+
+If an asset is personalized to one learner:
+
+It belongs in Account-Level Data.
+
+Examples:
+
+Personal Learning Path
+
+Custom Notes
+
+Personal Flashcards
+
+Personalized Lessons
+
+User-Specific Remediation
+
+Learner-State Records
+
+==================================================
+NO DUPLICATION RULE
+==================================================
+
+Shared knowledge should not be duplicated into account records.
+
+Avoid:
+
+100 users
+
+↓
+
+100 copies of competencies
+
+100 copies of objectives
+
+100 copies of recommendations
+
+100 copies of relationships
+
+100 copies of educational assets
+
+Instead:
+
+Shared Registry
+
+↓
+
+Referenced By Users
+
+Users should point to shared knowledge rather than store copies of it.
+
+==================================================
+KNOWLEDGE OWNERSHIP
+==================================================
+
+Ownership should be explicit.
+
+Knowledge Objects
+
+Owned By:
+MKOS Central Registry
+
+Objectives
+
+Owned By:
+MKOS Central Registry
+
+Competencies
+
+Owned By:
+MKOS Central Registry
+
+Relationships
+
+Owned By:
+MKOS Central Registry
+
+Clinical Pearls
+
+Owned By:
+MKOS Central Registry
+
+Educational Assets
+
+Owned By:
+MKOS Central Registry
+
+Learner State
+
+Owned By:
+Account-Level Data
+
+==================================================
+RECOVERY REQUIREMENT
+==================================================
+
+MKOS should be recoverable from:
+
+Medical Knowledge Database
+
++
+
+MKOS Central Registry Data
+
+without requiring account-level records.
+
+Account-level records should only be required to restore personalization and learner state.
+
+==================================================
+SUCCESS CRITERIA
+==================================================
+
+Medical Knowledge Database
+=
+Source Library
+
+MKOS Central Registry Data
+=
+Shared Knowledge
+Shared Assets
+Governance
+Versioning
+Recovery
+
+Account-Level Data
+=
+Personalization
+Learner State
+Progress
+Preferences
+
+The system should maintain a clean separation between:
+
+Knowledge
+
+Assets
+
+Governance
+
+and
+
+User State
+
+so that MKOS remains scalable, recoverable, reusable, and independent of individual user accounts.
+==================================================

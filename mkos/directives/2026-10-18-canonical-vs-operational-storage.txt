@@ -1,0 +1,478 @@
+==================================================
+CANONICAL STORAGE VS OPERATIONAL STORAGE
+ARCHITECTURAL GOVERNANCE DIRECTIVE
+==================================================
+
+PURPOSE
+
+Clarify the role of Google Drive and D1 across MKOS, LOS, Life OS, and future operating-system projects.
+
+The goal is to prevent operational databases from becoming the sole source of truth.
+
+The goal is also to minimize unnecessary database growth, reduce write amplification, improve recoverability, and ensure long-term durability of knowledge and educational assets.
+
+==================================================
+CORE PRINCIPLE
+==================================================
+
+Google Drive
+=
+Long-Term Memory
+
+D1
+=
+Working Memory
+
+Drive stores truth.
+
+D1 serves truth.
+
+Drive stores knowledge.
+
+D1 executes knowledge.
+
+==================================================
+ROLE OF GOOGLE DRIVE
+==================================================
+
+Google Drive is the canonical repository.
+
+Google Drive acts as:
+
+Source Library
+
+Knowledge Repository
+
+Asset Repository
+
+Registry Repository
+
+Version Repository
+
+Governance Repository
+
+Audit Repository
+
+Recovery Repository
+
+Backup Repository
+
+Long-Term Memory
+
+System Of Record
+
+If knowledge must survive infrastructure failure, it belongs in Drive.
+
+==================================================
+WHAT BELONGS IN DRIVE
+==================================================
+
+Source Documents
+
+Guidelines
+
+Textbooks
+
+MKSAP Content
+
+Blueprints
+
+Reference Sources
+
+Registries
+
+Knowledge Objects
+
+Recommendations
+
+Evidence Statements
+
+Objectives
+
+Competencies
+
+Relationships
+
+Mappings
+
+Knowledge Graph Exports
+
+Classification Trees
+
+Taxonomies
+
+Clinical Pearls
+
+Teaching Points
+
+High-Yield Concepts
+
+Common Errors
+
+Curricula
+
+Learning Paths
+
+Vocabulary Registries
+
+Grammar Registries
+
+Pronunciation Registries
+
+Dialect Registries
+
+Educational Assets
+
+Lessons
+
+Questions
+
+Flashcards
+
+Cases
+
+Conversation Assets
+
+Reading Assets
+
+Listening Assets
+
+Pronunciation Assets
+
+Assessment Assets
+
+Review Assets
+
+Version History
+
+Governance Records
+
+Audit Records
+
+Recovery Records
+
+Configuration Records
+
+Provider Configuration
+
+Critical Application Settings
+
+Anything difficult to recreate should persist to Drive.
+
+==================================================
+ROLE OF D1
+==================================================
+
+D1 is an operational execution database.
+
+D1 exists for speed.
+
+D1 exists for querying.
+
+D1 exists for graph traversal.
+
+D1 exists for frontend performance.
+
+D1 is not intended to be the sole source of truth.
+
+==================================================
+WHAT BELONGS IN D1
+==================================================
+
+Search Indexes
+
+Graph Traversal Tables
+
+Relationship Closure Tables
+
+Caches
+
+Execution State
+
+Session Data
+
+Temporary Jobs
+
+Queues
+
+Asset Usage Counts
+
+Recommendation State
+
+Provider Health
+
+AI Cache
+
+Synchronization State
+
+Worker State
+
+Derived Learner Tables
+
+Aggregated Statistics
+
+Analytics
+
+Rollups
+
+Operational Metadata
+
+Everything that can be rebuilt should stay in D1.
+
+==================================================
+KNOWLEDGE OWNERSHIP PRINCIPLE
+==================================================
+
+Knowledge Objects belong to Drive.
+
+Recommendations belong to Drive.
+
+Evidence belongs to Drive.
+
+Objectives belong to Drive.
+
+Competencies belong to Drive.
+
+Educational Assets belong to Drive.
+
+Governance belongs to Drive.
+
+Version History belongs to Drive.
+
+D1 may index them.
+
+D1 may query them.
+
+D1 may accelerate them.
+
+D1 should not be their only copy.
+
+==================================================
+GENERATE ONCE, STORE ONCE,
+REUSE MANY TIMES
+==================================================
+
+AI Outputs should become assets.
+
+Lesson Generated
+
+↓
+
+Validated
+
+↓
+
+Classified
+
+↓
+
+Versioned
+
+↓
+
+Persisted To Drive
+
+↓
+
+Reusable Asset
+
+Question Generated
+
+↓
+
+Validated
+
+↓
+
+Persisted To Drive
+
+↓
+
+Reusable Asset
+
+Clinical Pearl Generated
+
+↓
+
+Validated
+
+↓
+
+Persisted To Drive
+
+↓
+
+Reusable Asset
+
+Do not repeatedly regenerate knowledge that already exists.
+
+==================================================
+ACCOUNT DATA PRINCIPLE
+==================================================
+
+Account Data is separate from Platform Knowledge.
+
+Account Data contains:
+
+Progress
+
+Mastery
+
+Retention
+
+Schedules
+
+Review History
+
+Personal Notes
+
+Bookmarks
+
+Preferences
+
+Custom Assets
+
+Personalized Recommendations
+
+Learner State
+
+Platform Knowledge contains:
+
+Recommendations
+
+Objectives
+
+Competencies
+
+Relationships
+
+Curricula
+
+Shared Lessons
+
+Shared Questions
+
+Shared Flashcards
+
+Shared Cases
+
+Shared Educational Assets
+
+Account Data should not own knowledge.
+
+Accounts should reference knowledge.
+
+==================================================
+REBUILDABILITY REQUIREMENT
+==================================================
+
+A catastrophic D1 loss should not destroy the platform.
+
+The following should be possible:
+
+Drive
+
+↓
+
+Rebuild D1
+
+↓
+
+Restore Knowledge Objects
+
+Restore Objectives
+
+Restore Competencies
+
+Restore Relationships
+
+Restore Educational Assets
+
+Restore Configuration
+
+Restore Governance
+
+Restore Audit Records
+
+Restore Registries
+
+Drive should contain sufficient information to reconstruct the operating system.
+
+==================================================
+SYNC REQUIREMENT
+==================================================
+
+When durable knowledge changes:
+
+Write To Drive
+
+↓
+
+Confirm Success
+
+↓
+
+Update D1
+
+or
+
+Write To D1
+
+↓
+
+Immediately Queue Drive Persistence
+
+↓
+
+Confirm Persistence
+
+The persistence operation should never be silently skipped.
+
+==================================================
+AUDITING REQUIREMENT
+==================================================
+
+Daily reconciliation should verify:
+
+Drive Exists
+
+Drive Is Current
+
+Drive Matches D1
+
+Critical Assets Persisted
+
+Knowledge Objects Persisted
+
+Objectives Persisted
+
+Competencies Persisted
+
+Relationships Persisted
+
+Configuration Persisted
+
+Version History Persisted
+
+Any discrepancies should be identified and repaired.
+
+==================================================
+ULTIMATE PRINCIPLE
+==================================================
+
+Drive is the memory.
+
+D1 is the processor.
+
+Drive stores knowledge.
+
+Drive stores assets.
+
+Drive stores governance.
+
+Drive stores history.
+
+D1 executes against that knowledge.
+
+The operating system should remain recoverable, portable, auditable, versioned, governed, and rebuildable even if D1 disappears entirely.
+==================================================

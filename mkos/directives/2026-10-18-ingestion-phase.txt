@@ -1,0 +1,339 @@
+MKOS Directive: Transition from Framework Build to Knowledge Ingestion Phase
+
+The successful restore drill has demonstrated that MKOS can be rebuilt from persistent storage and that the ontology, graph, versioning, governance, and registry layers are functioning as intended. We are now transitioning from architecture construction into controlled knowledge population.
+
+PRIORITY 1: COMPLETE PERSISTENCE HARDENING
+
+Before large-scale ingestion proceeds, complete the remaining persistence gaps:
+
+1. Persist all configuration records into Central Registry Data.
+   - AI hierarchy
+   - routing rules
+   - framework overrides
+   - ingestion settings
+   - persistence settings
+   - model configuration
+   - escalation thresholds
+   - quality gates
+   - all future operational configuration
+
+2. Include configuration in:
+   - restore workflows
+   - daily verification jobs
+   - reconciliation jobs
+   - fingerprint validation
+
+3. Move all shared knowledge currently stored in account-level records into Central Registry Data.
+   - pronunciation registry
+   - pronunciation change log
+   - ABIM blueprint document
+   - library registry cache
+   - any other globally shared registry data
+
+4. Add pending-persistence tracking.
+   Every change must enter a persistence queue and remain pending until Drive confirmation occurs.
+
+5. Maintain auditability of:
+   - queued
+   - persisted
+   - failed
+   - retried
+   - reconciled states
+
+PRIORITY 2: RESUME MKOS ENGINE
+
+After persistence hardening is complete:
+
+1. Restart the engine.
+2. Complete startup sequence.
+3. Complete blueprint loading.
+4. Complete curriculum loading.
+5. Execute library walk.
+6. Register all source documents.
+7. Verify source registration completeness.
+
+PRIORITY 3: GUIDELINE INGESTION
+
+Begin full guideline ingestion.
+
+Objectives:
+
+1. Register all guidelines as sources.
+2. Generate source fingerprints.
+3. Generate source metadata.
+4. Generate version records.
+5. Create source-to-concept mappings.
+6. Create source-to-blueprint mappings.
+7. Create source-to-curriculum mappings.
+
+For all guideline sources extract:
+
+- recommendations
+- evidence levels
+- classes of recommendation
+- diagnostic pathways
+- treatment pathways
+- monitoring pathways
+- definitions
+- thresholds
+- criteria
+- risk stratification systems
+- decision frameworks
+- teaching points
+- clinical pearls
+- supporting concepts
+
+Generate normalized knowledge objects for every extracted item.
+
+PRIORITY 4: KNOWLEDGE OBJECT GENERATION
+
+Convert extracted guideline information into structured knowledge objects.
+
+Each object should include:
+
+- object ID
+- ontology mappings
+- source provenance
+- version references
+- confidence score
+- specialty mappings
+- domain mappings
+- competency mappings
+- blueprint mappings
+- prerequisite relationships
+- dependency relationships
+- supersession relationships
+
+Objects must remain fully traceable back to source documents.
+
+Nothing should become detached from provenance.
+
+PRIORITY 5: AUTOMATIC CURRICULUM POPULATION
+
+After knowledge objects are generated:
+
+1. Rebuild curriculum mappings.
+2. Rebuild blueprint mappings.
+3. Rebuild learning objectives.
+4. Rebuild milestone objectives.
+5. Rebuild competency assessments.
+6. Rebuild knowledge dependencies.
+7. Rebuild prerequisite trees.
+8. Rebuild specialty learning pathways.
+
+The curriculum should be generated from the underlying knowledge layer rather than manually defined.
+
+PRIORITY 6: EDUCATIONAL ASSET GENERATION
+
+Generate:
+
+- learning objectives
+- teaching points
+- pearls
+- structured summaries
+- board-focused concepts
+- retention aids
+- competency-linked educational content
+
+All educational assets must maintain source traceability and version history.
+
+PRIORITY 7: BACKFILL VERIFICATION
+
+After ingestion completes:
+
+Perform a full verification pass.
+
+Confirm:
+
+- all registered sources processed
+- all guideline sources processed
+- no failed ingestion jobs
+- no orphaned records
+- no uncategorized extracted content
+- no unresolved source mappings
+- no unresolved blueprint mappings
+
+Generate completeness reports and exception reports.
+
+PRIORITY 8: CONTINUOUS UPDATE PIPELINE
+
+Establish permanent automated update workflows.
+
+Source Change Detection:
+- detect new source versions
+- detect updated guideline versions
+- detect withdrawn guidelines
+- detect superseded recommendations
+
+Automatic Propagation:
+- update knowledge objects
+- update graph relationships
+- update objectives
+- update curriculum mappings
+- update educational assets
+- update assessment content
+- update prerequisite structures
+
+Retain all historical records.
+
+Never overwrite history.
+
+Create new versions and supersede prior versions.
+
+PRIORITY 9: PERSISTENCE VALIDATION FOR GENERATED KNOWLEDGE
+
+All generated content must be:
+
+- persisted to Drive
+- included in manifests
+- fingerprinted
+- restorable
+- reconciled
+- verified
+
+Knowledge generation is not considered complete until generated content has been confirmed in persistent storage and included in restore testing.
+
+PRIORITY 10: EDUCATIONAL SOURCE INTEGRATION (MKSAP + TEXTBOOKS)
+
+Create a dedicated Educational Sources layer.
+
+Educational Sources include:
+
+- MKSAP
+- Harrison's
+- Goldman-Cecil
+- Brenner & Rector
+- Robbins
+- Katzung
+- Costanzo
+- Moore
+- Hurst
+- ACP educational assets
+- future board review resources
+
+For every educational source:
+
+1. Register source records.
+2. Generate source fingerprints.
+3. Generate metadata.
+4. Generate version histories.
+5. Generate compatibility records.
+6. Generate citation records.
+7. Generate curriculum mappings.
+8. Generate ontology mappings.
+9. Generate blueprint mappings.
+10. Generate specialty mappings.
+
+MKSAP Integration:
+
+For each MKSAP chapter, topic, objective, case, educational section and question set:
+
+- create source entries
+- create topic mappings
+- create blueprint mappings
+- create competency mappings
+- create ontology mappings
+- create disease mappings
+- create therapy mappings
+- create diagnostic mappings
+
+Create bidirectional relationships between:
+
+Guidelines ↔ Knowledge Objects
+
+Knowledge Objects ↔ MKSAP Topics
+
+MKSAP Topics ↔ Curriculum Objectives
+
+Curriculum Objectives ↔ Assessments
+
+Board Blueprint Topics ↔ MKSAP Topics
+
+Board Blueprint Topics ↔ Knowledge Objects
+
+The system should know:
+
+- which guideline supports a concept
+- which MKSAP section teaches it
+- which blueprint topic tests it
+- which curriculum objective depends on it
+- which assessments evaluate it
+
+Textbook Integration:
+
+Textbooks remain INDEX-ONLY at this stage.
+
+Allowed textbook processing:
+
+- table of contents extraction
+- chapter extraction
+- section extraction
+- topic extraction
+- ontology mapping
+- concept mapping
+- citation mapping
+- blueprint mapping
+- curriculum mapping
+
+Do not perform full textbook decomposition or storage of textbook content at this stage.
+
+Store references, topic relationships, graph links and citations.
+
+Do not store large-scale textbook-derived narrative content.
+
+MKSAP and textbooks should remain fully searchable through the knowledge graph and retrieval systems while preserving source attribution and legal separation from copyrighted content.
+
+PRIORITY 11: KNOWLEDGE GRAPH ENRICHMENT
+
+As guideline ingestion completes:
+
+Automatically create:
+
+- concept relationships
+- disease relationships
+- pathophysiology relationships
+- therapy relationships
+- diagnostic relationships
+- competency relationships
+- prerequisite relationships
+- educational relationships
+
+Knowledge graph updates should occur automatically whenever new source material is ingested.
+
+PRIORITY 12: DYNAMIC CURRICULUM REGENERATION
+
+The curriculum should become a generated artifact of the knowledge graph.
+
+Whenever knowledge objects change:
+
+- affected objectives update
+- affected lessons update
+- affected assessments update
+- affected flashcards update
+- affected educational assets update
+- affected mastery pathways update
+
+No learning content should become stale due to source updates.
+
+PRIMARY GOAL
+
+Move MKOS from a validated ontology and persistence framework into a fully populated, continuously updating medical knowledge system where:
+
+Source Documents
+→ Source Registry
+→ Knowledge Objects
+→ Knowledge Graph
+→ Curriculum
+→ Educational Assets
+→ Assessments
+→ Mastery Tracking
+
+Guidelines serve as the primary clinical truth layer.
+
+MKSAP serves as the primary educational interpretation and board-preparation layer.
+
+ABIM/LKA/CERT blueprints serve as the assessment and competency layer.
+
+The ontology and knowledge graph serve as the relationship layer connecting all domains.
+
+All layers must remain reproducible, versioned, auditable, portable, traceable, legally defensible, and rebuildable from Central Registry Data alone.

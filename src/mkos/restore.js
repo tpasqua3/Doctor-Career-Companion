@@ -2,15 +2,22 @@
 // (mirror.js). A restore reads manifest.json and then each listed file, in dependency order, and upserts what it holds:
 //   registry_data -> mk_objects (and the alias index)    history -> mk_versions    graph -> mk_edges
 //   assets -> EducationalAsset records + mk_asset_store  registries/blueprints -> the blueprint execution tables    governance/reviews -> mk_reviews
+//   config -> the app's settings and mk_settings (only where missing; credentials are never in Drive)
+//   central -> the central registry records (docs held by '_central': pronunciation registry, change log, ABIM blueprint document)
 // It never replaces a newer row with an older one (objects keep whichever 'updated' is later; versions, edges, content and table rows are
 // inserted only when absent), so it is safe on an empty database and on a live one. Resumable: prog keeps the file and row position.
 // Learner state is not part of canonical knowledge: it is rebuilt from each account's own record by the engine's learner jobs.
 import { J, nowIso, audit, TABLES } from './db.js';
 import { contentHash, indexAliases, norm } from './kb.js';
 import { queue } from './ingest.js';
+import { fileHash, configDoc, CONFIG_MOVING, CENTRAL } from './mirror.js';
 
-const ORDER = ['registry_data/', 'history/', 'graph/', 'assets/', 'registries/blueprints', 'governance/reviews'];
-const rank = (k) => { const i = ORDER.findIndex((p) => k.startsWith(p)); return i < 0 ? 99 : i; };
+// The app's own tables that canonical storage also restores (the configuration and central records live in them).
+export const APP_TABLES = ['CREATE TABLE IF NOT EXISTS docs (user_id TEXT NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (user_id, path))',
+  'CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT NOT NULL)'];
+
+const ORDER = ['config', 'central/', 'registry_data/', 'history/', 'graph/', 'assets/', 'registries/blueprints', 'governance/reviews'];
+const rank = (k) => { const i = ORDER.findIndex((p) => k === p || k.startsWith(p)); return i < 0 ? 99 : i; };
 
 async function readManifest(deps, root) {
   let token = null, file = null;
@@ -55,6 +62,13 @@ export async function restoreStep(env, deps, root, prog, { mode = 'restore', row
       for (const r of (await env.DB.prepare("SELECT type, COALESCE(specialty, 'general') AS s, COUNT(*) AS n FROM mk_objects WHERE id NOT LIKE 'ea.u%' GROUP BY type, s").all()).results) db[`registry_data/${r.type}/${String(r.s).replace(/^spec\./, '')}`] = r.n;
       const diff = prog.files.filter((f) => f.key.startsWith('registry_data/') && f.rows != null && db[f.key] !== f.rows).map((f) => ({ file: f.key, drive: f.rows, database: db[f.key] ?? 0 }));
       const missing = Object.keys(db).filter((k) => !prog.files.some((f) => f.key === k));
+      // Configuration and the central records: what Drive's manifest says it holds must be what the database would write now.
+      let crow = []; try { crow = (await env.DB.prepare('SELECT path FROM docs WHERE user_id = ?').bind(CENTRAL).all()).results; } catch (e) { crow = []; }
+      const exact = ['config', ...crow.map((r) => 'central/' + r.path)];
+      for (const k of exact) {
+        const f = man.files[k], h = await fileHash(env, k, deps);
+        if (!f) { if (h) missing.push(k); } else if (h && f.hash !== h) diff.push({ file: k, drive: 'hash ' + String(f.hash).slice(0, 10), database: 'hash ' + h.slice(0, 10) });
+      }
       return { done: true, mode, manifest_written: man.written, files: prog.files.length, object_files_matching: prog.files.filter((f) => f.key.startsWith('registry_data/')).length - diff.length, differences: diff.slice(0, 40), not_yet_persisted: missing };
     }
   }
@@ -63,6 +77,19 @@ export async function restoreStep(env, deps, root, prog, { mode = 'restore', row
     const f = prog.files[prog.at], doc = await deps.readMine(f.id), k = f.key;
     const list = k.startsWith('registry_data/') ? doc.objects || [] : k.startsWith('history/') ? doc.versions || [] : k.startsWith('graph/') ? (Array.isArray(doc) ? doc : []) : k.startsWith('assets/') ? doc.assets || []
       : k === 'governance/reviews' ? (Array.isArray(doc) ? doc : []) : null;
+    if (k === 'config') {
+      await env.DB.batch(APP_TABLES.map((q) => env.DB.prepare(q)));
+      const st = [...Object.entries(doc.app_settings || {}).map(([key, v]) => env.DB.prepare('INSERT OR IGNORE INTO settings (k, v) VALUES (?, ?)').bind(key, String(v))),
+        ...Object.entries(doc.mkos_settings || {}).map(([key, v]) => env.DB.prepare('INSERT OR IGNORE INTO mk_settings (k, v) VALUES (?, ?)').bind(key, String(v)))];
+      if (st.length) await insertAll(env, (x) => x, st);
+      prog.counts.config = st.length; prog.at++; prog.row = 0; rows += 50; continue;
+    }
+    if (k.startsWith('central/')) {
+      await env.DB.batch(APP_TABLES.map((q) => env.DB.prepare(q)));
+      if (doc && doc.path && doc.body !== undefined) await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated WHERE excluded.updated > docs.updated')
+        .bind(CENTRAL, doc.path, JSON.stringify(doc.body), doc.updated || nowIso()).run();
+      prog.counts.central = (prog.counts.central || 0) + 1; prog.at++; prog.row = 0; rows += 20; continue;
+    }
     if (k === 'registries/blueprints') {
       if (prog.row === 0) {
         for (const [t, key] of [['mk_blueprint_registries', 'registries'], ['mk_blueprint_domains', 'domains'], ['mk_blueprint_objectives', 'objectives'], ['mk_blueprint_concept_mappings', 'concept_mappings'], ['mk_blueprint_asset_mappings', 'asset_mappings']])
@@ -100,6 +127,8 @@ export async function drillStep(env, drill, deps, root, prog) {
     await drill.batch(TABLES.map((s) => drill.prepare(s)));
     const names = (await drill.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'mk_%'").all()).results.map((r) => r.name);
     await drill.batch(names.map((n) => drill.prepare(`DELETE FROM ${n}`)));
+    await drill.batch([...APP_TABLES.map((q) => drill.prepare(q)), drill.prepare('DELETE FROM docs'), drill.prepare('DELETE FROM settings')]);
+    await env.DB.batch(APP_TABLES.map((q) => env.DB.prepare(q)));   // present in production already; makes the comparison safe anywhere
     prog.phase = 'restore'; prog.restore = {}; prog.started = nowIso();
     return { done: false, phase: 'reset', tables: names.length };
   }
@@ -116,7 +145,12 @@ export async function drillStep(env, drill, deps, root, prog) {
     ['asset content', "SELECT COUNT(DISTINCT asset_id) AS n FROM mk_asset_store WHERE asset_id LIKE 'ea.s.%'"], ['blueprint registries', 'SELECT COUNT(*) AS n FROM mk_blueprint_registries'],
     ['blueprint domains', 'SELECT COUNT(*) AS n FROM mk_blueprint_domains'], ['blueprint objectives', 'SELECT COUNT(*) AS n FROM mk_blueprint_objectives'], ['blueprint concept mappings', 'SELECT COUNT(*) AS n FROM mk_blueprint_concept_mappings'],
     ['reviews', 'SELECT COUNT(*) AS n FROM mk_reviews'], ['aliases', 'SELECT COUNT(*) AS n FROM mk_aliases']];
-  const counts = []; for (const [name, sql] of checks) { const a = await one(env.DB, sql), b = await one(drill, sql); counts.push({ name, production: a, rebuilt: b, match: a === b }); }
+  checks.splice(checks.length - 1, 0, ['central records', `SELECT COUNT(*) AS n FROM docs WHERE user_id = '${CENTRAL}'`], ['central records checksum', `SELECT SUM(LENGTH(body)) AS n FROM docs WHERE user_id = '${CENTRAL}'`]);
+  const counts = []; for (const [name, sql] of checks) { const a = await one(env.DB, sql), b = await one(drill, sql); counts.push({ name, production: a ?? 0, rebuilt: b ?? 0, match: (a ?? 0) === (b ?? 0) }); }
+  // Configuration: every setting that does not move while the engine runs must come back with the same value.
+  const stable = (d) => [...Object.entries(d.app_settings).map(([k, v]) => 'app:' + k + '=' + v), ...Object.entries(d.mkos_settings).filter(([k]) => !CONFIG_MOVING.test(k)).map(([k, v]) => 'mk:' + k + '=' + v)].sort();
+  const cp = stable(await configDoc(env, null)), cr = new Set(stable(await configDoc(D, null))), cfgMissing = cp.filter((x) => !cr.has(x));
+  counts.push({ name: 'configuration (settings)', production: cp.length, rebuilt: cp.length - cfgMissing.length, match: !cfgMissing.length, ...(cfgMissing.length ? { differing: cfgMissing.map((x) => x.split('=')[0]).slice(0, 10) } : {}) });
   const rows = async (db) => Object.fromEntries((await db.prepare("SELECT id, version, hash FROM mk_objects WHERE id NOT LIKE 'ea.u%'").all()).results.map((r) => [r.id, r.version + '|' + r.hash]));
   const P = await rows(env.DB), R = await rows(drill);
   const missing = Object.keys(P).filter((id) => !(id in R)), extra = Object.keys(R).filter((id) => !(id in P)), differ = Object.keys(P).filter((id) => id in R && P[id] !== R[id]);

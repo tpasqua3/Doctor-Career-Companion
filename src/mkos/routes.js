@@ -15,7 +15,7 @@ import { listBlueprints, blueprintDetail, boardPlan, boardRecommendations, selec
 import { appBundle, topicContext, checkCitations, assetFlags } from './bridge.js';
 import { ttsList } from './pronounce.js';
 import { findAsset, putAssets, flagAsset, reviewAsset, assetStats } from './assets.js';
-import { durability, mirrorStep } from './mirror.js';
+import { durability, mirrorStep, persistNow } from './mirror.js';
 import { restoreStep, drillStep } from './restore.js';
 import { dashboard as pronDashboard, flag as pronFlag, approve as pronApprove, rejectCandidate, syncOwner, pronId } from './pronounce.js';
 
@@ -25,6 +25,12 @@ async function withLease(env, fn) {
   if (lease && Date.now() - lease.t < 360e3) return { skipped: 'another run is in progress; try again in a minute' };
   const id = 'op' + Math.random().toString(36).slice(2); await setSetting(env, 'tick_lease', JSON.stringify({ t: Date.now(), id }));
   try { return await fn(); } finally { const cur = J(await getSetting(env, 'tick_lease'), null); if (cur && cur.id === id) await setSetting(env, 'tick_lease', null); }
+}
+// Configuration changed: persist it to Drive now (it is already queued, so a failure here is retried by the next run).
+async function persistConfig(env, x) {
+  if (!x || !x.deps || !x.deps.mkosRoot) return null;
+  try { const r = await persistNow(env, x.deps, x.deps.mkosRoot, { only: ['config'] }); return r.skipped ? 'queued' : r.failed ? 'queued (Drive did not confirm; retried next run)' : 'confirmed'; }
+  catch (e) { return 'queued (' + String(e.message || e).slice(0, 80) + ')'; }
 }
 export async function noteMirrorError(env, e) {
   const list = J(await getSetting(env, 'mirror_errors'), []) || [];
@@ -53,9 +59,9 @@ const OPS = {
     const next = { ...(prev || {}), ...o, provenance: [...(prev?.provenance || []), { source_id: (o.source_id || prev?.source_id || 'src.owner'), method: 'owner_edit', at: nowIso(), agent: u.email }] };
     return putObject(env, next, { actor: 'owner:' + u.email, summary: String(a.summary || 'owner edit'), part: a.part || 'minor', strict: true }); } },
   set_status: { owner: true, run: async (env, u, a) => setStatus(env, String(a.id || ''), a.status, { actor: 'owner:' + u.email, replaced_by: a.replaced_by || null, reason: String(a.reason || '') }) },
-  settings: { owner: true, run: async (env, u, a) => { if (!a.path) return { error: 'path required' }; const before = fwGet(String(a.path)); await setSetting(env, 'fw:' + a.path, a.value == null ? null : JSON.stringify(a.value)); resetOverrides(); await audit(env, 'owner:' + u.email, 'setting', 'fw:' + a.path, JSON.stringify(before), JSON.stringify(a.value)); return { ok: true, path: a.path, default: before, value: a.value }; } },
+  settings: { owner: true, run: async (env, u, a, x) => { if (!a.path) return { error: 'path required' }; const before = fwGet(String(a.path)); await setSetting(env, 'fw:' + a.path, a.value == null ? null : JSON.stringify(a.value)); resetOverrides(); await audit(env, 'owner:' + u.email, 'setting', 'fw:' + a.path, JSON.stringify(before), JSON.stringify(a.value)); const persisted = await persistConfig(env, x); return { ok: true, path: a.path, default: before, value: a.value, persisted }; } },
   rescan: { owner: true, run: async (env) => { await setSetting(env, 'scan', null); return { ok: true, note: 'A full library sweep starts on the next run.' }; } },
-  pause: { owner: true, run: async (env, u, a) => { await setSetting(env, 'paused', a.on === false ? null : '1'); return { ok: true, paused: a.on !== false }; } },
+  pause: { owner: true, run: async (env, u, a, x) => { await setSetting(env, 'paused', a.on === false ? null : '1'); await persistConfig(env, x); return { ok: true, paused: a.on !== false }; } },
   requeue: { owner: true, run: async (env, u, a) => { await env.DB.prepare("UPDATE mk_jobs SET state = 'queued', tries = 0, not_before = 0 WHERE state = 'failed' AND (? = '' OR kind = ?)").bind(a.kind || '', a.kind || '').run(); return { ok: true }; } },
   tick: { owner: true, run: async (env, u, a, x) => mkTick(env, x.deps, x.roots) },
   graph_validation: { owner: true, run: async (env) => graphValidation(env) },
@@ -94,11 +100,14 @@ const OPS = {
     recommendations: (await env.DB.prepare("SELECT CASE WHEN json_extract(body, '$.decomposition.v') IS NULL THEN 'waiting' WHEN json_extract(body, '$.decomposition.ov') IS NOT version THEN 'changed' ELSE 'decomposed' END AS state, COUNT(*) AS n FROM mk_objects WHERE type = 'Recommendation' GROUP BY state").all()).results,
     classified: (await env.DB.prepare("SELECT CASE WHEN json_extract(body, '$.classification.v') IS NULL THEN 'unclassified' ELSE 'classified' END AS state, COUNT(*) AS n FROM mk_objects WHERE id NOT LIKE 'ea.u%' GROUP BY state").all()).results }) },
   // ---- Canonical storage: Drive is the system of record; D1 is rebuildable from it (mirror.js, restore.js)
-  durability: { owner: false, run: async (env) => ({ ...(await durability(env)), errors: J(await getSetting(env, 'mirror_errors'), []), drill: J(await getSetting(env, 'drill_report'), null) }) },
+  durability: { owner: false, run: async (env, u, a, x) => ({ ...(await durability(env, x && x.deps)), errors: J(await getSetting(env, 'mirror_errors'), []), drill: J(await getSetting(env, 'drill_report'), null) }) },
   // Persist to Drive now, in a larger batch than the engine's per-run slice (shares the engine's run lease, so the two never collide).
   persist: { owner: true, run: async (env, u, a, x) => withLease(env, async () => {
     try { return await mirrorStep(env, x.deps, x.deps.mkosRoot, { max: Math.max(1, Math.min(40, Number(a.max) || 20)) }); }
     catch (e) { await noteMirrorError(env, e); return { error: String(e.message || e).slice(0, 300) }; } }) },
+  // The persistence ledger: every file's queued, persisted, failed, retried and reconciled entries (newest first).
+  persistence: { owner: true, run: async (env, u, a) => ({ ledger: (await env.DB.prepare(`SELECT at, key, state, detail FROM mk_persist_log ${a.state ? 'WHERE state = ?' : ''} ORDER BY id DESC LIMIT ?`).bind(...(a.state ? [String(a.state)] : []), Math.max(1, Math.min(500, Number(a.limit) || 100))).all()).results,
+    counts_7d: (await env.DB.prepare('SELECT state, COUNT(*) AS n FROM mk_persist_log WHERE at >= ? GROUP BY state').bind(new Date(Date.now() - 7 * 864e5).toISOString()).all()).results }) },
   // The restore drill: rebuild the empty DRILL_DB from Drive alone and compare with production. One slice per call; reset starts over.
   restore_drill: { owner: true, run: async (env, u, a, x) => {
     const prog = a.reset ? {} : J(await getSetting(env, 'drill_prog'), {}) || {};

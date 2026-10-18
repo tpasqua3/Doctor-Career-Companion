@@ -66,8 +66,11 @@ async function bootstrap(env, deps, B) {
     }
     if (!st.curriculum || !st.curriculum.done) {
       st.curriculum = st.curriculum || { prog: { at: 0 } };
-      const owner = await deps.ownerDocs(['med/blueprint']);
-      try { await importCurriculum(env, FRAMEWORK.app_curriculum || [], { abimDoc: owner['med/blueprint'] || null, prog: st.curriculum.prog }); st.curriculum.done = nowIso(); }
+      // The ABIM blueprint document is a central registry record (Central Registry Data > MKOS > central); the owner's copy in his
+      // account is read only when no central copy exists yet.
+      const central = await env.DB.prepare("SELECT body FROM docs WHERE user_id = '_central' AND path = 'mkos/abim_blueprint'").first().catch(() => null);
+      const abimDoc = central ? J(central.body, null) : ((await deps.ownerDocs(['med/blueprint']))['med/blueprint'] || null);
+      try { await importCurriculum(env, FRAMEWORK.app_curriculum || [], { abimDoc, prog: st.curriculum.prog }); st.curriculum.done = nowIso(); }
       finally { await save(); }
     }
     return true;
@@ -223,7 +226,8 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
   // Canonical storage first, on its own small budget: persisting to Drive (the system of record) never waits behind other work.
   if (mirrorRoot) {
     const mm = metered(rawEnv, 120);
-    try { const m = await mirrorStep(mm.env, rawDeps, mirrorRoot, { max: 3 }); report.steps.push(`drive ${m.written} written, ${Math.max(0, m.dirty - m.written)} behind`);
+    try { const m = await mirrorStep(mm.env, rawDeps, mirrorRoot, { max: 3 }); report.steps.push(`drive ${m.written} written, ${Math.max(0, m.dirty - m.written)} behind` + (m.failed ? `, ${m.failed} failed (pending, retried next run)` : ''));
+      if (m.failed) { const l = J(await getSetting(rawEnv, 'mirror_errors'), []) || []; l.push({ at: nowIso(), error: `${m.failed} file(s) not confirmed by Drive; see the persistence ledger` }); await setSetting(rawEnv, 'mirror_errors', JSON.stringify(l.slice(-20))); }
       if (new Date().getUTCHours() === 7) await snapshot(mm.env, rawDeps, mirrorRoot); }
     catch (e) { if (!e.budget) { if (PLATFORM.test(String(e.message || e))) platformHit = true; report.steps.push('drive: ' + String(e.message || e).slice(0, 120));
       try { const l = J(await getSetting(rawEnv, 'mirror_errors'), []) || []; l.push({ at: nowIso(), error: String(e.message || e).slice(0, 300) }); await setSetting(rawEnv, 'mirror_errors', JSON.stringify(l.slice(-20))); } catch (x) { /* best effort */ } } }

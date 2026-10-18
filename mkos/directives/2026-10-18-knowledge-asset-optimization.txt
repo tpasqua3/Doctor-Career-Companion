@@ -1,0 +1,293 @@
+MKOS Knowledge Asset Optimization Directive
+
+Purpose
+
+Following completion of the source audit, perform an educational-source audit, indexing pass, ontology mapping pass, and knowledge-object generation pass.
+
+The goal is to maximize deterministic retrieval, minimize AI dependence, reduce token costs, improve response latency, improve consistency, increase auditability, and maintain full rebuildability from Central Registry Data.
+
+Audit Requirements
+
+For each source category report:
+
+1. Files discovered
+2. Files registered
+3. Files indexed
+4. Files mapped
+5. Files pending
+6. Failed jobs
+7. Last update date
+8. Source version status
+9. Extraction status
+10. Knowledge-object generation status
+11. Graph-link status
+12. Curriculum-link status
+
+Categories
+
+- Guidelines
+- MKSAP
+- Textbooks
+- ABIM Blueprint Sources
+- CERT Sources
+- LKA Sources
+- ACP Educational Content
+- Educational Assets
+- Other Registered Sources
+
+Educational Source Processing
+
+For MKSAP and textbooks create a structured indexing pipeline.
+
+Generate:
+
+- Source ID
+- Source Version
+- Source Category
+- Chapter ID
+- Section ID
+- Topic ID
+- Concept ID
+- Specialty Mapping
+- Competency Mapping
+- Blueprint Mapping
+- Curriculum Mapping
+- Relationship Mapping
+- Evidence Mapping
+- Provenance Records
+- Citation Records
+
+All entities must be versioned and traceable to a source location.
+
+Knowledge Object Expansion
+
+For every identified topic generate normalized knowledge objects.
+
+Potential object categories include:
+
+- disease objects
+- diagnosis objects
+- treatment objects
+- medication objects
+- procedure objects
+- monitoring objects
+- prevention objects
+- epidemiology objects
+- pathophysiology objects
+- risk stratification objects
+- scoring system objects
+- diagnostic criteria objects
+- management algorithm objects
+- board-relevant concepts
+- educational concepts
+- learning objective candidates
+- competency-linked concepts
+- prerequisite concepts
+
+Knowledge objects should reference source locations and source provenance.
+
+Do not store large-scale narrative textbook content.
+
+Store structured concepts, entities, relationships, metadata, mappings, and citations.
+
+Ontology Expansion
+
+Every generated knowledge object must map into the MKOS ontology.
+
+Generate:
+
+- parent concepts
+- child concepts
+- synonym mappings
+- prerequisite mappings
+- related concepts
+- competency mappings
+- specialty mappings
+- blueprint mappings
+- assessment mappings
+
+Graph Expansion
+
+Automatically create:
+
+- prerequisite links
+- disease links
+- diagnostic links
+- therapeutic links
+- medication links
+- procedure links
+- pathophysiology links
+- competency links
+- blueprint links
+- curriculum links
+- educational links
+
+The resulting graph must support deterministic retrieval without requiring AI generation.
+
+Retrieval-First Architecture
+
+Whenever the following are requested:
+
+- curriculum generation
+- lesson generation
+- flashcard generation
+- question generation
+- tutoring
+- explanations
+- board review
+- competency assessment
+- learning pathway generation
+
+Attempt retrieval in the following order:
+
+1. Knowledge Objects
+2. Ontology Objects
+3. Knowledge Graph Relationships
+4. MKSAP Index
+5. Guideline Objects
+6. Blueprint Objects
+7. Educational Assets
+8. Source Registries
+
+Only invoke AI when:
+
+- required information is unavailable
+- synthesis is required
+- personalization is required
+- educational adaptation is required
+- explanation depth exceeds stored assets
+
+AI should enhance retrieval, not replace retrieval.
+
+Deterministic Engine Priority
+
+Implement the same architectural principles currently used across Language Tutor, Chef App, LifeOS, and future USAP development:
+
+Database First
+Ontology First
+Knowledge Graph First
+Deterministic Retrieval First
+AI Last
+
+Before invoking premium AI:
+
+1. search registries
+2. search ontology
+3. search knowledge graph
+4. search knowledge objects
+5. search blueprint mappings
+6. search educational assets
+
+Only escalate when confidence falls below established thresholds.
+
+MKSAP Integration
+
+For every MKSAP chapter, educational objective, topic, case, and question collection:
+
+Generate:
+
+- chapter entities
+- topic entities
+- objective entities
+- concept entities
+- blueprint mappings
+- competency mappings
+- ontology mappings
+
+Create bidirectional associations between:
+
+Guidelines ↔ Knowledge Objects
+
+Knowledge Objects ↔ MKSAP Topics
+
+MKSAP Topics ↔ Curriculum Objectives
+
+Curriculum Objectives ↔ Assessments
+
+Blueprint Topics ↔ Knowledge Objects
+
+Blueprint Topics ↔ MKSAP Topics
+
+The system should understand:
+
+- which guideline supports a concept
+- which MKSAP resource teaches it
+- which blueprint evaluates it
+- which curriculum objective depends on it
+- which assessments measure mastery
+
+Textbook Integration
+
+Textbooks remain index-first and ontology-linked.
+
+Generate:
+
+- source records
+- chapter records
+- section records
+- concept records
+- ontology mappings
+- blueprint mappings
+- curriculum mappings
+- specialty mappings
+
+Do not reproduce textbook chapters.
+
+Do not create narrative copies of textbook content.
+
+Instead create:
+
+- topic indexes
+- concept indexes
+- ontology links
+- graph links
+- curriculum links
+- blueprint links
+- citation links
+
+Optimization Goal
+
+Transform educational resources into structured retrieval assets.
+
+The objective is not to store copies of educational resources.
+
+The objective is to construct a medical knowledge graph and ontology system that allows retrieval of normalized knowledge objects before AI generation is considered.
+
+Success Criteria
+
+When a user requests education on a topic:
+
+Retrieve:
+
+- knowledge objects
+- graph relationships
+- guideline-derived concepts
+- MKSAP mappings
+- blueprint mappings
+- curriculum objectives
+- existing educational assets
+
+before invoking AI.
+
+The ideal workflow becomes:
+
+Source Documents
+→ Source Registry
+→ Ontology
+→ Knowledge Objects
+→ Knowledge Graph
+→ Curriculum
+→ Educational Assets
+→ Assessments
+→ Mastery Tracking
+
+All generated entities must remain:
+- versioned
+- auditable
+- traceable
+- reproducible
+- portable
+- source-linked
+- rebuildable from Central Registry Data
+
+The end goal is a retrieval-first educational platform where AI serves primarily as a personalization, teaching, synthesis, and adaptation layer rather than the primary source of knowledge generation.

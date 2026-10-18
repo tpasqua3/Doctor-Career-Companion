@@ -166,6 +166,29 @@ it. Owner: `restore {mode: verify}` compares the Drive manifest with the databas
 the database from Drive (resumable; never replaces newer data). Learner state and a learner's own material live in that account's
 own Drive folder.
 
+**Configuration and central records.** `config/configuration.json` holds every setting that is not run state: the AI order of
+operations (as built and as the owner adjusted it, with the model variables), framework overrides (`fw:*`), engine, ingestion,
+cutover and persistence settings, and the site's own pages. New settings persist by default; credentials (the Google connection,
+API keys) never do. `central/` holds the central registry records that belong to no account (Data Domain Separation): the
+pronunciation registry and its change log with their daily copies, and the ABIM blueprint document the curriculum was built from.
+In the database they live under the reserved holder `_central`; the owner edits them in the app exactly as before (the worker
+resolves his copy of `med/says`, `med/saylog` and `bak/says-*` to the central one), everyone else's list stays in their account, and
+deleting an account never touches them. The shared sources registry reaches the app from MKOS (`app_bundle.registry`), so accounts
+cache only entries for files MKOS does not know. Restore and the drill bring both back and compare them.
+
+**Pending persistence (sync requirement).** A changed file is queued the first time its fingerprint moves and stays pending until
+Drive itself confirms the write (the size and MD5 Drive reports for the upload must match what was sent). Refused or unconfirmed
+writes are recorded and retried by every run; a configuration or central-record change is also persisted straight away
+(`persistNow`). The ledger (`mk_persist_log`, and `governance/persistence_<month>.json` in Drive) records queued, persisted, failed,
+retried and reconciled states; owner op `persistence` lists it, `durability` reports pending files and the oldest pending age.
+
+**Daily verification.** The reconciliation's canonical step checks that Drive exists (every folder listed, every file the database
+believes is there found, missing ones rewritten), is current (manifest read back, nothing pending over an hour, else a
+`persistence_overdue` event) and matches the database (object files by row count, configuration and central records by content
+hash); differing files are rewritten and logged as reconciled.
+
+Governing directives are kept in `mkos/directives/`.
+
 ## Clinical pearls (decompose.js, decomposition.json "pearls")
 
 Pearls are durable governed assets in the pearl registry (`eo.pe.<concept>.<n>`): generated once by the free AI, pending validation

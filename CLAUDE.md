@@ -31,6 +31,10 @@ intelligence, confidence, blueprint, pronunciation, curriculum and competency la
 - In the app, the MKOS layer is the block headed "MKOS: the app's knowledge and learning operating system" in `app/companion.html`
   (`mk()`, `mkLoad()`, `mkTopic()`, `mkBlock()`, the MKOS cards and the Knowledge tab). Generation, the tutor, the planner weights,
   citation checks and the device voice read from it. Server operations for the app live in `src/mkos/bridge.js` and `routes.js`.
+- Drive is MKOS's memory and D1 its working copy (directives in `mkos/directives/`): every durable change, configuration
+  included, is queued and stays pending until Drive confirms it (`src/mkos/mirror.js`); restore and the drill bring it back. Shared
+  knowledge is never kept in an account: the owner's pronunciation list, its log and the ABIM blueprint document are central records
+  (`_central`, see `homeOf()` in `src/worker.js`). A new setting persists by default; never write credentials to Drive.
 - Knowledge extracted from the library never goes into this repository (it is public; MKSAP and textbooks are licensed).
 
 ## AI order of operations
