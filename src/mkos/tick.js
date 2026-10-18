@@ -197,7 +197,7 @@ async function learnerWatch(env, deps) {
   seen[u.user_id] = u.updated; await setSetting(env, 'learner_watch', JSON.stringify(seen));
 }
 
-export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot } = {}) {
+export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 880 } = {}) {
   await mkInit(rawEnv);
   const tickSt = J(await getSetting(rawEnv, 'tick'), {}) || {};
   if (tickSt.capped && Date.now() - Date.parse(tickSt.capped_at || 0) > 864e5) tickSt.capped = false;   // a platform cap is re-tested daily
@@ -206,7 +206,8 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot } = {}) {
   const lease = J(await getSetting(rawEnv, 'tick_lease'), null);
   if (lease && Date.now() - lease.t < 120e3) return { skipped: 'another run is in progress' };
   const leaseId = Math.random().toString(36).slice(2); await setSetting(rawEnv, 'tick_lease', JSON.stringify({ t: Date.now(), id: leaseId }));
-  const budget = Math.max(25, Math.min(880, Number(tickSt.budget) || 30));
+  // Cloudflare allows 1,000 queries per invocation; a run that shares its invocation with other work (the cron's Drive sweep) gets less.
+  const budget = Math.max(25, Math.min(maxBudget, Number(tickSt.budget) || 30));
   const { env, meter, tick } = metered(rawEnv, budget);
   // Queries the Worker makes on MKOS's behalf (learner records) count against the same budget.
   const deps = { ...rawDeps };
@@ -253,7 +254,10 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot } = {}) {
   // Self-tuning: grow 25% after a clean run that used its budget; drop to a safe 28 after a platform limit.
   const next = platformHit ? 28 : meter.n >= budget && !tickSt.capped ? Math.round(budget * 1.25) : budget;
   report.used = meter.n;
-  await setSetting(rawEnv, 'tick', JSON.stringify({ budget: next, capped: platformHit || tickSt.capped || false, capped_at: platformHit ? nowIso() : tickSt.capped_at || null, last: report }));
-  const cur = J(await getSetting(rawEnv, 'tick_lease'), null); if (cur && cur.id === leaseId) await setSetting(rawEnv, 'tick_lease', null);
+  try {
+    await setSetting(rawEnv, 'tick', JSON.stringify({ budget: next, capped: platformHit || tickSt.capped || false, capped_at: platformHit ? nowIso() : tickSt.capped_at || null, last: report }));
+  } finally {
+    try { const cur = J(await getSetting(rawEnv, 'tick_lease'), null); if (cur && cur.id === leaseId) await setSetting(rawEnv, 'tick_lease', null); } catch (e) { /* the lease expires by itself */ }
+  }
   return report;
 }

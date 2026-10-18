@@ -1452,7 +1452,7 @@ function mkDeps(env) {
   };
 }
 async function mkTickSafe(env) {
-  try { await init(env); await driveState(env); if (!DRIVE.mode) return; await mkTick(env, mkDeps(env), mkRoots(env)); }
+  try { await init(env); await driveState(env); if (!DRIVE.mode) return; await mkTick(env, mkDeps(env), { ...mkRoots(env), maxBudget: 600 }); }
   catch (e) { console.error('mkos', e); }
 }
 
