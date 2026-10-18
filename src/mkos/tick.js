@@ -225,8 +225,10 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
   let platformHit = false;
   // Canonical storage first, on its own small budget: persisting to Drive (the system of record) never waits behind other work.
   if (mirrorRoot) {
-    const mm = metered(rawEnv, 120);
-    try { const m = await mirrorStep(mm.env, rawDeps, mirrorRoot, { max: 3 }); report.steps.push(`drive ${m.written} written, ${Math.max(0, m.dirty - m.written)} behind` + (m.failed ? `, ${m.failed} failed (pending, retried next run)` : ''));
+    // Up to 8 files a run (about 7 queries each): during bootstrap and ingestion many files change every run, and every change must
+    // reach Drive within the hour the daily check allows.
+    const mm = metered(rawEnv, 160);
+    try { const m = await mirrorStep(mm.env, rawDeps, mirrorRoot, { max: 8 }); report.steps.push(`drive ${m.written} written, ${Math.max(0, m.dirty - m.written)} behind` + (m.failed ? `, ${m.failed} failed (pending, retried next run)` : ''));
       if (m.failed) { const l = J(await getSetting(rawEnv, 'mirror_errors'), []) || []; l.push({ at: nowIso(), error: `${m.failed} file(s) not confirmed by Drive; see the persistence ledger` }); await setSetting(rawEnv, 'mirror_errors', JSON.stringify(l.slice(-20))); }
       if (new Date().getUTCHours() === 7) await snapshot(mm.env, rawDeps, mirrorRoot); }
     catch (e) { if (!e.budget) { if (PLATFORM.test(String(e.message || e))) platformHit = true; report.steps.push('drive: ' + String(e.message || e).slice(0, 120));
