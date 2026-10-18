@@ -9,6 +9,7 @@ import { putObject } from './kb.js';
 import { queue } from './ingest.js';
 import { auditAssets } from './assets.js';
 import { durability } from './mirror.js';
+import { restoreStep } from './restore.js';
 import { pearlAudit } from './decompose.js';
 
 const R = FRAMEWORK.frameworks.decomposition.reconciliation, DV = Number(FRAMEWORK.frameworks.decomposition.decomposition.rules_version) || 100;
@@ -110,9 +111,24 @@ const STEPS = [
     rep.propagation = { impact_requeued: results.length };
     return true;
   }],
-  ['canonical', async (env, p, rep) => {
-    // Canonical storage: how far the Drive system of record is behind the database (it catches up a few files every run).
+  ['canonical', async (env, p, rep, deps) => {
+    // Canonical storage, verified against Drive itself: read manifest.json back from the MKOS folder, compare what it says each file
+    // holds with the database, and send every file that is missing or out of date back to be rewritten (repair). Also how far Drive is
+    // behind, and the write errors of the last day.
     rep.canonical = await durability(env);
+    const errs = (J(await getSetting(env, 'mirror_errors'), []) || []).filter((e) => Date.now() - Date.parse(e.at) < 864e5);
+    rep.canonical.write_errors_24h = errs.length; if (errs.length) rep.canonical.last_error = errs[errs.length - 1];
+    if (deps && deps.mkosRoot && deps.readMine && deps.list) {
+      try {
+        const v = await restoreStep(env, deps, deps.mkosRoot, {}, { mode: 'verify' });
+        if (v.error) rep.canonical.verify = { error: v.error };
+        else {
+          const redo = [...v.differences.map((d) => d.file), ...v.not_yet_persisted];
+          for (const k of redo) await env.DB.prepare('DELETE FROM mk_mirror WHERE key = ?').bind('fp:' + k).run();
+          rep.canonical.verify = { manifest_written: v.manifest_written, files: v.files, object_files_matching: v.object_files_matching, sent_back_for_rewrite: redo.length, differences: v.differences.slice(0, 10) };
+        }
+      } catch (e) { rep.canonical.verify = { error: String(e.message || e).slice(0, 200) }; }
+    }
     return true;
   }],
   ['integrity', async (env, p, rep) => {
@@ -130,7 +146,7 @@ export async function reconcileStep(env, deps, p) {
   p.rep = p.rep || { started: nowIso() }; p.step = p.step || 0;
   while (p.step < STEPS.length) {
     const [name, fn] = STEPS[p.step];
-    const done = await fn(env, p, p.rep);
+    const done = await fn(env, p, p.rep, deps);
     if (!done) return false;
     p.step++;
   }

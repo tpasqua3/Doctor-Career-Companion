@@ -5,7 +5,7 @@
 // It never replaces a newer row with an older one (objects keep whichever 'updated' is later; versions, edges, content and table rows are
 // inserted only when absent), so it is safe on an empty database and on a live one. Resumable: prog keeps the file and row position.
 // Learner state is not part of canonical knowledge: it is rebuilt from each account's own record by the engine's learner jobs.
-import { J, nowIso, audit } from './db.js';
+import { J, nowIso, audit, TABLES } from './db.js';
 import { contentHash, indexAliases, norm } from './kb.js';
 import { queue } from './ingest.js';
 
@@ -88,4 +88,41 @@ export async function restoreStep(env, deps, root, prog, { mode = 'restore', row
     await queue(env, 'classify', 'all', {}, 5); await queue(env, 'reconcile', 'restore:' + nowIso(), {}, 3);
   }
   return { done, mode, file: prog.at, of: prog.files.length, counts: prog.counts };
+}
+
+/* THE RESTORE DRILL: rebuild an empty database (DRILL_DB) from Drive alone, then compare it with production object by object.
+   One slice per call; prog is kept by the caller. Phases: reset -> restore -> compare. */
+export async function drillStep(env, drill, deps, root, prog) {
+  if (!drill) return { done: true, error: 'DRILL_DB is not bound' };
+  const D = { DB: drill };
+  if (!prog.phase) {
+    await drill.batch(TABLES.map((s) => drill.prepare(s)));
+    const names = (await drill.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'mk_%'").all()).results.map((r) => r.name);
+    await drill.batch(names.map((n) => drill.prepare(`DELETE FROM ${n}`)));
+    prog.phase = 'restore'; prog.restore = {}; prog.started = nowIso();
+    return { done: false, phase: 'reset', tables: names.length };
+  }
+  if (prog.phase === 'restore') {
+    const r = await restoreStep(D, deps, root, prog.restore, { mode: 'drill', rowsPerStep: 500 });
+    if (r.error) return { done: true, error: r.error };
+    if (!r.done) return { done: false, phase: 'restore', file: r.file, of: r.of };
+    prog.phase = 'compare'; return { done: false, phase: 'restore', file: r.file, of: r.of, counts: r.counts };
+  }
+  // Compare: every count, and every object's id, version and content hash.
+  const one = async (db, sql) => ((await db.prepare(sql).first()) || {}).n;
+  const checks = [['objects', "SELECT COUNT(*) AS n FROM mk_objects WHERE id NOT LIKE 'ea.u%'"], ['versions', "SELECT COUNT(*) AS n FROM mk_versions v WHERE v.id NOT LIKE 'ea.u%' AND EXISTS (SELECT 1 FROM mk_objects o WHERE o.id = v.id)"],
+    ['relationships', 'SELECT COUNT(*) AS n FROM mk_edges'], ['relationship checksum', 'SELECT SUM(LENGTH(src) * 7 + LENGTH(rel) * 3 + LENGTH(dst) + CAST(conf AS INTEGER)) AS n FROM mk_edges'],
+    ['asset content', "SELECT COUNT(DISTINCT asset_id) AS n FROM mk_asset_store WHERE asset_id LIKE 'ea.s.%'"], ['blueprint registries', 'SELECT COUNT(*) AS n FROM mk_blueprint_registries'],
+    ['blueprint domains', 'SELECT COUNT(*) AS n FROM mk_blueprint_domains'], ['blueprint objectives', 'SELECT COUNT(*) AS n FROM mk_blueprint_objectives'], ['blueprint concept mappings', 'SELECT COUNT(*) AS n FROM mk_blueprint_concept_mappings'],
+    ['reviews', 'SELECT COUNT(*) AS n FROM mk_reviews'], ['aliases', 'SELECT COUNT(*) AS n FROM mk_aliases']];
+  const counts = []; for (const [name, sql] of checks) { const a = await one(env.DB, sql), b = await one(drill, sql); counts.push({ name, production: a, rebuilt: b, match: a === b }); }
+  const rows = async (db) => Object.fromEntries((await db.prepare("SELECT id, version, hash FROM mk_objects WHERE id NOT LIKE 'ea.u%'").all()).results.map((r) => [r.id, r.version + '|' + r.hash]));
+  const P = await rows(env.DB), R = await rows(drill);
+  const missing = Object.keys(P).filter((id) => !(id in R)), extra = Object.keys(R).filter((id) => !(id in P)), differ = Object.keys(P).filter((id) => id in R && P[id] !== R[id]);
+  const byType = {}; for (const id of [...missing, ...differ]) { const t = id.split('.')[0]; byType[t] = (byType[t] || 0) + 1; }
+  const report = { finished: nowIso(), started: prog.started, pass: counts.filter((c) => c.name !== 'aliases').every((c) => c.match) && !missing.length && !extra.length && !differ.length,
+    counts, objects_compared: Object.keys(P).length, missing_in_rebuild: missing.length, extra_in_rebuild: extra.length, content_differs: differ.length, problem_prefixes: byType,
+    samples: { missing: missing.slice(0, 10), differs: differ.slice(0, 10) }, restored: prog.restore.counts };
+  prog.phase = 'done';
+  return { done: true, report };
 }

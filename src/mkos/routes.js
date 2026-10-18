@@ -15,9 +15,21 @@ import { listBlueprints, blueprintDetail, boardPlan, boardRecommendations, selec
 import { appBundle, topicContext, checkCitations, assetFlags } from './bridge.js';
 import { ttsList } from './pronounce.js';
 import { findAsset, putAssets, flagAsset, reviewAsset, assetStats } from './assets.js';
-import { durability } from './mirror.js';
-import { restoreStep } from './restore.js';
+import { durability, mirrorStep } from './mirror.js';
+import { restoreStep, drillStep } from './restore.js';
 import { dashboard as pronDashboard, flag as pronFlag, approve as pronApprove, rejectCandidate, syncOwner, pronId } from './pronounce.js';
+
+// The engine's run lease (tick.js): one writer at a time.
+async function withLease(env, fn) {
+  const lease = J(await getSetting(env, 'tick_lease'), null);
+  if (lease && Date.now() - lease.t < 360e3) return { skipped: 'another run is in progress; try again in a minute' };
+  const id = 'op' + Math.random().toString(36).slice(2); await setSetting(env, 'tick_lease', JSON.stringify({ t: Date.now(), id }));
+  try { return await fn(); } finally { const cur = J(await getSetting(env, 'tick_lease'), null); if (cur && cur.id === id) await setSetting(env, 'tick_lease', null); }
+}
+export async function noteMirrorError(env, e) {
+  const list = J(await getSetting(env, 'mirror_errors'), []) || [];
+  list.push({ at: nowIso(), error: String((e && e.message) || e).slice(0, 300) }); await setSetting(env, 'mirror_errors', JSON.stringify(list.slice(-20)));
+}
 
 const OPS = {
   // ---- open to every account
@@ -82,7 +94,19 @@ const OPS = {
     recommendations: (await env.DB.prepare("SELECT CASE WHEN json_extract(body, '$.decomposition.v') IS NULL THEN 'waiting' WHEN json_extract(body, '$.decomposition.ov') IS NOT version THEN 'changed' ELSE 'decomposed' END AS state, COUNT(*) AS n FROM mk_objects WHERE type = 'Recommendation' GROUP BY state").all()).results,
     classified: (await env.DB.prepare("SELECT CASE WHEN json_extract(body, '$.classification.v') IS NULL THEN 'unclassified' ELSE 'classified' END AS state, COUNT(*) AS n FROM mk_objects WHERE id NOT LIKE 'ea.u%' GROUP BY state").all()).results }) },
   // ---- Canonical storage: Drive is the system of record; D1 is rebuildable from it (mirror.js, restore.js)
-  durability: { owner: false, run: async (env) => durability(env) },
+  durability: { owner: false, run: async (env) => ({ ...(await durability(env)), errors: J(await getSetting(env, 'mirror_errors'), []), drill: J(await getSetting(env, 'drill_report'), null) }) },
+  // Persist to Drive now, in a larger batch than the engine's per-run slice (shares the engine's run lease, so the two never collide).
+  persist: { owner: true, run: async (env, u, a, x) => withLease(env, async () => {
+    try { return await mirrorStep(env, x.deps, x.deps.mkosRoot, { max: Math.max(1, Math.min(40, Number(a.max) || 20)) }); }
+    catch (e) { await noteMirrorError(env, e); return { error: String(e.message || e).slice(0, 300) }; } }) },
+  // The restore drill: rebuild the empty DRILL_DB from Drive alone and compare with production. One slice per call; reset starts over.
+  restore_drill: { owner: true, run: async (env, u, a, x) => {
+    const prog = a.reset ? {} : J(await getSetting(env, 'drill_prog'), {}) || {};
+    if (prog.phase === 'done' && !a.reset) return { done: true, report: J(await getSetting(env, 'drill_report'), null) };
+    const r = await drillStep(env, env.DRILL_DB, x.deps, x.deps.mkosRoot, prog);
+    await setSetting(env, 'drill_prog', JSON.stringify(prog));
+    if (r.report) { await setSetting(env, 'drill_report', JSON.stringify(r.report)); await audit(env, 'owner:' + u.email, 'restore_drill', null, null, r.report.pass ? 'pass' : 'fail', { counts: r.report.counts, missing: r.report.missing_in_rebuild, differs: r.report.content_differs }); }
+    return r; } },
   restore: { owner: true, run: async (env, u, a, x) => {
     if (a.mode === 'verify' || !a.mode) return restoreStep(env, x.deps, x.deps.mkosRoot, {}, { mode: 'verify' });
     if (a.mode === 'restore' && a.confirm === true) { await queue(env, 'restore', 'drive:' + nowIso(), { mode: 'restore' }, 1); return { queued: true, note: 'The database is being rebuilt from the Drive MKOS folder over the next runs; nothing newer in the database is overwritten.' }; }
@@ -111,6 +135,6 @@ export async function mkosApi(request, env, url, user, body, x) {
 }
 
 export const MKOS_TOOLS = [
-  { name: 'mkos', description: 'The Medical Knowledge Operating System (MKOS): the app\'s structured knowledge base (sources, guidelines, concepts, recommendations, evidence, blueprint, curriculum) and this physician\'s learner state. `op` is one of: status, search {q, type, specialty, include_history}, object {id, history, neighbors}, context {id} (the governed teaching package for a concept: current recommendations with citations, board mapping, facets), route {q} (answers from the lowest-cost authoritative layer and says which), learner {level}, plan (what to teach, review, assess, reinforce, remediate, prioritize, delay), refresh_me, framework. pronunciation {term}. Educational assets (retrieve first, generate only when needed): asset_find {kind: lesson|question|flashcard, tid, name, len, level, n, exclude, personal} (a current, validated, guideline-current stored asset, or the reason to generate), asset_put {kind, tid, name, len|level, personal, local_id, validated, generated_by, reviewed_by, sources, content | items} (validate and store a generated asset), asset_flag {id, reason} (also clinical pearls), asset_stats. Owner: asset_review {id, result: ok|regenerate|retire} (assets and clinical pearls: ok validates, regenerate = failed validation). decomposition (counts of objectives, teaching points, targets and criteria; decomposition and classification progress). Owner: reconcile {run} (queue the daily reconciliation now; returns the last report). durability (how far the Drive system of record is behind the database). Owner: restore {mode: verify} (compare the Drive manifest with the database) or restore {mode: restore, confirm: true} (rebuild the database from Drive). Owner only: pron_dashboard, pron_flag {term, source_system} (Mark Pronunciation Incorrect: records it and generates ranked candidates), pron_approve {term, index | simplified, ipa, lock}, pron_reject {term, index}, pron_sync, events, jobs, audit {id}, review {id, result, note}, edit {object, summary}, set_status {id, status, replaced_by, reason}, settings {path, value}, rescan, requeue {kind}, tick, graph_validation, compat_registry, cutover_validate, cutover_retire {confirm}, cutover_rollback.',
+  { name: 'mkos', description: 'The Medical Knowledge Operating System (MKOS): the app\'s structured knowledge base (sources, guidelines, concepts, recommendations, evidence, blueprint, curriculum) and this physician\'s learner state. `op` is one of: status, search {q, type, specialty, include_history}, object {id, history, neighbors}, context {id} (the governed teaching package for a concept: current recommendations with citations, board mapping, facets), route {q} (answers from the lowest-cost authoritative layer and says which), learner {level}, plan (what to teach, review, assess, reinforce, remediate, prioritize, delay), refresh_me, framework. pronunciation {term}. Educational assets (retrieve first, generate only when needed): asset_find {kind: lesson|question|flashcard, tid, name, len, level, n, exclude, personal} (a current, validated, guideline-current stored asset, or the reason to generate), asset_put {kind, tid, name, len|level, personal, local_id, validated, generated_by, reviewed_by, sources, content | items} (validate and store a generated asset), asset_flag {id, reason} (also clinical pearls), asset_stats. Owner: asset_review {id, result: ok|regenerate|retire} (assets and clinical pearls: ok validates, regenerate = failed validation). decomposition (counts of objectives, teaching points, targets and criteria; decomposition and classification progress). Owner: reconcile {run} (queue the daily reconciliation now; returns the last report). durability (how far the Drive system of record is behind the database, recent write errors, the last restore drill). Owner: persist {max} (write to Drive now), restore_drill {reset} (rebuild an empty database from Drive and compare with production; call until done). Owner: restore {mode: verify} (compare the Drive manifest with the database) or restore {mode: restore, confirm: true} (rebuild the database from Drive). Owner only: pron_dashboard, pron_flag {term, source_system} (Mark Pronunciation Incorrect: records it and generates ranked candidates), pron_approve {term, index | simplified, ipa, lock}, pron_reject {term, index}, pron_sync, events, jobs, audit {id}, review {id, result, note}, edit {object, summary}, set_status {id, status, replaced_by, reason}, settings {path, value}, rescan, requeue {kind}, tick, graph_validation, compat_registry, cutover_validate, cutover_retire {confirm}, cutover_rollback.',
     inputSchema: { type: 'object', properties: { op: { type: 'string' }, args: { type: 'object' } }, required: ['op'] }, annotations: { readOnlyHint: false, destructiveHint: false } },
 ];

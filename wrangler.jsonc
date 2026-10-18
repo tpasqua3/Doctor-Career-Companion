@@ -9,7 +9,8 @@
   "keep_vars": true,
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*", "/voice/hf/*", "/voice/ort/*", "/privacy.html", "/terms.html", "/privacy", "/terms"] },
   // No database_id: wrangler creates the database on the first deploy and reuses it afterwards.
-  "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }],
+  // DRILL_DB: an empty database used only to prove MKOS can be rebuilt from Google Drive (the restore drill); the app never reads it.
+  "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }, { "binding": "DRILL_DB", "database_name": "mkos-restore-drill", "database_id": "92faf66e-4071-463d-ac3e-3ad51cf8a4f8" }],
   // The website's AI. Three services, each on when its setting is there: Gemini (GEMINI_API_KEY secret), Claude (ANTHROPIC_API_KEY
   // secret) and Cloudflare Workers AI (this binding). The app picks one; the others take over when it is over its limit.
   "ai": { "binding": "AI" },
