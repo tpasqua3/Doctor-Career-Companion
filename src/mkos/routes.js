@@ -14,6 +14,7 @@ import { FRAMEWORK, FRAMEWORK_HASH } from './framework.js';
 import { listBlueprints, blueprintDetail, boardPlan, boardRecommendations, select as selectBlueprint, selection as bpSelection, scoresFor } from './blueprint.js';
 import { appBundle, topicContext, checkCitations, assetFlags } from './bridge.js';
 import { ttsList } from './pronounce.js';
+import { findAsset, putAssets, flagAsset, reviewAsset, assetStats } from './assets.js';
 import { dashboard as pronDashboard, flag as pronFlag, approve as pronApprove, rejectCandidate, syncOwner, pronId } from './pronounce.js';
 
 const OPS = {
@@ -67,6 +68,12 @@ const OPS = {
   check_citations: { owner: false, run: async (env, u, a) => checkCitations(env, Array.isArray(a.citations) ? a.citations.slice(0, 40) : []) },
   asset_flags: { owner: false, run: async (env, u) => assetFlags(env, u) },
   pron_tts: { owner: false, run: async (env) => ({ list: await ttsList(env) }) },
+  // ---- Educational assets as governed MKOS objects: retrieve first, generate only when needed (assets.js)
+  asset_find: { owner: false, run: async (env, u, a) => findAsset(env, u, a) },
+  asset_put: { owner: false, run: async (env, u, a) => putAssets(env, u, a) },
+  asset_flag: { owner: false, run: async (env, u, a, x) => flagAsset(env, u, a, x.owner) },
+  asset_stats: { owner: false, run: async (env, u, a, x) => assetStats(env, u, x.owner) },
+  asset_review: { owner: true, run: async (env, u, a) => reviewAsset(env, u, a) },
   framework: { owner: false, run: async () => ({ framework_hash: FRAMEWORK_HASH, versions: Object.fromEntries(Object.entries(FRAMEWORK.frameworks).map(([k, v]) => [k, v.version])), ontology: FRAMEWORK.frameworks.ontology }) },
 };
 
@@ -89,6 +96,6 @@ export async function mkosApi(request, env, url, user, body, x) {
 }
 
 export const MKOS_TOOLS = [
-  { name: 'mkos', description: 'The Medical Knowledge Operating System (MKOS): the app\'s structured knowledge base (sources, guidelines, concepts, recommendations, evidence, blueprint, curriculum) and this physician\'s learner state. `op` is one of: status, search {q, type, specialty, include_history}, object {id, history, neighbors}, context {id} (the governed teaching package for a concept: current recommendations with citations, board mapping, facets), route {q} (answers from the lowest-cost authoritative layer and says which), learner {level}, plan (what to teach, review, assess, reinforce, remediate, prioritize, delay), refresh_me, framework. pronunciation {term}. Owner only: pron_dashboard, pron_flag {term, source_system} (Mark Pronunciation Incorrect: records it and generates ranked candidates), pron_approve {term, index | simplified, ipa, lock}, pron_reject {term, index}, pron_sync, events, jobs, audit {id}, review {id, result, note}, edit {object, summary}, set_status {id, status, replaced_by, reason}, settings {path, value}, rescan, requeue {kind}, tick, graph_validation, compat_registry, cutover_validate, cutover_retire {confirm}, cutover_rollback.',
+  { name: 'mkos', description: 'The Medical Knowledge Operating System (MKOS): the app\'s structured knowledge base (sources, guidelines, concepts, recommendations, evidence, blueprint, curriculum) and this physician\'s learner state. `op` is one of: status, search {q, type, specialty, include_history}, object {id, history, neighbors}, context {id} (the governed teaching package for a concept: current recommendations with citations, board mapping, facets), route {q} (answers from the lowest-cost authoritative layer and says which), learner {level}, plan (what to teach, review, assess, reinforce, remediate, prioritize, delay), refresh_me, framework. pronunciation {term}. Educational assets (retrieve first, generate only when needed): asset_find {kind: lesson|question|flashcard, tid, name, len, level, n, exclude, personal} (a current, validated, guideline-current stored asset, or the reason to generate), asset_put {kind, tid, name, len|level, personal, local_id, validated, generated_by, reviewed_by, sources, content | items} (validate and store a generated asset), asset_flag {id, reason}, asset_stats. Owner: asset_review {id, result: ok|regenerate|retire}. Owner only: pron_dashboard, pron_flag {term, source_system} (Mark Pronunciation Incorrect: records it and generates ranked candidates), pron_approve {term, index | simplified, ipa, lock}, pron_reject {term, index}, pron_sync, events, jobs, audit {id}, review {id, result, note}, edit {object, summary}, set_status {id, status, replaced_by, reason}, settings {path, value}, rescan, requeue {kind}, tick, graph_validation, compat_registry, cutover_validate, cutover_retire {confirm}, cutover_rollback.',
     inputSchema: { type: 'object', properties: { op: { type: 'string' }, args: { type: 'object' } }, required: ['op'] }, annotations: { readOnlyHint: false, destructiveHint: false } },
 ];

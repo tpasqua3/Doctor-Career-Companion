@@ -1,0 +1,60 @@
+{
+  "id": "framework.assets",
+  "version": "1.0.0",
+  "status": "current",
+  "created_date": "2026-10-18",
+  "updated_date": "2026-10-18",
+  "change_log": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-18",
+      "summary": "Educational assets as governed MKOS objects: retrieve first, generate only when needed."
+    }
+  ],
+  "title": "Educational asset governance: retrieve first, generate only when needed",
+  "principle": "Educational assets (lessons, audio lessons, questions, flashcards, board review content and future kinds) are first-class MKOS objects: generated once, validated, versioned, stored and reused while they stay guideline-current. Knowledge Objects -> Educational Assets -> asset exists? yes: reuse; no: generate -> validate -> store.",
+  "kinds": {
+    "lesson": {
+      "asset_kind_by_variant": {
+        "short": "micro_lesson",
+        "std": "long_form_lesson",
+        "deep": "long_form_lesson"
+      },
+      "pool": false,
+      "code": "les",
+      "note": "The lesson text is also the audio lesson: the device voice reads it, applying the governed pronunciations at play time, so one asset serves both."
+    },
+    "question": {
+      "asset_kind": "question",
+      "pool": true,
+      "code": "q",
+      "note": "Board review questions are questions on board-blueprint topics; they share this pool."
+    },
+    "flashcard": {
+      "asset_kind": "flashcard",
+      "pool": true,
+      "code": "c"
+    }
+  },
+  "regenerate_when": [
+    "no_asset: no stored asset for this topic and variant",
+    "superseded: the asset was superseded, retired, or flagged for regeneration by impact analysis",
+    "guideline_changed: a guideline family it was built on has a new current edition, or a recommendation it relied on changed or was superseded",
+    "blueprint_changed: the learner's board weighting for the topic moved by at least blueprint_material_delta (lessons are kept per weighting band, so two blueprints never overwrite each other)",
+    "personalized: the request carries a focus, a knowledge gap, a basis lesson or other learner-specific adaptation; the result is stored as the learner's own asset, never shared",
+    "unvalidated or flagged: the only stored asset has not passed the accuracy review, cites an older guideline edition, or a learner flagged it"
+  ],
+  "validation": {
+    "validated_when": "the app's independent accuracy review ran over the whole asset and the asset cites no superseded guideline edition",
+    "reuse_unreviewed": false,
+    "learner_flag": "one flag stops reuse until the owner reviews it"
+  },
+  "blueprint_material_delta": 20,
+  "bands": {
+    "high": 67,
+    "medium": 34
+  },
+  "max_content_bytes": 600000,
+  "max_batch": 30,
+  "shared_prompt_excludes_learner_state": true
+}

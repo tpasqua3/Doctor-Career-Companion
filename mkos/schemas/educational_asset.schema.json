@@ -135,6 +135,55 @@
       "items": {
         "type": "string"
       }
+    },
+    "app_topic": {
+      "type": "string",
+      "description": "The app curriculum topic id the asset was made for."
+    },
+    "variant": {
+      "type": [
+        "string",
+        "integer",
+        "null"
+      ],
+      "description": "Lesson length (short/std/deep) or question difficulty level."
+    },
+    "content_sha": {
+      "type": "string",
+      "description": "SHA-256 of the stored content (mk_asset_store), so a content change is a new version."
+    },
+    "basis": {
+      "type": "object",
+      "description": "Currency fingerprint at generation: guideline family -> current edition, recommendation -> version, board priority and band.",
+      "properties": {
+        "families": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "recs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "priority": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "band": {
+          "type": "string"
+        },
+        "blueprint_family": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     }
   },
   "required": [

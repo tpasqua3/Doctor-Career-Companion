@@ -1346,7 +1346,7 @@ function webSample(send){const call=async(input,opt)=>{const j=await (send||webS
 /* When a reply is cut off partway through a list, keep the items that arrived whole instead of failing the whole request. */
 function salvage(t,a){const m=t.match(/\{\s*"(\w+)"\s*:\s*\[/);if(!m||m.index!==a)return null;const out=[];let d=0,s=-1,str=false,bs=false;for(let i=m.index+m[0].length;i<t.length;i++){const c=t[i];if(str){if(bs)bs=false;else if(c==='\\')bs=true;else if(c==='"')str=false;continue}if(c==='"')str=true;else if(c==='{'){if(!d)s=i;d++}else if(c==='}'){d--;if(!d){try{out.push(JSON.parse(t.slice(s,i+1)))}catch(e){}}}else if(c===']'&&!d)break}return out.length?{[m[1]]:out}:null}
 const clip=(x,n)=>{x=String(x||'').trim();if(x.length<=n)return x;const c=x.slice(0,n),e=Math.max(c.lastIndexOf('. '),c.lastIndexOf('; '));return e>n*.5?c.slice(0,e+1):c.slice(0,c.lastIndexOf(' '))+'…'};
-const qNote=(r,n)=>r.qs.length<n?`You asked for ${n}; ${r.qs.length} passed the accuracy review this time. Ask again for more.`:'';
+const qNote=(r,n)=>[r.reused?`${r.reused} of these came from the MKOS question bank (reviewed and current), so ${r.qs.length-r.reused?'only '+(r.qs.length-r.reused):'none'} had to be written.`:'',r.qs.length<n?`You asked for ${n}; ${r.qs.length} passed the accuracy review this time. Ask again for more.`:''].filter(Boolean).join(' ');
 const rules=t=>`You are the teaching engine of a continuing medical education app used by one physician.
 Learner: ${st.prefs.about}
 Practice setting to emphasize: ${SETTING[st.prefs.setting]}.
@@ -1375,17 +1375,25 @@ async function audit(qs,t,ref){if(!st.prefs.audit||!qs.length)return {qs,dropped
   try{const r=await askJ('review:questions',`${rules(t)}${refBlock(ref)}${mkBlock(t)}\n\nYou are now the item reviewer for a board examination committee. Check each question below against current guidelines${ref?' and the reference text':''}. Reject a question if the keyed answer is not clearly the single best answer, if any stated fact, dose or threshold is wrong or outdated, or if two options are equally defensible. Be strict: when in doubt, reject.\n\nQUESTIONS:\n${JSON.stringify(qs.map((q,i)=>({i,stem:q.stem,options:q.opts,keyed:'ABCDE'[q.ans],explanation:q.exp})))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject","note":"reason if rejected"}]}`);
     const bad=new Set(A(r.reviews).filter(x=>x.verdict==='reject').map(x=>x.i));return {qs:qs.filter((q,i)=>!bad.has(i)).map(q=>(q.rev=1,q)),dropped:bad.size,reviewed:true}}
   catch(e){return {qs,dropped:0,reviewed:false}}}
-async function genQuestions(t,n,focus,gapId,X){X=X||{};await mkTopic(t);n=Math.max(1,Math.min(30,Math.round(Number(n))||5));const LV=X.level||qD();const ref=await libRef(t,focus);const seen=bank(t.sec.id).qs.filter(q=>q.tid===t.id).slice(-15).map(q=>q.obj).filter(Boolean);
+async function genQuestions(t,n,focus,gapId,X){X=X||{};await mkTopic(t);n=Math.max(1,Math.min(30,Math.round(Number(n))||5));const LV=X.level||qD();const share=mkShare(focus,Object.assign({gap:gapId},X));let ref=null;const seen=bank(t.sec.id).qs.filter(q=>q.tid===t.id).slice(-15).map(q=>q.obj).filter(Boolean);
   /* Written a few at a time, so no single reply is long enough to be cut off, and topped up when the reviewer removes some. */
-  const got=[],label=S.busy;let dropped=0,reviewed=false,err=null;
+  const got=[],label=S.busy;let dropped=0,reviewed=false,err=null,reused=0;
+  /* Retrieve first: current, reviewed questions on this topic and difficulty from the MKOS bank that this physician has not seen. */
+  if(share&&!X.fresh){const r=await mkA('asset_find',{kind:'question',tid:t.id,name:t.name,level:LV,n,exclude:bank(t.sec.id).qs.filter(q=>q.tid===t.id&&q.mk).map(q=>q.mk).slice(-200)});
+    A(r&&r.items).forEach(x=>{const q=qIn(x.content,t,{d:LV,mk:x.asset.id,rev:1,lib:1,from:X.from||''});if(q){got.push(q);reused++}})}
+  if(got.length<n)ref=await libRef(t,focus);
   for(let round=0,max=Math.ceil(n/3)+3;got.length<n&&round<max;round++){const k=Math.min(3,n-got.length),done=[...seen,...got.map(q=>q.obj||q.stem.slice(0,90))];
     if(got.length&&label&&!X.quiet&&!/ready\)/.test(label)){S.busy=label.replace(/…$/,'')+' ('+got.length+' of '+n+' ready)…';render()}
-    try{const r=await askJ('questions',`${rules(t)}${refBlock(ref)}${mkBlock(t)}\n\nTASK: Write ${k} board-style questions on this topic${focus?`, concentrating on this stated knowledge gap: "${focus}"`:''}. ${QSPEC}${X.basis?'\n'+X.basis:''}\nDifficulty for this set: level ${LV} of 5, ${DIFF[LV][0].toLowerCase()}. ${DIFF[LV][1]} Hold every question in the set to this level. Difficulty comes from clinical reasoning, never from ambiguity, trick wording or rare facts.${done.length?'\nAlready asked, so test different points: '+done.join(' | '):''}\n\nReply with JSON only: {"questions":[${QJSON}]}`);
+    try{const r=await askJ('questions',`${rules(t)}${refBlock(ref)}${mkBlockFor(t,share)}\n\nTASK: Write ${k} board-style questions on this topic${focus?`, concentrating on this stated knowledge gap: "${focus}"`:''}. ${QSPEC}${X.basis?'\n'+X.basis:''}\nDifficulty for this set: level ${LV} of 5, ${DIFF[LV][0].toLowerCase()}. ${DIFF[LV][1]} Hold every question in the set to this level. Difficulty comes from clinical reasoning, never from ambiguity, trick wording or rare facts.${done.length?'\nAlready asked, so test different points: '+done.join(' | '):''}\n\nReply with JSON only: {"questions":[${QJSON}]}`);
       const qs=A(r.questions).map(q=>cleanQ(q,t,Object.assign({ref:ref?ref.title:'',gap:gapId||'',d:LV,from:X.from||''},X.les?{les:X.les}:{}))).filter(Boolean).slice(0,k);if(!qs.length){err={code:'invalid_json'};continue}
       const a=await audit(qs,t,ref);if(a.reviewed)tally(WROTE.questions,'q',{n:qs.length,dropped:a.dropped});dropped+=a.dropped;reviewed=reviewed||a.reviewed;got.push(...a.qs)}
     catch(e){err=e;if(e&&['rate_limited','session_expired','cancelled'].includes(e.code))break}}
   if(!got.length)throw dropped?{code:'upstream_error',message:'Every question written failed the accuracy review. Try again.'}:(err||{code:'invalid_json'});
-  bank(t.sec.id).qs.push(...got);saveBank(t.sec.id);return {qs:got,dropped,reviewed}}
+  bank(t.sec.id).qs.push(...got);saveBank(t.sec.id);
+  /* Store what was written (a lesson's own check questions travel inside that lesson's asset). */
+  const fresh=got.filter(q=>!q.lib);if(fresh.length&&!X.les)mkStore('question',t,{level:LV,personal:!share,generated_by:WROTE.questions||'',reviewed_by:WROTE.review||'',
+    items:fresh.map(q=>({content:qOut(q),validated:!!q.rev,sources:q.src,local_id:q.id}))},s=>{fresh.forEach((q,i)=>{if(s[i]&&s[i].id)q.mk=s[i].id});saveBank(t.sec.id)});
+  return {qs:got,dropped,reviewed:reviewed||reused>0,reused}}
 /* The same second pass for a lesson, so what is read and what is heard have both been checked: every segment, its table, the key
    points and the lesson's flashcards go to a reviewer that corrects what is wrong, flags what is uncertain, and makes the parts agree. */
 /* Long lessons are reviewed a few segments at a time, so no review reply is long enough to be cut short. */
@@ -1408,13 +1416,18 @@ async function auditLesson(t,r,ref,must){const out={done:false,fixed:0,flagged:0
    a dropped connection or an AI limit costs at most the part in progress; it is picked up again from that point (X.resume). The
    reviewed lesson is saved again before its questions and cards are written, and once more when they are attached. */
 const LPART=1500,headTail=(x,n)=>{const w=String(x||'').trim().split(/\s+/);return w.length<=n?w.join(' '):w.slice(0,n).join(' ')+' …'};
-async function genLesson(t,len,focus,X){X=X||{};await mkTopic(t);const L=LEN[len],ref=await libRef(t,focus),figs=await refFigures(ref);
+async function genLesson(t,len,focus,X){X=X||{};await mkTopic(t);const L=LEN[len],share=mkShare(focus,X);
+  /* Retrieve first: a lesson MKOS already holds for this topic and length, reviewed and still guideline-current, is served as it is. */
+  if(share&&!X.fresh){const lab=S.busy;if(lab){S.busy='Checking the MKOS library for a current, reviewed lesson…';render()}
+    const r=await mkA('asset_find',{kind:'lesson',tid:t.id,name:t.name,len});if(r&&r.reuse&&r.content&&A(r.content.segs).length)return mkLessonIn(t,len,r);
+    if(lab){S.busy=lab;render()}}
+  const ref=await libRef(t,focus),figs=await refFigures(ref);
   const D=X.resume&&X.resume.part&&Array.isArray(X.resume.segs)&&X.resume.segs.length?X.resume:null,id=D?D.id:uid(),k0=D?Math.min(D.part.k,D.part.of-1):0;
   const N=D?D.part.of:L.words<=1900?1:Math.ceil(L.words/LPART),per=Math.round(L.words/N/50)*50,label=S.busy;
   const listed=title=>{const e=st.lessons.find(x=>x.id===id);if(e)e.title=title;else st.lessons.push({id,tid:t.id,title,len,min:L.min,t:Date.now(),deeper:X.from?1:0})};
   const SEG=`{"heading":"short heading","text":"spoken paragraph(s)","flag":"one sentence naming what in this segment is uncertain, disputed or possibly out of date; empty string if nothing","table":null or {"title":"","columns":["",""],"rows":[["",""]]},"figure":null or the number of one listed figure}`;
   const TAIL=`"keyPoints":["4 to 6 one-sentence take-aways"],"pitfalls":["1 to 3 common errors"],"sources":["Organization. Guideline or statement title. Year."],"uncertain":["anything the physician should verify, or empty"]`;
-  const head=`${rules(t)}${refBlock(ref)}${mkBlock(t)}\n\nTASK: Write a ${L.name.toLowerCase()} audio lesson of about ${L.words} words on this topic${focus?`, concentrating on: "${focus}"`:''}.${X.basis?'\n'+X.basis:''}${figs.length?'\n\nFIGURES AND TABLES in the reference sources, which can be shown beside a segment exactly as published:\n'+figs.map((f,i)=>i+'. '+(f.pdf?f.label+', "'+f.title+'"'+(f.from?' (from '+f.from+')':''):'"'+f.title+'"'+(f.head?' (under "'+f.head+'")':''))+': '+String(f.legend).slice(0,f.pdf?170:400)).join('\n'):''}
+  const head=`${rules(t)}${refBlock(ref)}${mkBlockFor(t,share)}\n\nTASK: Write a ${L.name.toLowerCase()} audio lesson of about ${L.words} words on this topic${focus?`, concentrating on: "${focus}"`:''}.${X.basis?'\n'+X.basis:''}${figs.length?'\n\nFIGURES AND TABLES in the reference sources, which can be shown beside a segment exactly as published:\n'+figs.map((f,i)=>i+'. '+(f.pdf?f.label+', "'+f.title+'"'+(f.from?' (from '+f.from+')':''):'"'+f.title+'"'+(f.head?' (under "'+f.head+'")':''))+': '+String(f.legend).slice(0,f.pdf?170:400)).join('\n'):''}
 It will be read aloud by a speech voice while the physician drives or rests after clinic, and shown as text for reading. Write it to be heard: the voice of a senior colleague teaching at the bedside, full sentences, no bullet lists, no tables, no symbols that read badly aloud (write "greater than or equal to", "milligrams per deciliter"), and spell out an abbreviation the first time.
 Shape: open with a two or three sentence patient case that makes the topic matter; teach the concept and the reasoning; come back to the case and work through the decision; finish with what to do differently in clinic. Do not repeat a point in different words. ${len==='short'?'Keep only the highest-yield points: what is tested and what changes management.':'Go deeper into the reasoning, the exceptions, and the evidence behind the recommendation.'}
 Tables: whenever a segment teaches something graded or laid out in levels (a staging or severity classification with numeric cut-offs, a risk score, diagnostic criteria, dose steps, screening intervals by group, or a side-by-side comparison of options), give that segment a table with the levels as rows. The table is a visual aid shown on screen and is never read aloud, so the spoken text must still carry the same content in fluent sentences for a listener who is not looking: say the levels in order in plain words, and do not refer to the table or say "as shown". Put a value in a table only if you are sure of it; if a cut-off is uncertain or differs between guidelines, say so in the flag. Use null when a segment has nothing tabular.
@@ -1446,9 +1459,12 @@ Figures: if figures are listed above and a segment teaches the appearance of exa
   put('les_'+id,les);listed(les.title);saveState();
   /* Two check questions and a few cards, each from its own request against the reviewed lesson. A failure here never costs the lesson. */
   if(label){S.busy=label.replace(/…$/,'')+' (check questions and cards)…';render()}
-  const [qr]=await Promise.all([genQuestions(t,2,focus,null,{basis:basisQ(les),les:id,quiet:1}).catch(()=>null),genCards(t,4,focus,basisC(les),les.segs.map(x=>x.fig).filter(Boolean)).catch(()=>null)]);
+  const [qr,cr]=await Promise.all([genQuestions(t,2,focus,null,{basis:basisQ(les),les:id,quiet:1}).catch(()=>null),genCards(t,4,focus,basisC(les),les.segs.map(x=>x.fig).filter(Boolean),{les:id}).catch(()=>null)]);
   if(qr)les.qids=qr.qs.map(q=>q.id);if(label)S.busy=label;
   if(les.qids.length)put('les_'+id,les);while(st.lessons.length>80){del('les_'+st.lessons.shift().id)}
+  /* Validate -> store: the reviewed lesson, with its check questions and cards, becomes an MKOS asset (a complete lesson only). */
+  if(!short)mkStore('lesson',t,{len,personal:!share,local_id:id,validated:!!rv.done,generated_by:writer,reviewed_by:rv.done?(WROTE.review||''):'',sources:les.src,title:les.title,
+    content:Object.assign(lOut(les),{checks:qr?qr.qs.map(qOut):[],cards:A(cr).map(cOut)})},s=>{if(!s[0]||!s[0].id)return;les.mk={id:s[0].id,v:s[0].version,reused:0,personal:share?0:1,rs:s[0].review_status};const d=docs['les_'+id];if(d){d.mk=les.mk;put('les_'+id,d)}if(S.lesson&&S.lesson.id===id&&!S.busy)render()});
   const s=tS(t.id);s.les++;s.last=Date.now();day().les++;saveState();return les}
 const findQ=id=>allQs().find(q=>q.id===id);
 
@@ -1472,11 +1488,14 @@ function rateCard(c,r){const iv=c.ivl||0;c.conf=r;c.n=(c.n||0)+1;c.last=Date.now
   /* A card on a topic the record shows as weak comes back sooner: up to half the usual gap. */
   const k=1-.5*need(c.tid);c.due=Date.now()+(r===1?6e5:Math.max(1,c.ivl*k)*864e5);c.k=Math.round(k*100)/100;saveDeck(TOP[c.tid].sec.id)}
 function pullCards(tid,days){const lim=Date.now()+days*864e5;let n=0;deck(TOP[tid].sec.id).cards.forEach(c=>{if(c.tid===tid&&c.n&&c.due>lim){c.due=lim;n++}});if(n)saveDeck(TOP[tid].sec.id);return n}
-async function genCards(t,n,focus,basis,figs){figs=A(figs);await mkTopic(t);const ref=await libRef(t,focus),seen=deck(t.sec.id).cards.filter(c=>c.tid===t.id).slice(-30).map(c=>c.f);
-  const r=await askJ('cards',`${rules(t)}${refBlock(ref)}${mkBlock(t)}\n\nTASK: Write ${n} flashcards on this topic${focus?`, concentrating on: "${focus}"`:''}. ${CSPEC}${basis?'\n'+basis+'\n':''}${figs.length?'\nTABLES AND FIGURES shown in that lesson: '+figs.map((f,i)=>i+'. '+(f.label?f.label+': ':'')+f.title).join(' | ')+'. When what a card asks is answered by exactly one of these, set that card\'s "figure" to its number so it is shown with the answer; otherwise leave it null.\n':''} Cover different facts across the topic, favoring what is tested on the ABIM examination and what changes management in clinic.${seen.length?'\nAlready in the deck, so write different cards: '+seen.join(' | '):''}\n\nReply with JSON only: {"cards":[{"front":"","back":"","source":"Organization and year, if a guideline backs it","caveat":"empty unless the answer is uncertain, disputed or recently changed; then one sentence"${figs.length?',"figure":null':''}}]}`);
+async function genCards(t,n,focus,basis,figs,X){figs=A(figs);X=X||{};await mkTopic(t);const share=mkShare(focus,{basis}),pre=share&&!X.fresh?await mkCardsFromLib(t,n):[];if(pre.length>=n)return pre;n-=pre.length;let cv=false;
+  const ref=await libRef(t,focus),seen=deck(t.sec.id).cards.filter(c=>c.tid===t.id).slice(-30).map(c=>c.f);
+  const r=await askJ('cards',`${rules(t)}${refBlock(ref)}${mkBlockFor(t,share)}\n\nTASK: Write ${n} flashcards on this topic${focus?`, concentrating on: "${focus}"`:''}. ${CSPEC}${basis?'\n'+basis+'\n':''}${figs.length?'\nTABLES AND FIGURES shown in that lesson: '+figs.map((f,i)=>i+'. '+(f.label?f.label+': ':'')+f.title).join(' | ')+'. When what a card asks is answered by exactly one of these, set that card\'s "figure" to its number so it is shown with the answer; otherwise leave it null.\n':''} Cover different facts across the topic, favoring what is tested on the ABIM examination and what changes management in clinic.${seen.length?'\nAlready in the deck, so write different cards: '+seen.join(' | '):''}\n\nReply with JSON only: {"cards":[{"front":"","back":"","source":"Organization and year, if a guideline backs it","caveat":"empty unless the answer is uncertain, disputed or recently changed; then one sentence"${figs.length?',"figure":null':''}}]}`);
   let list=A(r.cards).filter(x=>x&&x.front&&x.back);if(!list.length)throw{code:'invalid_json'};
-  if(st.prefs.audit||(WROTE.cards&&!isLead(WROTE.cards))){try{const n0=list.length,by=WROTE.cards;const a=await askJ('review:cards',`${rules(t)}${refBlock(ref)}${mkBlock(t)}\n\nYou are checking flashcards for accuracy against current guidelines${ref?' and the reference text':''}. Reject any card whose answer is wrong, outdated, or only sometimes true. Be strict.\n\nCARDS:\n${JSON.stringify(list.map((c,i)=>({i,front:c.front,back:c.back})))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject"}]}`);const bad=new Set(A(a.reviews).filter(x=>x.verdict==='reject').map(x=>x.i));list=list.filter((c,i)=>!bad.has(i));tally(by,'c',{n:n0,dropped:n0-list.length})}catch(e){}}
-  return addCards(t,list,ref?ref.title:'',figs)}
+  if(st.prefs.audit||(WROTE.cards&&!isLead(WROTE.cards))){try{const n0=list.length,by=WROTE.cards;const a=await askJ('review:cards',`${rules(t)}${refBlock(ref)}${mkBlock(t)}\n\nYou are checking flashcards for accuracy against current guidelines${ref?' and the reference text':''}. Reject any card whose answer is wrong, outdated, or only sometimes true. Be strict.\n\nCARDS:\n${JSON.stringify(list.map((c,i)=>({i,front:c.front,back:c.back})))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject"}]}`);const bad=new Set(A(a.reviews).filter(x=>x.verdict==='reject').map(x=>x.i));list=list.filter((c,i)=>!bad.has(i));tally(by,'c',{n:n0,dropped:n0-list.length});cv=true}catch(e){}}
+  const out=addCards(t,list,ref?ref.title:'',figs);
+  if(out.length&&!X.les)mkStore('flashcard',t,{personal:!share,generated_by:WROTE.cards||'',reviewed_by:cv?(WROTE.review||''):'',items:out.map(c=>({content:cOut(c),validated:cv,sources:c.src?[c.src]:[],local_id:c.id}))},s=>{out.forEach((c,i)=>{if(s[i]&&s[i].id)c.mk=s[i].id});saveDeck(t.sec.id)});
+  return pre.concat(out)}
 function startDeck(cards,title){if(!cards.length)return toast('No cards here yet. Write some new ones.');P.stop();S.deck={ids:cards.map(c=>c.id),i:0,flip:false,title,seen:0};S.clist=false;beginAct('cards',new Set(cards.map(c=>c.tid)).size===1?cards[0].tid:'',title);render();scrollTo(0,0)}
 const findC=id=>allCards().find(c=>c.id===id);
 const shuffle=a=>a.map(x=>[Math.random(),x]).sort((p,q)=>p[0]-q[0]).map(x=>x[1]);
@@ -1707,7 +1726,7 @@ function lessonQueue(L,withQs){const q=[{say:L.title+'.',seg:0}];L.segs.forEach(
 function playLesson(L,done){P.load(lessonQueue(L,st.prefs.passive),L.title,(TOP[L.tid]?TOP[L.tid].sec.name:'')+' · '+(L.min||LEN[L.len].min)+' min',done)}
 function vLesson(){const L=S.lesson,t=TOP[L.tid],ss=S.session,qs=L.qids.map(findQ).filter(Boolean),s=tS(L.tid);
   return `<div class="row between"><button class="btn link" data-act="closelesson">← ${ss?'End session':'Back'}</button>${ss?`<span class="chip">Lesson ${ss.i+1} of ${ss.plan.length}${ss.next?' · next is ready':ss.i+1<ss.plan.length?' · writing the next one':''}</span>`:''}</div>
-  ${(mkCite(L,'les:'+L.id,()=>{const d=docs['les_'+L.id];if(d){d.mkc=L.mkc;put('les_'+L.id,d)}}),mkcNote(L,L.id))}<div class="plain"><span class="eyebrow">${esc(t?t.sec.name+' · '+t.name:'')}</span><h1>${esc(L.title)}</h1>
+  ${(mkCite(L,'les:'+L.id,()=>{const d=docs['les_'+L.id];if(d){d.mkc=L.mkc;put('les_'+L.id,d)}}),mkcNote(L,L.id))}<div class="plain"><span class="eyebrow">${esc(t?t.sec.name+' · '+t.name:'')}</span><h1>${esc(L.title)}</h1>${mkLesLine(L)}
    <div class="row"><button class="btn pri" data-act="listen">${IC.play.replace('<svg','<svg width="16" height="16" fill="currentColor"')} ${P.on?'Restart audio':'Listen'}</button><span class="small muted">${L.by&&L.by.w?`<span style="margin-right:6px">Written by ${esc(svcName(L.by.w))}${L.by.r?', reviewed by '+esc(svcName(L.by.r)):''}.</span>`:''}${L.rev?`<span class="chip ${L.rev.done?'good':'off'}" style="margin-right:6px">${L.rev.done?(L.rev.fixed?L.rev.fixed+' correction'+(L.rev.fixed>1?'s':'')+' made at review':'Passed accuracy review'):'Not reviewed'}</span>`:''}${LEN[L.len].name} · about ${L.min||LEN[L.len].min} min${L.ref?' · grounded in your library: '+esc(L.ref):''}</span></div></div>
   <div class="lesson">${L.segs.map((x,i)=>`<section data-seg="${i}">${x.h?`<h3>${esc(x.h)}</h3>`:''}${x.x.split(/\n+/).map(p=>`<p>${esc(p)}</p>`).join('')}${figHTML(x.fig,L.ref)}${tableHTML(x.tb)}${x.fx?`<p class="tiny muted" style="font-family:var(--ui)">Corrected at review: ${esc(x.fx)}</p>`:''}${x.f?`<p class="caveat"><b>Uncertain.</b> ${esc(x.f)}${x.f.length===400&&!/[.!?…]$/.test(x.f)?'…':''}</p>`:''}</section>`).join('')}</div>
   ${L.pts.length?`<div class="card" data-seg="pts"><h3>Key points</h3><ul class="pts">${L.pts.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>${L.pit.length?`<h3>Pitfalls</h3><ul class="pts">${L.pit.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>`:''}</div>`:''}
@@ -1967,6 +1986,8 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='nextlesson')return advance();
   if(a==='hqx'){S.hq=null;render();return}
   if(a==='hisq')return hisQuestions(b.dataset.id,Math.min(30,Math.max(1,Math.round(Number(($('#hqn')||{}).value))||5)));
+  if(a==='lesflag'){const L=S.lesson;if(!L||!L.mk||!L.mk.id)return;mkA('asset_flag',{id:L.mk.id,reason:'Reported from the lesson screen'}).then(r=>{if(r&&r.ok){L.mk.flagged=1;const d=docs['les_'+L.id];if(d){d.mk=L.mk;put('les_'+L.id,d)}toast('Reported. MKOS will not serve this lesson again until it is reviewed.');render()}else toast('Could not report it just now. Try again in a moment.')});return}
+  if(a==='lesfresh'){const L=S.lesson,t=L&&TOP[L.tid];if(!t||!LEN[L.len])return;P.stop();S.session=null;return run('Claude is writing a fresh version of "'+L.title+'"…',async()=>{const D=await genLesson(t,L.len,'',{fresh:1});openLesson(D);if(st.prefs.auto)playLesson(D)})}
   if(a==='lesq'||a==='lescards'||a==='lesdeep'||a==='lesresume'){const L=S.lesson,t=TOP[L.tid],n=qN(),kind=b.dataset.kind;if(!t)return;P.stop();S.session=null;
     if(a==='lesq')return run('Claude is writing '+n+' questions on "'+L.title+'"…',async()=>{const r=await genQuestions(t,n,'',null,{basis:basisQ(L),from:L.id});startQuiz(r.qs,'On: '+L.title,t.id);S.quiz.note=qNote(r,n)});
     if(a==='lescards')return run('Claude is writing cards on "'+L.title+'"…',async()=>{const made=await genCards(t,10,L.title);if(!made.length)throw{code:'upstream_error',message:'No new cards passed the accuracy check. Try again.'};S.lesson=null;S.tab='cards';S.cscope='top:'+t.id;startDeck(made,L.title)});
@@ -2075,6 +2096,37 @@ async function mkLoad(force){if(!mkOn()||MKLOAD)return;if(!force&&MKAT&&Date.now
 async function mkTopic(t){if(!t||!mkOn())return null;const c=MKT[t.id];if(c&&Date.now()-c.t<600000)return c.v;
   try{const v=await Promise.race([mk('topic_context',{tid:t.id,name:t.name}),new Promise(r=>setTimeout(()=>r(null),8000))]);if(v){MKT[t.id]={t:Date.now(),v};return v}}catch(e){console.warn('MKOS topic',e)}return null}
 const mkBlock=t=>t&&MKT[t.id]&&MKT[t.id].v&&MKT[t.id].v.prompt_block?'\n\n'+MKT[t.id].v.prompt_block:'';
+/* Educational assets are governed MKOS objects: retrieve first, generate only when needed (MKOS asset_find / asset_put).
+   A request is shared unless it carries a learner-specific adaptation (a focus, a knowledge gap, a basis lesson, a lesson being finished);
+   a shared asset is written from MKOS's knowledge without this learner's state, so any account can be served it later. What is written
+   is stored after its accuracy review; a personalized one is stored as the learner's own. MKOS answering slowly never blocks writing. */
+const mkA=(op,args,ms)=>mkOn()?Promise.race([mk(op,args),new Promise(r=>setTimeout(()=>r(null),ms||8000))]).catch(e=>{console.warn('MKOS asset',e);return null}):Promise.resolve(null);
+const mkShare=(focus,X)=>!String(focus||'').trim()&&!(X&&(X.basis||X.from||X.resume||X.gap||X.les));
+const mkBlockFor=(t,share)=>share&&t&&MKT[t.id]&&MKT[t.id].v&&MKT[t.id].v.prompt_block_shared!=null?'\n\n'+MKT[t.id].v.prompt_block_shared:mkBlock(t);
+const qOut=q=>({stem:q.stem,opts:q.opts,ans:q.ans,exp:q.exp,obj:q.obj,cav:q.cav,src:q.src,ref:q.ref||'',d:q.d||null});
+const qIn=(x,t,extra)=>x&&cleanQ({stem:x.stem,options:x.opts,answer:'ABCDE'[x.ans],explanation:x.exp,objective:x.obj,caveat:x.cav,sources:x.src},t,Object.assign({ref:x.ref||'',d:x.d||null},extra));
+const cOut=c=>({f:c.f,b:c.b,src:c.src||'',cav:c.cav||'',ref:c.ref||'',fig:c.fig||null});
+const lOut=L=>({title:L.title,len:L.len,min:L.min,rev:L.rev,segs:L.segs,pts:L.pts,pit:L.pit,src:L.src,unc:L.unc,ref:L.ref,by:L.by});
+// Store what was just written; cb gets MKOS's answer per item, in order, so items can keep their asset id.
+function mkStore(kind,t,extra,cb){if(!mkOn())return;mkA('asset_put',Object.assign({kind,tid:t.id,name:t.name},extra),30000).then(r=>{const s=A(r&&r.stored);if(s.length&&cb)try{cb(s)}catch(e){}})}
+// Cards from the MKOS library onto this physician's deck (skipping any front already in it).
+function mkCardsIn(t,items){const d=deck(t.sec.id),have=new Set(d.cards.map(c=>slug(c.f))),out=[];
+  items.forEach(x=>{const c=x&&x.content;if(!c||!c.f||!c.b||have.has(slug(c.f)))return;have.add(slug(c.f));const k={id:uid(),tid:t.id,f:String(c.f),b:String(c.b),src:String(c.src||''),cav:String(c.cav||''),ref:String(c.ref||''),t:Date.now(),v:0,n:0,conf:0,due:0,ivl:0,lib:1};if(x.asset&&x.asset.id)k.mk=x.asset.id;if(c.fig)k.fig=c.fig;d.cards.push(k);out.push(k)});
+  if(out.length)saveDeck(t.sec.id);return out}
+async function mkCardsFromLib(t,n){const r=await mkA('asset_find',{kind:'flashcard',tid:t.id,name:t.name,n});return mkCardsIn(t,A(r&&r.items))}
+// A lesson from the MKOS library: filed in this physician's record like one just written, with its check questions and cards.
+function mkLessonIn(t,len,r){const c=r.content,id=uid(),L0=LEN[len];
+  const les=Object.assign({},c,{id,tid:t.id,len,min:c.min||L0.min,parent:'',deeper:0,focus:'',qids:[],t:Date.now(),segs:A(c.segs),pts:A(c.pts),pit:A(c.pit),src:A(c.src),unc:A(c.unc),
+    mk:{id:r.asset.id,v:r.asset.version,reused:1,at:r.asset.generated_at,cw:A(r.current_with).slice(0,2)}});delete les.checks;delete les.cards;
+  const qs=A(c.checks).map(x=>qIn(x,t,{les:id,rev:1,lib:1})).filter(Boolean);if(qs.length){bank(t.sec.id).qs.push(...qs);saveBank(t.sec.id);les.qids=qs.map(q=>q.id)}
+  mkCardsIn(t,A(c.cards).map(x=>({content:x})));
+  put('les_'+id,les);st.lessons.push({id,tid:t.id,title:les.title,len,min:les.min,t:Date.now(),deeper:0});while(st.lessons.length>80){del('les_'+st.lessons.shift().id)}
+  const s=tS(t.id);s.les++;s.last=Date.now();day().les++;saveState();return les}
+const mkLesLine=L=>{if(!L.mk||!mkOn())return'';const m=L.mk,rep=m.flagged?'<span class="tiny muted">Reported: MKOS will not serve it again until it is reviewed.</span>':'<button class="btn link" data-act="lesflag">Report a problem</button>';
+  return m.reused?`<p class="small muted"><span class="chip good" style="margin-right:6px">From the MKOS library</span>Written once, reviewed, and still current${m.cw&&m.cw.length?' with '+esc(m.cw.join('; ')):''}, so it was served instead of being written again. <button class="btn link" data-act="lesfresh">Write a fresh version</button> · ${rep}</p>`
+    :m.id?`<p class="tiny muted">Saved to the MKOS library${m.personal?' as your own':''}, so it can be reused while it stays current. ${rep}</p>`:''};
+const mkLibLine=()=>{const a=MK&&MK.assets;if(!a)return'';const l=a.library||{},v=a.served||{},n=k=>l[k]||0,les=n('micro_lesson')+n('long_form_lesson'),used=(v.lesson||0)+(v.question||0)+(v.flashcard||0);
+  return `<p class="small muted">Educational asset library: ${les} lesson${les===1?'':'s'}, ${n('question')} question${n('question')===1?'':'s'} and ${n('flashcard')} flashcard${n('flashcard')===1?'':'s'}, reviewed and current, ready to reuse. ${used?used+' of the items you have studied came from it instead of being written again.':'New material is added to it as it is written.'}</p>`};
 // Board weighting from the selected blueprint (Blueprint Governance) shapes the planner: 0.6x to 1.4x of the app's own weight.
 // The tutor's view of the learner model (Conversational Tutor consumes learner state before answering).
 const mkLearnerLine=()=>{if(!MK||!MK.summary)return'';const s=MK.summary,w=A(MK.specialty).filter(x=>x.mastery<60).slice(0,3).map(x=>x.name),m=A(MK.misconceptions).slice(0,3).map(x=>x.name);
@@ -2144,7 +2196,7 @@ const KTYPES=[['','Everything'],['Concept','Concepts'],['Guideline','Guidelines'
 const kChip=s=>`<span class="chip ${s==='current'?'good':s==='superseded'||s==='retired'?'off':''}">${esc(s)}</span>`;
 function vKnowledge(){if(!mkOn())return `<div class="plain"><h1>Knowledge</h1><p class="small muted">The knowledge base lives on the server. Open the app from its website or inside Claude with the connector.</p></div>`;
   if(KN.cur)return kObject();
-  return `<div class="plain"><h1>Knowledge</h1><p class="small muted">The app's knowledge base: guidelines and their editions, graded recommendations, concepts, evidence, sources and the board blueprint, each with its confidence, currency and provenance. Current editions come first.</p></div>
+  return `<div class="plain"><h1>Knowledge</h1><p class="small muted">The app's knowledge base: guidelines and their editions, graded recommendations, concepts, evidence, sources and the board blueprint, each with its confidence, currency and provenance. Current editions come first.</p>${mkLibLine()}</div>
    <div class="card"><div class="row" style="align-items:flex-end"><label class="f" style="flex:1;min-width:200px">Search<input type="text" id="kq" value="${esc(KN.q)}" placeholder="heart failure, KDIGO, apixaban, GOLD…"></label>
    <label class="f" style="max-width:200px">Type<select id="kt">${KTYPES.map(([v,l])=>`<option value="${v}" ${KN.type===v?'selected':''}>${l}</option>`).join('')}</select></label><button class="btn pri" data-act="ksearch">Search</button></div>
    ${KN.err?`<div class="err">${esc(KN.err)}</div>`:''}${KN.busy?thinking('Searching…'):''}

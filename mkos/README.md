@@ -39,6 +39,10 @@ licensed). The server reads the library from Drive itself.
 | `cutover.js` | The eight-gate retirement of the legacy guideline registry (below) |
 | `mirror.js` | The Drive MKOS folder |
 | `tick.js` | The engine loop on the 5-minute cron, with a self-tuning query budget so it works on free and paid plans |
+| `blueprint.js` | Board Blueprint Governance and the Blueprint Execution Engine: blueprint registries, domains, objectives, concept and asset mappings, the learner's selected blueprint, board scores and the board plan |
+| `pronounce.js` | The pronunciation registry and its governance (below) |
+| `bridge.js` | The app bridge: one call per screen (`app_bundle`), the governed topic package handed to the app's AI (`topic_context`), citation checks, asset flags |
+| `assets.js` | Educational assets as governed MKOS objects: retrieve first, generate only when needed (below) |
 | `routes.js` | `/api/mkos/<op>` and the connector tool `mkos` |
 
 The cron gives MKOS its turn in each 5-minute run in which no account records were waiting to be copied to Drive. Each run:
@@ -57,10 +61,12 @@ Files over 25 MB cannot be read by the server; split them into chapters or keep 
 
 ## Operations (`/api/mkos/<op>` or the connector tool `mkos` with `{op, args}`)
 
-Everyone: `status`, `search`, `object/<id>`, `context/<concept id>`, `route?q=`, `learner`, `plan`, `refresh_me`, `framework`.
+Everyone: `status`, `search`, `object/<id>`, `context/<concept id>`, `route?q=`, `learner`, `plan`, `refresh_me`, `framework`,
+`app_bundle`, `topic_context`, `check_citations`, `asset_flags`, `asset_find`, `asset_put`, `asset_flag`, `asset_stats`, `blueprints`,
+`board-review`, `select_blueprint`, `pronunciation`.
 Owner: `events`, `jobs`, `audit`, `review {id, result, note}`, `edit {object}`, `set_status`, `settings {path, value}` (for example
 `ingestion.extraction.daily_ai_budget_default`), `rescan`, `requeue`, `tick`, `graph_validation`, `compat_registry`,
-`cutover_validate`, `cutover_retire {confirm: true}`, `cutover_rollback`.
+`cutover_validate`, `cutover_retire {confirm: true}`, `cutover_rollback`, `asset_review`, the `pron_*` operations.
 
 AI extraction calls only free services (Gemini's quick model on the free tier, then Cloudflare Workers AI), directly and under its own
 usage account `mkos`: a paid service is never reached, the app's AI hierarchy is unchanged and no learner's allowance is spent. Variables: `MKOS=off` pauses the engine; `MKOS_AI=off` keeps extraction to rules only.
@@ -77,6 +83,53 @@ spoken until confirmed (`pronunciation.tts_use.min_overall_confidence`, default 
 list, then the owner's, then the MKOS records cleared for speech, so a correction made once is heard everywhere.
 Owner operations: `pron_dashboard`, `pron_flag {term}` (Mark Pronunciation Incorrect), `pron_approve {term, index | simplified, lock}`,
 `pron_reject`, `pron_sync`; everyone: `pronunciation {term}`.
+
+## Board blueprint governance (src/mkos/blueprint.js, mkos/ontology/blueprints.json)
+
+Board review is a weighting over MKOS, not a separate system. Each blueprint registry in the library (ABIM Certification, ABIM MOC/LKA,
+and any later board) is projected into `mk_blueprint_registries`, `mk_blueprint_domains`, `mk_blueprint_objectives` and concept and asset
+mappings with frequency, importance, relevance and priority scores; a newer registry supersedes the previous edition. Each learner has a
+selected blueprint (`select_blueprint`; the app sets it from the Boards choice), and every board score (question, flashcard, lesson,
+recommendation priority) is computed from that blueprint and the learner's state. Operations: `blueprints [id]`, `learners/me/board-plan`,
+`board-review`, `select_blueprint {family | app_kind}`.
+
+## The app bridge (src/mkos/bridge.js, the MKOS block in app/companion.html)
+
+Every educational screen reads MKOS before any AI is asked. `app_bundle` gives Today, Boards, Progress, Questions, Cards and Knowledge
+the learner model, the plan, the board plan, per-topic board priorities (which also weight the app's planner), flags and the governed
+pronunciations. `topic_context` gives a lesson, question set, card set or tutor answer the topic's current guideline editions, graded
+recommendations with citations, board weighting and the learner's state, as a prompt block: the AI teaches from MKOS instead of memory.
+`check_citations` marks citations naming an older edition. On the website the app calls `/api/mkos/<op>`; inside Claude and in the
+Life OS copy it calls the connector tool `mkos`; a local copy without either simply hides the MKOS panels.
+
+## Educational assets: retrieve first, generate only when needed (src/mkos/assets.js, mkos/ontology/assets.json)
+
+Lessons (which are also the audio lessons: the device voice reads the lesson text with the governed pronunciations), questions,
+flashcards and the board review content built from them are first-class MKOS objects: `EducationalAsset` records with their content
+per version in `mk_asset_store`, linked to the concepts they teach and to the guideline editions and recommendations they were built on
+(`mk_asset_links`), so impact analysis flags them the moment that knowledge changes.
+
+    Knowledge Objects -> Educational Assets -> asset exists?  yes: reuse
+                                                              no:  generate -> validate -> store
+
+- **Retrieve first.** Before writing, the app asks `asset_find`. A lesson is served when MKOS holds one for the topic, length and board
+  weighting band that is current, validated and guideline-current. Questions and flashcards come from a pool: the items this learner
+  has not been served (`mk_asset_usage`), at the requested difficulty; only the shortfall is written.
+- **Generate only when** there is no asset; it was superseded or flagged for regeneration; a guideline family it relied on has a new
+  current edition or a recommendation it relied on changed; the board weighting moved materially (`blueprint_material_delta`, default
+  20; lessons are kept per weighting band so two blueprints never overwrite each other); or the request is a personalized adaptation
+  (a focus, a knowledge gap, a basis lesson, a lesson being finished).
+- **Validate, then store.** `asset_put` stores what was written. *Validated* means the app's independent accuracy review ran over the
+  whole asset; an asset citing an older guideline edition is stored as `citation_outdated` and never served; unreviewed material is
+  stored but not served (`validation.reuse_unreviewed`, default false), and never replaces a validated asset. A lesson's check
+  questions and cards travel inside the lesson's asset.
+- **Shared vs. personal.** Shared assets (`ea.s.*`) are written from MKOS's knowledge without any one learner's state
+  (`prompt_block_shared`) and serve every account. Personalized ones are stored as the learner's own (`ea.u<account>.g.*`) and are never
+  shared or mirrored.
+- **Governance.** Anyone can report a problem (`asset_flag`); one report stops reuse until the owner reviews it (`asset_review {id,
+  result: ok | regenerate | retire}`), or until a fresh validated version replaces it. `asset_stats` shows the library, reuse and the
+  review queue. In the app: a reused lesson says it came from the MKOS library (with "Write a fresh version" and "Report a problem"),
+  question sets say how many came from the bank, and the Knowledge tab shows the library.
 
 ## Retiring the legacy guideline registry (`guidelines_registry_v6_CURRENT.json`)
 

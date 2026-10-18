@@ -19,6 +19,11 @@ intelligence, confidence, blueprint, pronunciation, curriculum and competency la
 - Every educational path resolves through MKOS before AI: database, registries, knowledge objects, knowledge graph, educational assets,
   learner state, recommendation engine, curriculum engine, then AI. AI teaches, coaches, explains and personalizes; it is never the
   database, the knowledge repository, the blueprint interpreter or the question repository.
+- Educational assets are governed MKOS assets, not disposable AI output (owner directive, 10/18/2026): retrieve first, generate only
+  when needed. Every educational asset kind (lessons and audio lessons, questions, flashcards, board review content, cases, and any new
+  kind) asks `asset_find` before writing and stores what it writes with `asset_put` after its accuracy review (`src/mkos/assets.js`,
+  `mkos/ontology/assets.json`; app helpers `mkA`, `mkShare`, `mkStore`). Generate only when no asset exists, it was superseded, the
+  guideline changed, the blueprint weighting changed materially, or the learner needs a personalized adaptation (stored as their own).
 - Existing features that do not yet consume MKOS are migration candidates; migrate them progressively, without breaking them.
 - In the app, the MKOS layer is the block headed "MKOS: the app's knowledge and learning operating system" in `app/companion.html`
   (`mk()`, `mkLoad()`, `mkTopic()`, `mkBlock()`, the MKOS cards and the Knowledge tab). Generation, the tutor, the planner weights,

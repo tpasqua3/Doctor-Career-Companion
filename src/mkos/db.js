@@ -76,6 +76,10 @@ export const TABLES = [
      PRIMARY KEY (blueprint_id, asset_id))`,
   `CREATE TABLE IF NOT EXISTS mk_learner_blueprint (learner_id TEXT PRIMARY KEY, selected_blueprint_family TEXT NOT NULL, selected_blueprint_id TEXT, source TEXT, updated TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS learner_blueprint ON mk_learner_blueprint (learner_id, selected_blueprint_id)`,
+  // Educational assets as governed MKOS objects (assets.js): the content of each version, and who has been served which asset.
+  `CREATE TABLE IF NOT EXISTS mk_asset_store (asset_id TEXT NOT NULL, version TEXT NOT NULL, content TEXT NOT NULL, bytes INTEGER NOT NULL, at TEXT NOT NULL, PRIMARY KEY (asset_id, version))`,
+  `CREATE TABLE IF NOT EXISTS mk_asset_usage (asset_id TEXT NOT NULL, user_id TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (asset_id, user_id))`,
+  `CREATE INDEX IF NOT EXISTS mk_asset_usage_user ON mk_asset_usage (user_id, kind)`,
 ];
 
 let ready = '';

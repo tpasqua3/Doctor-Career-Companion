@@ -44,7 +44,8 @@
         "legacy_app_data",
         "blueprint_import",
         "derived",
-        "learner_event"
+        "learner_event",
+        "ai_generation"
       ]
     },
     "agent": {

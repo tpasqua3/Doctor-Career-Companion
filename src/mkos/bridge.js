@@ -31,7 +31,17 @@ async function topicPriorities(env, uid, bpId) {
 export async function assetFlags(env, u) {
   const { results } = await env.DB.prepare("SELECT body FROM mk_objects WHERE id LIKE ? AND json_array_length(COALESCE(json_extract(body, '$.needs'), '[]')) > 0").bind('ea.' + U(u.id) + '.%').all();
   const out = {}; for (const r of results) { const o = J(r.body); out[o.store?.item_id || o.id] = { needs: o.needs, status: o.review_status, kind: o.asset_kind, path: o.store?.path }; }
+  // Shared library assets this learner was served that are now flagged (a guideline changed, or someone reported a problem).
+  const sh = await env.DB.prepare("SELECT o.body FROM mk_asset_usage g JOIN mk_objects o ON o.id = g.asset_id WHERE g.user_id = ? AND json_array_length(COALESCE(json_extract(o.body, '$.needs'), '[]')) > 0 LIMIT 300").bind(String(u.id)).all().catch(() => ({ results: [] }));
+  for (const r of sh.results) { const o = J(r.body); out[o.id] = { needs: o.needs, status: o.review_status, kind: o.asset_kind, path: 'mkos' }; }
   return { flags: out };
+}
+
+// The shared educational asset library at a glance, and how much of this learner's material came from it (retrieve-first progress).
+async function assetSummary(env, u) {
+  const lib = (await env.DB.prepare("SELECT json_extract(body, '$.asset_kind') AS k, COUNT(*) AS n FROM mk_objects WHERE type = 'EducationalAsset' AND id LIKE 'ea.s.%' AND status = 'current' AND json_extract(body, '$.review_status') = 'validated' GROUP BY k").all().catch(() => ({ results: [] }))).results;
+  const mine = (await env.DB.prepare('SELECT kind, COUNT(*) AS n FROM mk_asset_usage WHERE user_id = ? GROUP BY kind').bind(String(u.id)).all().catch(() => ({ results: [] }))).results;
+  return { library: Object.fromEntries(lib.map((r) => [r.k, r.n])), served: Object.fromEntries(mine.map((r) => [r.kind, r.n])) };
 }
 
 export async function appBundle(env, u, { owner = false, app_kind = null } = {}) {
@@ -60,6 +70,7 @@ export async function appBundle(env, u, { owner = false, app_kind = null } = {})
     topics: await topicPriorities(env, u.id, sel.blueprint_id),
     flags: (await assetFlags(env, u)).flags, pronunciations: await ttsList(env),
     knowledge: { objects: kn, sources: ingest },
+    assets: await assetSummary(env, u),
   };
 }
 
@@ -94,10 +105,12 @@ export async function topicContext(env, u, tid, { name = '' } = {}) {
   for (const r of recs.slice(0, 10)) lines.push(`- [${r.strength_original || r.strength} / LOE ${r.loe_original || r.evidence_level}] ${r.statement} (${r.cite ? r.cite.label : 'source'}${r.governance === 'pending_validation' ? ', extracted, pending validation' : ''})`);
   if (!recs.length && !fams.length) lines.push('- No extracted recommendations or matching guideline families yet; rely on the reference text and current major-society guidance, and list anything to verify.');
   if (bp) lines.push(`- Board weighting (${sel.family}): priority ${Math.round(bp.priority_score)}/100, frequency ${Math.round(bp.frequency_score)}/100.`);
+  // A shared educational asset is written from everything above but not from one learner's state (assets.json shared_prompt_excludes_learner_state).
+  const shared = lines.slice();
   if (st) lines.push(`- This learner: mastery ${Math.round(st.mastery)}/100, system confidence ${Math.round(st.confidence)}/100, state ${st.knowledge_state}${st.calibration && st.calibration.incorrect_confident ? ', has been wrong while confident here (address the misconception)' : ''}.`);
   return { tid, node: node ? { id: node.id, name: node.name, concepts: node.concepts || [] } : null, concept: ctx ? ctx.concept : null, recommendations: recs, guidelines: fams, related: ctx ? ctx.related : [],
     blueprint: { selection: sel, mapping: bp }, learner: st, scores, pronunciations: prons, existing_assets: assets, stop_the_line: ctx ? ctx.stop_the_line : [],
-    prompt_block: lines.join('\n'), route: recs.length ? 'graph' : fams.length ? 'registry' : cid ? 'database' : 'ai' };
+    prompt_block: lines.join('\n'), prompt_block_shared: shared.join('\n'), route: recs.length ? 'graph' : fams.length ? 'registry' : cid ? 'database' : 'ai' };
 }
 
 export async function checkCitations(env, citations) {
