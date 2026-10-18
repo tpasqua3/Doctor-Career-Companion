@@ -1405,8 +1405,8 @@ async function api(request, env, url, ctx) {
 
 /* ---------- MKOS: what the knowledge engine may use from this server ----------
    Drive access goes through the same owner credential and the same library check as the rest of the site; the MKOS folder in the
-   central registry folder (MKOS_DRIVE_FOLDER) is the only place it writes. AI extraction uses the existing hierarchy unchanged, as the
-   'notes' (housekeeping) job under its own usage account 'mkos', so it never spends a learner's allowance. */
+   central registry folder (MKOS_DRIVE_FOLDER) is the only place it writes. AI extraction calls only the free services, directly, under
+   its own usage account 'mkos', so the AI hierarchy is unchanged and no learner's allowance (or paid service) is spent. */
 const mkRoots = env => ({ root: KNOW(env), mirrorRoot: str(env.MKOS_DRIVE_FOLDER, 200) });
 function mkDeps(env) {
   const META = 'nextPageToken,files(id,name,mimeType,parents,size,md5Checksum,modifiedTime)';
@@ -1430,9 +1430,17 @@ function mkDeps(env) {
     userDocs: docsOf,
     ownerDocs: async prefixes => docsOf(await ownerId(env), prefixes),
     changedUsers: async () => (await env.DB.prepare("SELECT user_id, MAX(updated) AS updated FROM docs WHERE path = 'med/state' OR path LIKE 'med/les_%' OR path LIKE 'med/bank_%' OR path LIKE 'med/cards_%' GROUP BY user_id").all()).results,
-    ai: (geminiKey(env) || env.ANTHROPIC_API_KEY || deepseekKey(env)) && env.MKOS_AI !== 'off' ? async prompt => {
-      const r = await runAI(env, { id: 'mkos', email: '' }, { input: prompt, tier: 'quick', job: 'notes' });
-      if (r.status !== 200) { const e = new Error(r.error || 'AI unavailable'); throw e; } return r.text; } : null,
+    /* Free services only (Gemini's free tier, then Cloudflare Workers AI), called directly so a paid service is never reached and the
+       app's AI hierarchy is untouched. Usage is counted under the account 'mkos'. */
+    ai: (geminiKey(env) || env.AI) && env.MKOS_AI !== 'off' ? async prompt => {
+      const messages = [{ role: 'user', content: prompt }]; let last = null;
+      for (const id of ['gemini', 'llama']) {
+        if (!hasProvider(env, id)) continue;
+        try { const out = await SERVICE[id].run(env, messages, 'quick'); if (out && out.text) {
+          await env.DB.prepare('INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, ?, 1) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + 1').bind('mkos', today(), id).run();
+          return out.text; } } catch (e) { last = e; }
+      }
+      throw last || new Error('No free AI service answered'); } : null,
   };
 }
 async function mkTickSafe(env) {

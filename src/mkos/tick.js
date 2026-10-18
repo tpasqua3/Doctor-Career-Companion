@@ -79,7 +79,8 @@ async function runJob(env, deps, job) {
       if (!src || src.status === 'retired' || src.ingest_state === 'skipped') { await save('done', 'nothing to extract'); return true; }
       if ((src.bytes || 0) > 25e6) { await save('failed', 'file over 25 MB: split it into chapters (or keep it as Google Docs) to have it read'); return true; }
       if (!p.loaded) { try { p.chunks = await loadText(env, deps, src); p.loaded = true; await save('running'); } catch (e) { if (e.budget) throw e; await save(job.tries >= 3 ? 'failed' : 'queued', 'text: ' + (e.message || e)); return job.tries >= 3; } }
-      for (let k = 0; k < (p.per_run || 1); k++) {
+      const per = Number(FRAMEWORK.frameworks.ingestion.extraction.parts_per_run) || 1;
+      for (let k = 0; k < per; k++) {
         const r = await extractStep(env, deps, src, { event_id: p.event_id, allowAI: !!deps.ai });
         if (r.waiting) { await save('queued', 'waiting for tomorrow\'s AI budget'); await env.DB.prepare('UPDATE mk_jobs SET not_before = ? WHERE id = ?').bind(Date.now() + 3600e3, job.id).run(); return false; }
         if (r.done) { await finishSource(env, src, { event_id: p.event_id }); await save('done', `${p.chunks || 0} parts`); return true; }

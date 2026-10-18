@@ -62,8 +62,8 @@ Owner: `events`, `jobs`, `audit`, `review {id, result, note}`, `edit {object}`, 
 `ingestion.extraction.daily_ai_budget_default`), `rescan`, `requeue`, `tick`, `graph_validation`, `compat_registry`,
 `cutover_validate`, `cutover_retire {confirm: true}`, `cutover_rollback`.
 
-AI extraction runs as the existing `notes` (housekeeping) job under its own usage account, so the AI hierarchy is unchanged and no
-learner's allowance is spent. Variables: `MKOS=off` pauses the engine; `MKOS_AI=off` keeps extraction to rules only.
+AI extraction calls only free services (Gemini's quick model on the free tier, then Cloudflare Workers AI), directly and under its own
+usage account `mkos`: a paid service is never reached, the app's AI hierarchy is unchanged and no learner's allowance is spent. Variables: `MKOS=off` pauses the engine; `MKOS_AI=off` keeps extraction to rules only.
 
 ## Retiring the legacy guideline registry (`guidelines_registry_v6_CURRENT.json`)
 

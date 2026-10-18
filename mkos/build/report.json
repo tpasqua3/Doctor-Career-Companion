@@ -1,5 +1,5 @@
 {
-  "built": "2026-10-18T02:14:56.950Z",
+  "built": "2026-10-18T02:20:14.030Z",
   "errors": 0,
   "warnings": [],
   "counts": {
@@ -17,10 +17,10 @@
     "layers": 11,
     "stop_the_line_conditions": 8
   },
-  "framework_hash": "b2f62c2d3707c1cb",
+  "framework_hash": "fbafe99e77952c57",
   "versions": {
     "competencies": "1.0.0",
-    "ingestion": "1.0.1",
+    "ingestion": "1.0.2",
     "ontology": "1.0.0",
     "scoring": "1.0.0",
     "source_classes": "1.0.0",

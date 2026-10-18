@@ -2,7 +2,7 @@
   "id": "framework.ingestion",
   "type": "Framework",
   "name": "Ingestion and knowledge currency pipeline",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "status": "current",
   "created_date": "2026-10-17",
   "updated_date": "2026-10-17",
@@ -22,6 +22,11 @@
       "version": "1.0.1",
       "date": "2026-10-17",
       "summary": "Scanner no longer skips 'Guidelines and Backend'; AI policy per extraction depth; rule-parsed recommendations are linked to concepts by alias matching."
+    },
+    {
+      "version": "1.0.2",
+      "date": "2026-10-17",
+      "summary": "Extraction AI restricted to free services; 3 parts per run; daily budget 250."
     }
   ],
   "watch": {
@@ -140,9 +145,9 @@
       "metadata (DOI, journal, year) from first pages by pattern",
       "concept resolution by alias table before AI"
     ],
-    "ai_step": "Only for text that rules could not structure; the AI returns JSON in the extraction contract; results enter as pending_validation with confidence capped at scoring.ai_extraction_cap.",
-    "daily_ai_budget_default": 120,
-    "budget_note": "Shares the site's Gemini allowance with teaching, so the default is low; the owner raises it on the MKOS admin card.",
+    "ai_step": "Only for text that rules could not structure; free services only (Gemini free tier, then Cloudflare Workers AI), never a paid service; the AI returns JSON in the extraction contract; results enter as pending_validation with confidence capped at scoring.ai_extraction_cap.",
+    "daily_ai_budget_default": 250,
+    "budget_note": "Calls use the quick (flash-lite) Gemini model, a separate free quota from the default model that writes lessons. The owner changes the budget with settings {path: 'ingestion.extraction.daily_ai_budget_default'}.",
     "ai_policy": {
       "recommendations": "AI only for parts where no graded recommendation table was found",
       "index_and_facets": "AI on every part (concept index and abstracted facts, in the app's own words)",
@@ -150,7 +155,8 @@
       "claims": "AI on every part",
       "evidence": "AI on every part",
       "index_only_parts": 3
-    }
+    },
+    "parts_per_run": 3
   },
   "validation": [
     "schema valid",
