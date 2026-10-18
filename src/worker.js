@@ -1465,6 +1465,7 @@ async function api(request, env, url, ctx) {
    central registry folder (MKOS_DRIVE_FOLDER) is the only place it writes. AI extraction calls only the free services, directly, under
    its own usage account 'mkos', so the AI hierarchy is unchanged and no learner's allowance (or paid service) is spent. */
 const mkRoots = env => ({ root: KNOW(env), mirrorRoot: str(env.MKOS_DRIVE_FOLDER, 200) });
+let rangeStatus = null;
 function mkDeps(env) {
   const META = 'nextPageToken,files(id,name,mimeType,parents,size,md5Checksum,modifiedTime)';
   const shape = f => ({ id: f.id, title: f.name, mimeType: f.mimeType, parentId: (f.parents || [])[0] || '', fileSize: f.size || '', md5: f.md5Checksum || '', modifiedTime: f.modifiedTime || '' });
@@ -1498,7 +1499,17 @@ function mkDeps(env) {
     // A file in the MKOS folder itself (canonical storage), read back only for a restore or its verification.
     readMine: async fileId => await (await gfetch(env, 'files/' + fileId, { alt: 'media' })).json(),
     /* A byte range of a library file: large sources are indexed from their table of contents without downloading them whole. */
-    readRange: async (fileId, start, end) => new Uint8Array(await (await driveBytes(env, fileId, 'bytes=' + start + '-' + end)).arrayBuffer()),
+    readRange: async (fileId, start, end) => {
+      const r = await driveBytes(env, fileId, 'bytes=' + start + '-' + end); rangeStatus = r.status;
+      if (r.status === 206) return new Uint8Array(await r.arrayBuffer());
+      /* Google answered with the whole file: read only up to the end of the range, then stop the download. */
+      const reader = r.body.getReader(), want = end + 1, parts = []; let got = 0;
+      while (got < want) { const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length; }
+      try { await reader.cancel(); } catch { }
+      const all = new Uint8Array(got); let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
+      return all.subarray(start, Math.min(got, want));
+    },
+    lastRangeStatus: () => rangeStatus,
     mkosRoot: env.MKOS_DRIVE_FOLDER || null,
     changedUsers: async () => (await env.DB.prepare("SELECT user_id, MAX(updated) AS updated FROM docs WHERE path = 'med/state' OR path LIKE 'med/les_%' OR path LIKE 'med/bank_%' OR path LIKE 'med/cards_%' GROUP BY user_id").all()).results,
     /* Free services only (Gemini's free tier, then Cloudflare Workers AI), called directly so a paid service is never reached and the
