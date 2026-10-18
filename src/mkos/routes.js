@@ -115,7 +115,7 @@ const OPS = {
     const size = Number(a.size) || 0; if (!size) return { error: 'size (bytes) required' };
     const t0 = Date.now(), log = [], limit = Math.min(150e3, Number(a.ms) || 90e3);
     const read = async (s, e) => { if (Date.now() - t0 > limit) throw new Error('time limit reached'); const t = Date.now(); const b = await x.deps.readRange(id, s, e); log.push({ at: s, ms: Date.now() - t, bytes: b.length }); return b; };
-    let r; try { r = await pdfOutline(read, size, { maxReads: Number(a.max_reads) || 400 }); } catch (e) { return { error: String(e.message || e), reads: log.length, ms: Date.now() - t0, read_log: log.slice(0, 30) }; }
+    let r; try { r = await pdfOutline(read, size, { maxReads: Number(a.max_reads) || 120 }); } catch (e) { return { error: String(e.message || e), reads: log.length, ms: Date.now() - t0, read_log: log.slice(0, 30) }; }
     return { items: r.items.length, chapters: r.items.filter((i) => i.level === 1).length, pages: r.pages || null, reason: r.reason || null, reads: log.length, ms: Date.now() - t0, read_ms: log.map((l) => l.ms).slice(0, 20), read_bytes: log.map((l) => l.bytes).slice(0, 20), status: x.deps.lastRangeStatus ? x.deps.lastRangeStatus() : null, first: r.items.slice(0, Math.min(40, Number(a.n) || 15)) };
   } },
   // The persistence ledger: every file's queued, persisted, failed, retried and reconciled entries (newest first).

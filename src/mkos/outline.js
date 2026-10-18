@@ -73,11 +73,14 @@ export function pdfText(u8) {
 }
 
 // ---------- reading the file by byte ranges ----------
-export async function pdfOutline(read, size, { maxItems = 4000, maxDepth = 4, maxReads = 400 } = {}) {
+export async function pdfOutline(read, size, { maxItems = 4000, maxDepth = 4, maxReads = 120 } = {}) {
   let reads = 0;
-  const cache = new Map();   // fixed 64 KB blocks
-  const BLOCK = 65536;
-  const block = async (i) => { if (cache.has(i)) return cache.get(i); if (++reads > maxReads) throw new Error('too many reads for this file'); const s = i * BLOCK, e = Math.min(size, s + BLOCK) - 1; const v = await read(s, e); cache.set(i, v); return v; };
+  // Fixed 1 MB blocks, the last 24 kept: each Drive range request costs seconds of latency whatever its size, so few large reads beat
+  // many small ones.
+  const cache = new Map(), BLOCK = 1 << 20, KEEP = 24;
+  const block = async (i) => { if (cache.has(i)) { const v = cache.get(i); cache.delete(i); cache.set(i, v); return v; }
+    if (++reads > maxReads) throw new Error('too many reads for this file'); const s = i * BLOCK, e = Math.min(size, s + BLOCK) - 1; const v = await read(s, e);
+    cache.set(i, v); if (cache.size > KEEP) cache.delete(cache.keys().next().value); return v; };
   const bytes = async (start, len) => {
     const end = Math.min(size, start + len), out = new Uint8Array(end - start);
     for (let i = Math.floor(start / BLOCK); i * BLOCK < end; i++) { const b = await block(i), bs = i * BLOCK; const from = Math.max(start, bs), to = Math.min(end, bs + b.length); out.set(b.subarray(from - bs, to - bs), from - start); }
