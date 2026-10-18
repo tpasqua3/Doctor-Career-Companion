@@ -1785,7 +1785,7 @@ function vProgress(){const w=span(7),mo=span(monthSoFar()),all=Object.values(st.
   const last=Array.from({length:28},(_,i)=>{const k=dayStr(back(27-i));return (st.days[k]||{}).min||0}),mx=Math.max(10,...last);
   const cal=Object.values(TOP).filter(t=>overconfident(t.id)),weak=Object.values(TOP).map(t=>({t,m:mastery(t.id)})).filter(x=>x.m!=null&&st.topics[x.t.id].n>=4).sort((a,b)=>a.m-b.m).slice(0,6);
   const neglected=Object.values(TOP).filter(t=>{const s=st.topics[t.id];return s&&s.last&&(Date.now()-s.last)/864e5>30}).slice(0,6);
-  return `<div class="plain"><h1>Progress</h1></div>${mkProgressCard()}
+  return `<div class="plain"><h1>Progress</h1></div>${mkBuildCard()}${mkProgressCard()}
   <div class="card"><h3>Consistency</h3><div class="figs"><div class="fig"><b>${streak()}</b><span>current streak, days</span></div><div class="fig"><b>${st.best||0}</b><span>longest streak</span></div><div class="fig"><b>${wAct}/7</b><span>days this week (${pct(wAct,7)}%)</span></div><div class="fig"><b>${mo.act}/${monthSoFar()}</b><span>days this month (${pct(mo.act,monthSoFar())}%)</span></div></div>
    <div class="figs"><div class="fig"><b>${hm(day().min)}</b><span>today</span></div><div class="fig"><b>${hm(w.min)}</b><span>last 7 days</span></div><div class="fig"><b>${hm(mo.min)}</b><span>this month</span></div><div class="fig"><b>${hm(tot)}</b><span>all time</span></div></div>
    <div class="figs"><div class="fig"><b>${hm(w.min/7)}</b><span>average per day, last 7</span></div><div class="fig"><b>${actDays?hm(tot/actDays):'—'}</b><span>average per active day</span></div><div class="fig"><b>${hm(lis)}</b><span>listening, all time</span></div><div class="fig"><b>${tot?pct(lis,tot)+'%':'—'}</b><span>of time spent listening</span></div></div>
@@ -1988,6 +1988,7 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='bpreset'){if(!bpOwn())return;const k=docs.blueprint.moc?'moc':'cert';del('blueprint');st.prefs.bpKind=k;applyBlueprint();CS=null;saveState();render();toast('Removed. Boards is back on the built-in '+(k==='moc'?'recertification':'Certification')+' blueprint.',5000);return}
   if(a==='listen'){if(S.session)playSession();else playLesson(S.lesson);render();return}
   if(a==='nextlesson')return advance();
+  if(a==='mkbuild'){mkLoad(true);return}
   if(a==='hqx'){S.hq=null;render();return}
   if(a==='hisq')return hisQuestions(b.dataset.id,Math.min(30,Math.max(1,Math.round(Number(($('#hqn')||{}).value))||5)));
   if(a==='lesflag'){const L=S.lesson;if(!L||!L.mk||!L.mk.id)return;mkA('asset_flag',{id:L.mk.id,reason:'Reported from the lesson screen'}).then(r=>{if(r&&r.ok){L.mk.flagged=1;const d=docs['les_'+L.id];if(d){d.mk=L.mk;put('les_'+L.id,d)}toast('Reported. MKOS will not serve this lesson again until it is reviewed.');render()}else toast('Could not report it just now. Try again in a moment.')});return}
@@ -2172,6 +2173,18 @@ function mkBoardsCard(){if(!mkOn())return'';if(!MK)return mkWait();const B=MK.bo
    <h3>Domain weights</h3>${A(B.domains).slice(0,10).map(d=>`<div class="row between" style="flex-wrap:nowrap"><span class="small" style="min-width:0">${esc(d.domain_name)}</span>${mkMeter(d.frequency_score)}</div>`).join('')}</div>`}
 
 /* Progress: the learner model (mastery and confidence tracked separately, retention, calibration, competencies, gaps). */
+/* The knowledge build, for the owner: how far MKOS has come in reading the library and building knowledge objects, stage by stage
+   (counted on the server, src/mkos/progress.js). A milestone is recorded the first time each stage completes. */
+function mkBuildCard(){const B=MK&&MK.owner&&MK.build;if(!mkOn()||!B)return'';const st=B.stages||{},M=B.milestones||{};
+  const when=t=>t?new Date(t).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+  const row=(k,x)=>`<div class="row between" style="flex-wrap:nowrap;gap:10px"><span class="small" style="min-width:0">${esc(x.name||k)}${M[k]?` <span class="tiny muted">done ${when(M[k])}</span>`:''}</span><span class="row" style="flex-wrap:nowrap;gap:8px;min-width:140px"><span class="meter"><i style="width:${Math.max(0,Math.min(100,x.percent))}%"></i></span><b class="small">${Math.floor(x.percent)}%</b></span></div>`;
+  const ex=st.extraction&&st.extraction.detail||{},kn=st.knowledge&&st.knowledge.detail||{},rg=st.registration&&st.registration.detail||{};
+  return `<div class="card"><div class="row between"><h2>Knowledge build</h2><button class="btn link" data-act="mkbuild">Refresh</button></div>
+   <p class="small muted">${B.complete?`Complete${M.ingestion_complete?' since '+when(M.ingestion_complete):''}. MKOS keeps itself current from here.`:'MKOS is reading the library and building knowledge objects. It works on this every few minutes on its own.'}</p>
+   <div class="figs"><div class="fig"><b>${Math.floor(B.overall)}%</b><span>overall</span></div><div class="fig"><b>${rg.sources||0}</b><span>sources</span></div><div class="fig"><b>${ex.finished||0}/${ex.sources_to_read||0}</b><span>sources read</span></div><div class="fig"><b>${kn.decomposed||0}/${kn.recommendations||0}</b><span>recommendations decomposed</span></div></div>
+   ${Object.entries(st).map(([k,x])=>row(k,x)).join('')}
+   ${ex.exceptions?`<p class="small"><b>Needs attention.</b> ${ex.exceptions} source${ex.exceptions>1?'s':''} could not be read: ${A(ex.exception_reasons).map(r=>esc(r.reason)+' ('+r.n+')').join(', ')}.</p>`:''}
+   <p class="tiny muted">Updated ${when(B.at)}.</p></div>`}
 function mkProgressCard(){if(!mkOn())return'';if(!MK)return mkWait();const s=MK.summary||{},c=s.calibration||{},K=MK.knowledge||{},ko=K.objects||{},ks=K.sources||{};
   const tab=(rows,empty)=>rows.length?rows.map(x=>`<div class="row between" style="flex-wrap:nowrap"><span class="small" style="min-width:0">${esc(x.name)}</span><span class="row" style="flex-wrap:nowrap;gap:10px">${mkMeter(x.mastery)}<span class="tiny muted" title="system confidence">conf ${Math.round(x.confidence)}</span></span></div>`).join(''):`<p class="small muted">${empty}</p>`;
   return `<div class="card"><h2>Learner model</h2><p class="small muted">Computed by MKOS from every answer, card rating and lesson. Mastery is what you know; confidence is how sure the system is of that estimate.</p>

@@ -3,6 +3,7 @@
 //   topicContext  the governed package for one curriculum topic, including a prompt block the app hands to its AI (AI as teacher only)
 //   checkCitations  citations as written -> current / older edition / unmatched (Superseded Guideline Usage, stop-the-line)
 //   assetFlags    this learner's lessons, questions and cards that MKOS has flagged for review or regeneration
+import { progress } from './progress.js';
 import { FRAMEWORK } from './framework.js';
 import { J, nowIso } from './db.js';
 import { getObject, getObjects, norm } from './kb.js';
@@ -72,6 +73,8 @@ export async function appBundle(env, u, { owner = false, app_kind = null } = {})
     knowledge: { objects: kn, sources: ingest },
     assets: await assetSummary(env, u),
     registry: await sourceRegistry(env),
+    // The owner sees the knowledge build's progress on the MKOS card (progress.js).
+    build: owner ? await progress(env).catch(() => null) : null,
   };
 }
 

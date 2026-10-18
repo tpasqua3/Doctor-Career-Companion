@@ -154,6 +154,7 @@ export async function scanStep(env, deps, rootId, { pages = 1, actor = 'scanner'
         else { out.files++; const r = await registerFile(env, f, cur.cur.path, { actor, sweep: cur.sweep }); if (r) out.changes.push(r); }
         cur.cur.index = i + 1;
       }
+      if (!page.next) cur.done_folders = (cur.done_folders || 0) + 1;   // for the progress display (progress.js)
       cur.cur = page.next ? { ...cur.cur, token: page.next, index: 0 } : null;
     }
     if (!cur.cur && !cur.queue.length) {

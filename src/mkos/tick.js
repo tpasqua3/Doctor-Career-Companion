@@ -11,6 +11,7 @@ import { analyzeImpact, rescore } from './impact.js';
 import { seedFramework, importBlueprint, importCurriculum, mapLearnerAssets } from './education.js';
 import { deriveFromRecord } from './learner.js';
 import { mirrorStep, snapshot } from './mirror.js';
+import { checkMilestones } from './progress.js';
 import { syncOwner, generateCandidates, termsNeedingPronunciation } from './pronounce.js';
 import { aiBudgetLeft } from './extract.js';
 import { projectBlueprint, evolve, parseBlueprintText, familyOf } from './blueprint.js';
@@ -269,6 +270,8 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
     else if (PLATFORM.test(String(e.message || e))) { platformHit = true; report.steps.push('platform limit: ' + e.message); }
     else { report.error = String(e.message || e).slice(0, 300); console.error('mkos tick', e); }
   }
+  // Milestones: the first time a stage of the knowledge build completes, and when ingestion as a whole is complete (progress.js).
+  try { const ms = await checkMilestones(rawEnv); report.progress = ms.overall; if (ms.fresh.length) report.steps.push('milestone: ' + ms.fresh.join(', ')); } catch (e) { report.steps.push('progress: ' + String(e.message || e).slice(0, 80)); }
   // Self-tuning: grow 25% after a clean run that used its budget; drop to a safe 28 after a platform limit.
   const next = platformHit ? 28 : meter.n >= budget && !tickSt.capped ? Math.round(budget * 1.25) : budget;
   report.used = meter.n;

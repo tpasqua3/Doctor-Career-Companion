@@ -16,6 +16,7 @@ import { appBundle, topicContext, checkCitations, assetFlags } from './bridge.js
 import { ttsList } from './pronounce.js';
 import { findAsset, putAssets, flagAsset, reviewAsset, assetStats } from './assets.js';
 import { durability, mirrorStep, persistNow } from './mirror.js';
+import { progress } from './progress.js';
 import { restoreStep, drillStep } from './restore.js';
 import { dashboard as pronDashboard, flag as pronFlag, approve as pronApprove, rejectCandidate, syncOwner, pronId } from './pronounce.js';
 
@@ -105,6 +106,8 @@ const OPS = {
   persist: { owner: true, run: async (env, u, a, x) => withLease(env, async () => {
     try { return await mirrorStep(env, x.deps, x.deps.mkosRoot, { max: Math.max(1, Math.min(40, Number(a.max) || 20)) }); }
     catch (e) { await noteMirrorError(env, e); return { error: String(e.message || e).slice(0, 300) }; } }) },
+  // How far the knowledge build has come: percent per stage and overall, the milestones reached, failed jobs (progress.js).
+  progress: { owner: false, run: async (env) => progress(env) },
   // The persistence ledger: every file's queued, persisted, failed, retried and reconciled entries (newest first).
   persistence: { owner: true, run: async (env, u, a) => ({ ledger: (await env.DB.prepare(`SELECT at, key, state, detail FROM mk_persist_log ${a.state ? 'WHERE state = ?' : ''} ORDER BY id DESC LIMIT ?`).bind(...(a.state ? [String(a.state)] : []), Math.max(1, Math.min(500, Number(a.limit) || 100))).all()).results,
     counts_7d: (await env.DB.prepare('SELECT state, COUNT(*) AS n FROM mk_persist_log WHERE at >= ? GROUP BY state').bind(new Date(Date.now() - 7 * 864e5).toISOString()).all()).results }) },
