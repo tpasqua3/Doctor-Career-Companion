@@ -921,7 +921,7 @@ async function sweep(env) {
   (await env.DB.prepare("SELECT DISTINCT x.user_id AS id FROM drive_docs x LEFT JOIN docs d ON d.user_id = x.user_id AND d.path = x.path WHERE d.path IS NULL LIMIT 2").all()).results.forEach(r => ids.add(r.id));
   (await env.DB.prepare("SELECT a.user_id AS id FROM drive_accounts a WHERE a.folder IS NOT NULL AND EXISTS (SELECT 1 FROM docs d WHERE d.user_id = a.user_id AND substr(d.updated, 1, 10) > COALESCE(a.backup_day, '')) LIMIT 2").all()).results.forEach(r => ids.add(r.id));
   for (const id of ids) { if (B.n <= 6) break; await syncUser(env, id, B); }
-  return ids.size;
+  return 34 - B.n;   // Google requests this run spent
 }
 
 /* ---------- The privacy policy and terms of service ----------
@@ -1544,8 +1544,10 @@ export default {
      mirror). Splitting the run this way keeps each invocation inside the platform's per-run limits. */
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
-      const busy = await sweep(env).catch(e => { console.error(e); return 1; });
-      if (!busy && env.MKOS !== 'off') await mkTickSafe(env);
+      const spent = await sweep(env).catch(e => { console.error(e); return 34; });
+      /* MKOS runs when the sweep had little to copy, and in every third run regardless, so it is never starved. */
+      const third = Math.floor(new Date(event.scheduledTime || Date.now()).getUTCMinutes() / 5) % 3 === 0;
+      if (env.MKOS !== 'off' && (spent <= 6 || (third && spent <= 20))) await mkTickSafe(env);
     })());
   },
   async fetch(request, env, ctx) {

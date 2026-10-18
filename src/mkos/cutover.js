@@ -9,7 +9,7 @@
 //   7 Historical rollback validation     (the legacy registry is rebuilt from MKOS history and must equal the original, field for field)
 //   8 Retire legacy registry             only when 3-7 passed in the last 24 h AND the owner confirms; reversible (rollback()).
 import { J, nowIso, getSetting, setSetting, audit } from './db.js';
-import { getObject } from './kb.js';
+import { getObject, contentHash, norm } from './kb.js';
 import { resolveName, AUTO, matchCitation } from './resolve.js';
 import { orgsOf, topicWords } from './ingest.js';
 import { graphValidation } from './governance.js';
@@ -103,7 +103,8 @@ export async function validateCutover(env, deps, { learnerDocs = {} } = {}) {
     }
     const unresolvedIds = [], unresolvedRefs = [], resolved = [], unresolvedText = [], superseded = [];
     for (const id of ids) { const s = await getObject(env, 'src.' + id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40)); if (!s) unresolvedIds.push(id); }
-    for (const r of refs) { const hit = await resolveName(env, r, { types: ['Source'] }); if (!hit.id) unresolvedRefs.push(r); }
+    // ref_ids resolve whatever the source's status (a superseded or retired legacy entry still resolves).
+    for (const r of refs) { const hit = await env.DB.prepare("SELECT id FROM mk_aliases WHERE alias = ? AND id LIKE 'src.%' LIMIT 1").bind(norm(r)).first(); if (!hit) unresolvedRefs.push(r); }
     const fams = (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'Guideline'").all()).results.map((r) => J(r.body));
     const eds = Object.fromEntries((await env.DB.prepare("SELECT id, body FROM mk_objects WHERE type = 'Source' AND json_extract(body, '$.guideline_family') IS NOT NULL").all()).results.map((r) => [r.id, J(r.body)]));
     for (const [t, where] of texts) {
@@ -130,7 +131,9 @@ export async function validateCutover(env, deps, { learnerDocs = {} } = {}) {
   }
   const pass = Object.values(gates).every((g) => g.pass);
   const result = { at: nowIso(), pass, gates: Object.fromEntries(Object.entries(gates).map(([k, g]) => [k, g])), legacy_file: meta.file, legacy_version: meta.version };
-  await setSetting(env, 'legacy_registry_check', JSON.stringify({ at: result.at, pass, gates: Object.fromEntries(Object.entries(gates).map(([k, g]) => [k, g.pass])) }));
+  // The exact registry that was validated is fingerprinted; retirement publishes it only if nothing has changed since.
+  const compatHash = await contentHash({ c: compat });
+  await setSetting(env, 'legacy_registry_check', JSON.stringify({ at: result.at, pass, compat_hash: compatHash, gates: Object.fromEntries(Object.entries(gates).map(([k, g]) => [k, g.pass])) }));
   await audit(env, 'cutover', 'validate', 'registry.legacy', null, null, { pass, gates: Object.fromEntries(Object.entries(gates).map(([k, g]) => [k, g.pass])) });
   return result;
 }
@@ -138,21 +141,28 @@ export async function validateCutover(env, deps, { learnerDocs = {} } = {}) {
 /* Step 8. deps: {upload({name, parent, text, id}), patch(id, {name, addParents, removeParents}), folders: {registry, oldVersions, mkos}}. */
 export async function retireLegacy(env, deps, { actor, confirm } = {}) {
   if (confirm !== true) return { ok: false, error: 'The owner must confirm (confirm: true).' };
+  if (!deps.folders.registry || !deps.folders.oldVersions) return { ok: false, error: 'MKOS_REGISTRY_FOLDER and MKOS_REGISTRY_OLD_FOLDER must be set.' };
+  const done = J(await getSetting(env, 'cutover'), null);
+  if (done) return { ok: false, error: done.stage === 'complete' ? 'The legacy registry is already retired (roll back first to repeat).' : 'A cutover was started and not finished; roll back first.', cutover: done };
   const chk = J(await getSetting(env, 'legacy_registry_check'), null);
   if (!chk || !chk.pass || Date.now() - Date.parse(chk.at) > 864e5) return { ok: false, error: 'Validation gates 3-7 must all pass within the last 24 hours. Run validate first.', last: chk };
   const meta = J(await getSetting(env, 'legacy_registry'), null), compat = await buildCompatRegistry(env);
+  if ((await contentHash({ c: compat })) !== chk.compat_hash) return { ok: false, error: 'The knowledge changed since validation; run validate again so exactly what is published has been checked.' };
   const name = `guidelines_registry_v${compat.registry_version}_CURRENT.json`;
-  const newId = await deps.upload({ name, parent: deps.folders.registry, text: JSON.stringify(compat, null, 1) });
-  await deps.patch(meta.file, { name: `guidelines_registry_v${meta.version}_OLD.json`, addParents: deps.folders.oldVersions, removeParents: deps.folders.registry });
-  const rec = { at: nowIso(), actor, retired: meta.file, published: newId, name, from_version: meta.version, to_version: compat.registry_version };
+  // Intent first, so a failure part-way leaves a record that rollback can act on.
+  const rec = { at: nowIso(), actor, stage: 'started', retired: meta.file, published: null, name, from_version: meta.version, to_version: compat.registry_version };
+  await setSetting(env, 'cutover', JSON.stringify(rec));
+  rec.published = await deps.upload({ name, parent: deps.folders.registry, text: JSON.stringify(compat, null, 1) }); rec.stage = 'published';
+  await setSetting(env, 'cutover', JSON.stringify(rec));
+  await deps.patch(meta.file, { name: `guidelines_registry_v${meta.version}_OLD.json`, addParents: deps.folders.oldVersions, removeParents: deps.folders.registry }); rec.stage = 'complete';
   await setSetting(env, 'cutover', JSON.stringify(rec));
   await audit(env, actor, 'cutover_retire_legacy', 'registry.legacy', String(meta.version), String(compat.registry_version), rec);
   return { ok: true, ...rec };
 }
 export async function rollbackCutover(env, deps, { actor } = {}) {
   const rec = J(await getSetting(env, 'cutover'), null); if (!rec) return { ok: false, error: 'No cutover to roll back.' };
-  await deps.patch(rec.published, { name: rec.name.replace('_CURRENT', '_ROLLED_BACK'), addParents: deps.folders.mkos, removeParents: deps.folders.registry });
-  await deps.patch(rec.retired, { name: `guidelines_registry_v${rec.from_version}_CURRENT.json`, addParents: deps.folders.registry, removeParents: deps.folders.oldVersions });
+  if (rec.published) await deps.patch(rec.published, { name: rec.name.replace('_CURRENT', '_ROLLED_BACK'), addParents: deps.folders.mkos, removeParents: deps.folders.registry });
+  if (rec.stage === 'complete') await deps.patch(rec.retired, { name: `guidelines_registry_v${rec.from_version}_CURRENT.json`, addParents: deps.folders.registry, removeParents: deps.folders.oldVersions });
   await setSetting(env, 'cutover', null);
   await audit(env, actor, 'cutover_rollback', 'registry.legacy', String(rec.to_version), String(rec.from_version), rec);
   return { ok: true, restored: rec.retired };

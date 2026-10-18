@@ -22,8 +22,13 @@ export async function event(env, kind, subject, detail = {}, stage = 'created') 
 }
 export async function queue(env, kind, subject, payload = {}, priority = 5, delayMs = 0) {
   const now = nowIso();
-  await env.DB.prepare('INSERT OR IGNORE INTO mk_jobs (kind, subject, payload, state, priority, not_before, created, updated) VALUES (?, ?, ?, \'queued\', ?, ?, ?, ?)')
+  const r = await env.DB.prepare('INSERT OR IGNORE INTO mk_jobs (kind, subject, payload, state, priority, not_before, created, updated) VALUES (?, ?, ?, \'queued\', ?, ?, ?, ?)')
     .bind(kind, subject, JSON.stringify(payload), priority, Date.now() + delayMs, now, now).run();
+  // A job for the same subject is already open: restart it with the new event, so a file changed again is never read from stale text.
+  if (!(r.meta && r.meta.changes)) {
+    await env.DB.prepare("UPDATE mk_jobs SET payload = ?, state = 'queued', not_before = 0, updated = ? WHERE kind = ? AND subject = ? AND state IN ('queued','running')").bind(JSON.stringify(payload), now, kind, subject).run();
+    if (kind === 'extract') await env.DB.prepare('DELETE FROM mk_text WHERE source_id = ?').bind(subject).run();
+  }
 }
 
 // ---------- Classification (deterministic) ----------
@@ -41,7 +46,7 @@ export function classify(title, pathParts, mime) {
   if (/textbook/.test(p)) return 'textbook';
   if (/question bank|qbank/.test(p)) return 'question_bank';
   if (/^(cover|contents|table of contents|index|copyright|front matter|title page|editorial board|masthead|information for (authors|readers)|erratum|correction)\b/i.test(t) || /\b(editorial board|table of contents|masthead)\b/i.test(t)) return 'front_matter';
-  if (/^(reply|letter|correspondence|in reply|response to)\b/i.test(t)) return 'research_article';
+  if (/^(reply|letter|correspondence|in reply|response to)(\b|_)/i.test(t)) return 'research_article';
   if (/immunization schedule|vaccine schedule|acip/i.test(t)) return 'immunization_schedule';
   if (/uspstf|preventive services task force|recommendation statement/i.test(t)) return 'preventive_recommendations';
   if (/executive summary/i.test(t)) return 'guideline_executive_summary';
@@ -109,7 +114,7 @@ export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep
   const src = {
     ...(old || {}), id, type: 'Source', name: old?.short_label || cleanTitle(f.title).slice(0, 200) || f.title,
     specialty: old?.specialty?.length ? old.specialty : [specialtyOf(pathParts)].filter(Boolean),
-    status: old?.status && old.status !== 'retired' ? old.status : 'current', governance_status: old?.governance_status || 'pending_validation',
+    status: old?.status && old.status !== 'retired' ? old.status : 'current', governance_status: old?.governance_status || 'pending_validation',   // a file back in the library is current again
     source_class: old?.registry_ref_id ? old.source_class : cls, spec_source_type: c.spec_source_type, drive_file_id: f.id, drive_path: path, mime_type: f.mimeType || '',
     bytes: Number(f.fileSize) || 0, md5: f.md5 || '', drive_modified: f.modifiedTime || '', title: old?.title || f.title,
     responsible_orgs: orgs, year: old?.year || yearOf(f.title, path), population: old?.population || populationOf(f.title, path), copyright: c.copyright,
@@ -118,6 +123,7 @@ export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep
   };
   const ev = await event(env, changed, id, { title: f.title, path, md5: f.md5 || '', prev: prev ? { md5: prev.md5, path: prev.path, title: prev.title } : null });
   await putObject(env, src, { actor, event_id: ev, summary: changed.replace('source_', 'source ') });
+  if (old && old.status === 'retired') await setStatus(env, id, 'current', { actor, event_id: ev, force: true, reason: 'back in the library' });
   if (src.ingest_state === 'queued' && (changed === 'source_added' || changed === 'source_modified')) await queue(env, 'extract', id, { event_id: ev }, src.copyright === 'licensed_no_verbatim' ? 7 : 4);
   if (changed === 'source_added' || changed === 'source_modified') await queue(env, 'family', id, { event_id: ev }, 3);
   if (changed === 'source_modified') await queue(env, 'impact', id, { event_id: ev }, 2);
@@ -130,33 +136,41 @@ export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep
 // not seen in the sweep are marked removed (their sources are retired, never deleted).
 export async function scanStep(env, deps, rootId, { pages = 1, actor = 'scanner' } = {}) {
   let cur = J(await getSetting(env, 'scan'), null);
-  if (!cur || !cur.queue) cur = { sweep: 1, queue: [{ id: rootId, path: [] }], cur: null, started: nowIso() };
+  if (!cur || !cur.queue) { const last = J(await getSetting(env, 'scan_last_complete'), null); cur = { sweep: ((last && last.sweep) || 0) + 1, queue: [{ id: rootId, path: [] }], cur: null, started: nowIso() }; }
   const out = { files: 0, changes: [], folders: 0, sweep: cur.sweep };
-  for (let p = 0; p < pages; p++) {
-    if (!cur.cur) { const next = cur.queue.shift(); if (!next) break; cur.cur = { ...next, token: '' }; }
-    const page = await deps.list(cur.cur.id, cur.cur.token);
-    for (const f of page.files || []) {
-      if (f.mimeType === FOLDER) { if (!SKIP_FOLDERS.some((r) => r.test(f.title))) { cur.queue.push({ id: f.id, path: [...cur.cur.path, f.title] }); out.folders++; } continue; }
-      out.files++;
-      const r = await registerFile(env, f, cur.cur.path, { actor, sweep: cur.sweep });
-      if (r) out.changes.push(r);
+  // The cursor (folder, page token, and the index of the next file on that page) is saved however the run ends, so a run that
+  // stops mid-page resumes at the next file instead of starting the page again.
+  try {
+    for (let p = 0; p < pages; p++) {
+      if (!cur.cur) { const next = cur.queue.shift(); if (!next) break; cur.cur = { ...next, token: '', index: 0 }; }
+      const page = await deps.list(cur.cur.id, cur.cur.token), files = page.files || [];
+      for (let i = cur.cur.index || 0; i < files.length; i++) {
+        const f = files[i];
+        if (f.mimeType === FOLDER) { if (!SKIP_FOLDERS.some((r) => r.test(f.title)) && !cur.queue.some((q) => q.id === f.id)) { cur.queue.push({ id: f.id, path: [...cur.cur.path, f.title] }); out.folders++; } }
+        else { out.files++; const r = await registerFile(env, f, cur.cur.path, { actor, sweep: cur.sweep }); if (r) out.changes.push(r); }
+        cur.cur.index = i + 1;
+      }
+      cur.cur = page.next ? { ...cur.cur, token: page.next, index: 0 } : null;
     }
-    cur.cur = page.next ? { ...cur.cur, token: page.next } : null;
-  }
-  if (!cur.cur && !cur.queue.length) {
-    // Sweep finished: anything not seen this sweep left the library.
-    const { results } = await env.DB.prepare("SELECT drive_file_id, source_id FROM mk_files WHERE sweep < ? AND state != 'removed' LIMIT 200").bind(cur.sweep).all();
-    for (const r of results) {
-      await env.DB.prepare("UPDATE mk_files SET state = 'removed', updated = ? WHERE drive_file_id = ?").bind(nowIso(), r.drive_file_id).run();
-      const ev = await event(env, 'source_removed', r.source_id, { drive_file_id: r.drive_file_id });
-      await setStatus(env, r.source_id, 'retired', { actor, reason: 'no longer in the library', event_id: ev });
-      await queue(env, 'impact', r.source_id, { event_id: ev }, 2);
-      out.changes.push({ id: r.source_id, changed: 'source_removed' });
+    if (!cur.cur && !cur.queue.length) {
+      // Sweep finished: anything not seen this sweep left the library.
+      const { results } = await env.DB.prepare("SELECT drive_file_id, source_id FROM mk_files WHERE sweep < ? AND state != 'removed' LIMIT 50").bind(cur.sweep).all();
+      for (const r of results) {
+        const ev = await event(env, 'source_removed', r.source_id, { drive_file_id: r.drive_file_id });
+        await queue(env, 'impact', r.source_id, { event_id: ev }, 2);           // impact first, while its edges still say what it touched
+        await setStatus(env, r.source_id, 'retired', { actor, reason: 'no longer in the library', event_id: ev });
+        await queue(env, 'family', r.source_id, { event_id: ev }, 3);           // a family may need a new current edition
+        await env.DB.prepare("UPDATE mk_files SET state = 'removed', updated = ? WHERE drive_file_id = ?").bind(nowIso(), r.drive_file_id).run();
+        out.changes.push({ id: r.source_id, changed: 'source_removed' });
+      }
+      if (results.length < 50) {
+        await setSetting(env, 'scan_last_complete', JSON.stringify({ sweep: cur.sweep, finished: nowIso(), started: cur.started }));
+        cur = { sweep: cur.sweep + 1, queue: [{ id: rootId, path: [] }], cur: null, started: nowIso() };
+      }
     }
-    await setSetting(env, 'scan_last_complete', JSON.stringify({ sweep: cur.sweep, finished: nowIso(), started: cur.started }));
-    cur = { sweep: cur.sweep + 1, queue: [{ id: rootId, path: [] }], cur: null, started: nowIso() };
+  } finally {
+    await setSetting(env, 'scan', JSON.stringify(cur));
   }
-  await setSetting(env, 'scan', JSON.stringify(cur));
   return out;
 }
 
@@ -172,11 +186,15 @@ export async function refreshFamily(env, sourceId, { actor = 'system', event_id 
   const fid = src.guideline_family || familyId(src.responsible_orgs || [], src.title);
   if (src.guideline_family !== fid) await putObject(env, { ...src, guideline_family: fid }, { actor, event_id, summary: 'assigned to guideline family ' + fid });
   const { results } = await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'Source' AND status != 'retired' AND json_extract(body, '$.guideline_family') = ?").bind(fid).all();
+  if (!results.length) return { family: fid, editions: 0 };
   const eds = results.map((r) => J(r.body)).filter(Boolean);
   const when = (s) => String(s.published_online || s.issue_date || s.year || '0');
   eds.sort((a, b) => when(b).localeCompare(when(a)));
   const focused = (s) => ING.supersession_detection.focused_update_keywords.some((k) => (s.title || '').toLowerCase().includes(k));
   const newest = eds[0], newestFull = eds.find((s) => !focused(s)) || newest;
+  await addEdges(env, eds.map((s) => ({ src: s.id, rel: 'edition_of', dst: fid, conf: 90, prov: { source_id: s.id, method: 'derived', at: nowIso() } })));
+  const willSupersede = eds.filter((s) => s.id !== newest.id && !(focused(newest) && s.id === newestFull.id) && !s.data?.legacy?.status);
+  if (willSupersede.length) await addEdges(env, willSupersede.map((s) => ({ src: newest.id, rel: 'supersedes', dst: s.id, conf: 85, prov: { source_id: newest.id, method: 'derived', at: nowIso() } })));
   for (const s of eds) {
     if (s.data?.legacy?.status) continue;                // owner registry decides this one
     let want = 'current', role = eds.length === 1 ? 'sole' : 'current';
@@ -184,7 +202,10 @@ export async function refreshFamily(env, sourceId, { actor = 'system', event_id 
       if (focused(newest) && s.id === newestFull.id) { want = 'modified'; role = 'current'; }
       else { want = 'superseded'; role = 'superseded'; }
     } else if (focused(s) && eds.length > 1) role = 'focused_update';
-    if (s.status !== want) await setStatus(env, s.id, want, { actor, event_id, replaced_by: want === 'superseded' ? newest.id : null, reason: 'guideline family ' + fid });
+    if (s.status !== want) {
+      await setStatus(env, s.id, want, { actor, event_id, replaced_by: want === 'superseded' ? newest.id : null, reason: 'guideline family ' + fid, force: true });
+      await queue(env, 'impact', s.id, { event_id }, 2);      // what cites or teaches this edition is flagged
+    }
     if (s.edition_role !== role) { const cur = await getObject(env, s.id); await putObject(env, { ...cur, edition_role: role }, { actor, event_id, summary: 'edition role ' + role, audited: false }); }
   }
   const gl = (await getObject(env, fid)) || {};
@@ -194,8 +215,7 @@ export async function refreshFamily(env, sourceId, { actor = 'system', event_id 
     topic_key: topicKey(newest.title), editions: eds.map((s) => s.id), current_edition: newestFull.id, focused_updates: eds.filter(focused).map((s) => s.id), covers: gl.covers || [],
     provenance: [{ source_id: newest.id, method: 'derived', at: nowIso(), note: 'guideline family from edition titles and organizations' }],
   }, { actor, event_id, summary: 'family refreshed (' + eds.length + ' editions)' });
-  await addEdges(env, eds.map((s) => ({ src: s.id, rel: 'edition_of', dst: fid, conf: 90, prov: { source_id: s.id, method: 'derived', at: nowIso() } })));
-  for (let i = 1; i < eds.length; i++) if (eds[i].status !== 'current') await addEdges(env, [{ src: eds[0].id, rel: 'supersedes', dst: eds[i].id, conf: 85, prov: { source_id: eds[0].id, method: 'derived', at: nowIso() } }]);
+
   return { family: fid, editions: eds.length };
 }
 

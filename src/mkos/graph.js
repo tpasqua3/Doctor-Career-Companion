@@ -13,7 +13,7 @@ export async function addEdges(env, edges) {
   for (const e of edges) (RELS[e.rel] && e.src && e.dst && e.src !== e.dst ? ok : bad).push(e);
   for (let i = 0; i < ok.length; i += 80) {
     await env.DB.batch(ok.slice(i, i + 80).map((e) => env.DB.prepare(`INSERT INTO mk_edges (src, rel, dst, status, conf, prov, created, updated) VALUES (?, ?, ?, 'current', ?, ?, ?, ?)
-      ON CONFLICT (src, rel, dst) DO UPDATE SET status = 'current', conf = MAX(mk_edges.conf, excluded.conf), updated = excluded.updated,
+      ON CONFLICT (src, rel, dst) DO UPDATE SET conf = MAX(mk_edges.conf, excluded.conf), updated = excluded.updated,
       prov = CASE WHEN instr(mk_edges.prov, ?) > 0 THEN mk_edges.prov ELSE substr(mk_edges.prov, 1, length(mk_edges.prov) - 1) || ',' || substr(excluded.prov, 2) END`)
       .bind(e.src, e.rel, e.dst, e.conf ?? 50, JSON.stringify([e.prov || { method: 'derived', at: now }]), now, now, (e.prov && e.prov.source_id) || '"method":"derived"')));
   }
@@ -31,14 +31,16 @@ export async function neighbors(env, id, { rels, include_history = false, limit 
 }
 
 // Breadth-first reach from a set of ids, following any edge (used by impact analysis). Returns id -> depth.
-export async function reach(env, start, { depth = 2, rels = null, cap = 2000 } = {}) {
+// seedAll: the first step from the start set follows edges of any status (a retired or superseded subject still reaches what it touched).
+export async function reach(env, start, { depth = 2, rels = null, cap = 2000, seedAll = false } = {}) {
   const seen = new Map(start.map((s) => [s, 0])); let frontier = [...start];
   for (let d = 1; d <= depth && frontier.length && seen.size < cap; d++) {
     const next = [];
-    for (let i = 0; i < frontier.length; i += 60) {
-      const part = frontier.slice(i, i + 60), ph = part.map(() => '?').join(',');
-      const relq = rels ? ` AND rel IN (${rels.map(() => '?').join(',')})` : '';
-      const { results } = await env.DB.prepare(`SELECT src, dst FROM mk_edges WHERE status = 'current' AND (src IN (${ph}) OR dst IN (${ph}))${relq}`).bind(...part, ...part, ...(rels || [])).all();
+    for (let i = 0; i < frontier.length; i += 40) {     // 2 x 40 ids + rels stays under D1's 100 bound parameters
+      const part = frontier.slice(i, i + 40), ph = part.map(() => '?').join(',');
+      const relq = rels ? ` AND rel IN (${rels.slice(0, 15).map(() => '?').join(',')})` : '';
+      const st = seedAll && d === 1 ? '' : "status = 'current' AND ";
+      const { results } = await env.DB.prepare(`SELECT src, dst FROM mk_edges WHERE ${st}(src IN (${ph}) OR dst IN (${ph}))${relq}`).bind(...part, ...part, ...(rels || []).slice(0, 15)).all();
       for (const r of results) for (const x of [r.src, r.dst]) if (!seen.has(x)) { seen.set(x, d); next.push(x); }
     }
     frontier = next;

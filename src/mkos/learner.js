@@ -102,7 +102,8 @@ export async function deriveFromRecord(env, uid, docs, { actor = 'learner' } = {
     const node = nodes[nodeForTopic(tid)], target = node ? ((node.concepts || [])[0] || node.id) : 'topic:' + tid;
     const at = new Date(Math.max(...s.wrong.map((w) => w.t || 0))).toISOString();
     await env.DB.prepare(`INSERT INTO mk_misconceptions (user_id, object_id, kind, status, n, body, first_seen, last_seen) VALUES (?, ?, 'reasoning_error', 'open', ?, ?, ?, ?)
-      ON CONFLICT (user_id, object_id, kind) DO UPDATE SET n = excluded.n, body = excluded.body, last_seen = excluded.last_seen, status = CASE WHEN mk_misconceptions.status = 'resolved' THEN 'open' ELSE mk_misconceptions.status END`)
+      ON CONFLICT (user_id, object_id, kind) DO UPDATE SET n = excluded.n, body = excluded.body, last_seen = MAX(mk_misconceptions.last_seen, excluded.last_seen),
+        status = CASE WHEN mk_misconceptions.status = 'resolved' AND excluded.last_seen > mk_misconceptions.last_seen THEN 'open' ELSE mk_misconceptions.status END`)
       .bind(uid, target, s.wrong.length, JSON.stringify({ evidence: s.wrong.slice(-10), topic: tid }), at, at).run();
     mis++;
   }

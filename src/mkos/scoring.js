@@ -73,7 +73,7 @@ export function scoreDerived(o, srcScores, ovr) {
     supersession_score: fwGet('scoring.supersession_score', ovr)[o.status] ?? 50,
   };
   // Confidence may not increase downstream: a derived object never outranks its source on authority or freshness.
-  scores.trust_score = Math.min(trust(scores, ovr), srcScores ? srcScores.trust_score + 10 : 100);
+  scores.trust_score = Math.min(trust(scores, ovr), srcScores ? srcScores.trust_score : 100);
   return scores;
 }
 
@@ -106,13 +106,16 @@ export function normalizeStrength(cor, system) {
   const x = F.scoring.recommendation_strength_crosswalk, s = String(cor || '').trim();
   if (!s) return 'unstated';
   if (system && x[system] && x[system][s]) return x[system][s];
+  if (/^(I|IIa|IIb|III)$/.test(s) && system !== 'USPSTF') return { I: 'strong', IIa: 'moderate', IIb: 'weak', III: 'against_moderate' }[s];
   for (const m of Object.values(x)) if (m[s]) return m[s];
-  if (/^1$|class\s*1\b|class\s*i\b|strong/i.test(s)) return 'strong';
-  if (/2a|iia|moderate/i.test(s)) return 'moderate';
-  if (/2b|iib|weak|conditional/i.test(s)) return 'weak';
-  if (/3.*harm|iii.*harm/i.test(s)) return 'against_strong';
-  if (/3|iii|no benefit|against|not recommend/i.test(s)) return 'against_moderate';
-  if (/insufficient|^i$/i.test(s)) return 'insufficient';
+  // Direction first (against / harm / no benefit), then Roman-numeral and Arabic classes, then strength words.
+  if (/harm|strong(ly)? against|strong recommendation against/i.test(s)) return 'against_strong';
+  if (/no benefit|against|not recommend|^(3|iii)\b/i.test(s)) return 'against_moderate';
+  if (/^(1|i)$|^class\s*(1|i)$/i.test(s)) return 'strong';
+  if (/^(2a|iia)$|^class\s*(2a|iia)$/i.test(s) || /moderate/i.test(s)) return 'moderate';
+  if (/^(2b|iib)$|^class\s*(2b|iib)$/i.test(s) || /weak|conditional/i.test(s)) return 'weak';
+  if (/strong/i.test(s)) return 'strong';
+  if (/insufficient/i.test(s)) return 'insufficient';
   return 'unstated';
 }
 

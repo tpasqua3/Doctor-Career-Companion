@@ -13,7 +13,8 @@ import { deriveFromRecord } from './learner.js';
 import { mirrorStep, snapshot } from './mirror.js';
 
 export class BudgetSpent extends Error { constructor() { super('MKOS query budget spent for this run'); this.budget = true; } }
-const PLATFORM = /too many (api )?requests|subrequest|limit.*exceeded|exceeded.*limit/i;
+// Only Cloudflare's own per-invocation limits count as a platform cap (a Google rate limit is an ordinary, retried error).
+const PLATFORM = /too many api requests by single worker invocation|too many subrequests|subrequest limit/i;
 
 // A D1 binding that counts calls and throws BudgetSpent when the run's budget is used.
 export function metered(env, max) {
@@ -27,10 +28,10 @@ export function metered(env, max) {
     const v = t[p]; return typeof v === 'function' ? v.bind(t) : v; } });
   const DB = new Proxy(env.DB, { get(t, p) {
     if (p === 'prepare') return (sql) => wrapStmt(t.prepare(sql));
-    if (p === 'batch') return (list) => { tick(1 + Math.floor(list.length / 25)); return t.batch(list.map((s) => s.__raw || s)); };
+    if (p === 'batch') return (list) => { tick(1 + Math.floor(list.length / 10)); return t.batch(list.map((s) => s.__raw || s)); };
     if (p === 'exec') return (sql) => { tick(); return t.exec(sql); };
     const v = t[p]; return typeof v === 'function' ? v.bind(t) : v; } });
-  return { env: { ...env, DB }, meter: m };
+  return { env: { ...env, DB }, meter: m, tick };
 }
 
 const FIND = { legacy: "title contains 'guidelines_registry' and title contains 'CURRENT'", cert: "title contains 'CERT_blueprint_registry' and title contains 'CURRENT'", lka: "title contains 'LKA_blueprint_registry' and title contains 'CURRENT'" };
@@ -40,12 +41,15 @@ async function bootstrap(env, deps, B) {
   const st = J(await getSetting(env, 'bootstrap'), {}) || {};
   const save = () => setSetting(env, 'bootstrap', JSON.stringify(st));
   try {
-    if (!st.framework) { await seedFramework(env); st.framework = nowIso(); await save(); }
+    if (!st.framework) { st.framework_prog = st.framework_prog || { at: 0 }; try { await seedFramework(env, { prog: st.framework_prog }); st.framework = nowIso(); } finally { await save(); } }
     for (const [key, kind] of [['legacy', 'legacy'], ['cert', 'cert'], ['lka', 'lka']]) {
-      if (st[key] && st[key].done) continue;
-      st[key] = st[key] || { prog: { at: 0 } };
-      if (!st[key].file) { const f = await deps.findJson(FIND[kind]); if (!f) { st[key] = { done: true, missing: true }; await save(); continue; } st[key].file = f.id; st[key].title = f.title; await save(); }
-      const reg = await deps.readJson(st[key].file);
+      if (st[key] && st[key].done && !(st[key].missing && Date.now() - Date.parse(st[key].done) > 864e5)) continue;   // a missing file is looked for again daily
+      if (st[key] && st[key].retry_after && Date.now() < st[key].retry_after) continue;
+      if (!st[key] || st[key].missing) st[key] = { prog: { at: 0 } };
+      if (!st[key].file) { const f = await deps.findJson(FIND[kind]); if (!f) { st[key] = { done: nowIso(), missing: true }; await save(); continue; } st[key].file = f.id; st[key].title = f.title; await save(); }
+      let reg;
+      try { reg = await deps.readJson(st[key].file); }
+      catch (e) { if (e.budget) throw e; st[key].error = String(e.message || e).slice(0, 200); st[key].retry_after = Date.now() + 3600e3; delete st[key].file; await save(); continue; }   // never stall the engine on one file
       try {
         if (kind === 'legacy') await importLegacyRegistry(env, reg, { registryFileId: st[key].file, prog: st[key].prog });
         else await importBlueprint(env, reg, kind, { registryFileId: st[key].file, prog: st[key].prog });
@@ -78,7 +82,7 @@ async function runJob(env, deps, job) {
       const src = await getObject(env, job.subject);
       if (!src || src.status === 'retired' || src.ingest_state === 'skipped') { await save('done', 'nothing to extract'); return true; }
       if ((src.bytes || 0) > 25e6) { await save('failed', 'file over 25 MB: split it into chapters (or keep it as Google Docs) to have it read'); return true; }
-      if (!p.loaded) { try { p.chunks = await loadText(env, deps, src); p.loaded = true; await save('running'); } catch (e) { if (e.budget) throw e; await save(job.tries >= 3 ? 'failed' : 'queued', 'text: ' + (e.message || e)); return job.tries >= 3; } }
+      if (!p.loaded) { try { p.chunks = await loadText(env, deps, src, { complete: false }); p.loaded = true; await save('running'); } catch (e) { if (e.budget) throw e; await save(job.tries >= 3 ? 'failed' : 'queued', 'text: ' + (e.message || e)); return job.tries >= 3; } }
       const per = Number(FRAMEWORK.frameworks.ingestion.extraction.parts_per_run) || 1;
       for (let k = 0; k < per; k++) {
         const r = await extractStep(env, deps, src, { event_id: p.event_id, allowAI: !!deps.ai });
@@ -97,7 +101,13 @@ async function runJob(env, deps, job) {
     }
     await save('failed', 'unknown job kind'); return true;
   } catch (e) {
-    if (e.budget) { await env.DB.prepare('UPDATE mk_jobs SET payload = ?, state = \'running\' WHERE id = ?').bind(JSON.stringify(p), job.id).run().catch(() => {}); throw e; }
+    if (e.budget) {
+      // Interrupted by the run budget: keep progress, step aside for 10 minutes so other jobs move, and give up after 8 interruptions
+      // (the budget grows meanwhile; a requeue retries it).
+      p.interrupts = (p.interrupts || 0) + 1;
+      await env.DB.prepare('UPDATE mk_jobs SET payload = ?, state = ?, not_before = ?, note = ?, updated = ? WHERE id = ?').bind(JSON.stringify(p), p.interrupts >= 8 ? 'failed' : 'running', Date.now() + 600e3, p.interrupts >= 8 ? 'too large for the run budget; requeue later' : 'interrupted ' + p.interrupts + 'x', nowIso(), job.id).run().catch(() => {});
+      throw e;
+    }
     console.error('mkos job', job.kind, job.subject, e);
     await save(job.tries >= 4 ? 'failed' : 'queued', e.message || String(e)); return job.tries >= 4;
   }
@@ -112,11 +122,17 @@ async function learnerWatch(env, deps) {
   seen[u.user_id] = u.updated; await setSetting(env, 'learner_watch', JSON.stringify(seen));
 }
 
-export async function mkTick(rawEnv, deps, { root, mirrorRoot } = {}) {
+export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot } = {}) {
   await mkInit(rawEnv);
   const tickSt = J(await getSetting(rawEnv, 'tick'), {}) || {};
+  if (tickSt.capped && Date.now() - Date.parse(tickSt.capped_at || 0) > 864e5) tickSt.capped = false;   // a platform cap is re-tested daily
+  if ((await getSetting(rawEnv, 'paused')) === '1') return { paused: true };
   const budget = Math.max(25, Math.min(880, Number(tickSt.budget) || 30));
-  const { env, meter } = metered(rawEnv, budget);
+  const { env, meter, tick } = metered(rawEnv, budget);
+  // Queries the Worker makes on MKOS's behalf (learner records) count against the same budget.
+  const deps = { ...rawDeps };
+  for (const k of ['userDocs', 'ownerDocs', 'changedUsers']) if (rawDeps[k]) deps[k] = (...a) => { tick(1); return rawDeps[k](...a); };
+  if (rawDeps.ai) deps.ai = (...a) => { tick(1); return rawDeps.ai(...a); };
   const report = { at: nowIso(), budget, steps: [] };
   let platformHit = false;
   try {
@@ -142,6 +158,6 @@ export async function mkTick(rawEnv, deps, { root, mirrorRoot } = {}) {
   // Self-tuning: grow 25% after a clean run that used its budget; drop to a safe 28 after a platform limit.
   const next = platformHit ? 28 : meter.n >= budget && !tickSt.capped ? Math.round(budget * 1.25) : budget;
   report.used = meter.n;
-  await setSetting(rawEnv, 'tick', JSON.stringify({ budget: next, capped: platformHit || tickSt.capped || false, last: report }));
+  await setSetting(rawEnv, 'tick', JSON.stringify({ budget: next, capped: platformHit || tickSt.capped || false, capped_at: platformHit ? nowIso() : tickSt.capped_at || null, last: report }));
   return report;
 }

@@ -15,7 +15,7 @@ import { FRAMEWORK, FRAMEWORK_HASH } from './framework.js';
 const OPS = {
   // ---- open to every account
   status: { owner: false, run: async (env, u, a, x) => x.owner ? { framework_hash: FRAMEWORK_HASH, ...(await status(env)) } : { framework_hash: FRAMEWORK_HASH, objects: (await status(env)).objects } },
-  search: { owner: false, run: async (env, u, a) => ({ results: (await query(env, { q: a.q, type: a.type, types: a.types, specialty: a.specialty, include_history: !!a.include_history, limit: Math.min(100, Number(a.limit) || 25), offset: Number(a.offset) || 0 }))
+  search: { owner: false, run: async (env, u, a, x) => ({ results: (await query(env, { q: a.q, type: a.type, types: a.types, specialty: a.specialty, include_history: !!a.include_history, include_user_assets: !!x.owner && !!a.include_user_assets, limit: Math.min(100, Number(a.limit) || 25), offset: Number(a.offset) || 0 }))
     .map((o) => ({ id: o.id, type: o.type, name: o.name, status: o.status, governance: o.governance_status, trust: o.scores?.trust_score, confidence: o.confidence?.confidence_score, specialty: o.specialty, version: o.version })) }) },
   object: { owner: false, run: async (env, u, a) => { const o = await getObject(env, String(a.id || '')); if (!o) return { error: 'not found' };
     if (o.store?.user_scope === 'user' && o.data?.user && !a._owner && !String(o.id).includes('u' + String(u.id).replace(/[^a-z0-9]/gi, '').slice(0, 10).toLowerCase())) return { error: 'not found' };
@@ -35,7 +35,8 @@ const OPS = {
     return putObject(env, next, { actor: 'owner:' + u.email, summary: String(a.summary || 'owner edit'), part: a.part || 'minor', strict: true }); } },
   set_status: { owner: true, run: async (env, u, a) => setStatus(env, String(a.id || ''), a.status, { actor: 'owner:' + u.email, replaced_by: a.replaced_by || null, reason: String(a.reason || '') }) },
   settings: { owner: true, run: async (env, u, a) => { if (!a.path) return { error: 'path required' }; const before = fwGet(String(a.path)); await setSetting(env, 'fw:' + a.path, a.value == null ? null : JSON.stringify(a.value)); resetOverrides(); await audit(env, 'owner:' + u.email, 'setting', 'fw:' + a.path, JSON.stringify(before), JSON.stringify(a.value)); return { ok: true, path: a.path, default: before, value: a.value }; } },
-  rescan: { owner: true, run: async (env) => { await setSetting(env, 'scan', null); await setSetting(env, 'scan_last_complete', null); return { ok: true, note: 'A full library sweep starts on the next run.' }; } },
+  rescan: { owner: true, run: async (env) => { await setSetting(env, 'scan', null); return { ok: true, note: 'A full library sweep starts on the next run.' }; } },
+  pause: { owner: true, run: async (env, u, a) => { await setSetting(env, 'paused', a.on === false ? null : '1'); return { ok: true, paused: a.on !== false }; } },
   requeue: { owner: true, run: async (env, u, a) => { await env.DB.prepare("UPDATE mk_jobs SET state = 'queued', tries = 0, not_before = 0 WHERE state = 'failed' AND (? = '' OR kind = ?)").bind(a.kind || '', a.kind || '').run(); return { ok: true }; } },
   tick: { owner: true, run: async (env, u, a, x) => mkTick(env, x.deps, x.roots) },
   graph_validation: { owner: true, run: async (env) => graphValidation(env) },

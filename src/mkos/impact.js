@@ -11,7 +11,7 @@ const KIND = { Concept: 'concepts', Recommendation: 'recommendations', Guideline
    (needs: review|regenerate), opens learner reconciliation rows, and returns the summary. Bounded: depth 2, 2000 objects. */
 export async function analyzeImpact(env, eventId, subject, { actor = 'impact' } = {}) {
   const ev = await env.DB.prepare('SELECT * FROM mk_events WHERE id = ?').bind(eventId).first();
-  const hit = await reach(env, [subject], { depth: 2 });
+  const hit = await reach(env, [subject], { depth: 2, seedAll: true });
   const ids = [...hit.keys()];
   const objs = await getObjects(env, ids);
   const by = {}; for (const o of Object.values(objs)) (by[KIND[o.type] || o.type] = by[KIND[o.type] || o.type] || []).push(o.id);

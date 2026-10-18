@@ -16,7 +16,8 @@ const enc = new TextEncoder();
 const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)))].map((x) => x.toString(16).padStart(2, '0')).join('');
 // Content hash: everything except the envelope fields that change on every write.
 const VOLATILE = new Set(['version', 'updated', 'change_log', 'scores', 'confidence', 'created']);
-const canon = (v) => Array.isArray(v) ? '[' + v.map(canon).join(',') + ']' : v && typeof v === 'object' ? '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}' : JSON.stringify(v);
+// Timestamps inside provenance steps and facet items ('at') are not content: a rewrite that changes only them is not a new version.
+const canon = (v) => Array.isArray(v) ? '[' + v.map(canon).join(',') + ']' : v && typeof v === 'object' ? '{' + Object.keys(v).filter((k) => k !== 'at').sort().map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}' : JSON.stringify(v);
 export const contentHash = (o) => sha(canon(Object.fromEntries(Object.entries(o).filter(([k]) => !VOLATILE.has(k)))));
 const bump = (v, part) => { const [a, b, c] = String(v || '0.0.0').split('.').map(Number); return part === 'major' ? `${a + 1}.0.0` : part === 'minor' ? `${a}.${b + 1}.0` : `${a}.${b}.${c + 1}`; };
 
@@ -109,12 +110,13 @@ export async function indexAliases(env, o) {
 }
 
 // VERSIONING MODEL transitions. Nothing is deleted: superseded/retired objects stay readable with include_history.
-export async function setStatus(env, id, status, { actor = 'system', replaced_by = null, reason = '', event_id = null } = {}) {
+export async function setStatus(env, id, status, { actor = 'system', replaced_by = null, reason = '', event_id = null, force = false } = {}) {
   const o = await getObject(env, id); if (!o) return { ok: false, error: 'not found' };
   if (o.status === status && (!replaced_by || o.replaced_by === replaced_by)) return { ok: true, unchanged: true };
-  if (o.status !== status && !(TRANSITIONS[o.status] || []).includes(status)) return { ok: false, error: `cannot move ${o.status} -> ${status}` };
+  // force: a recomputation (guideline family, a file back in the library) or an owner correction may restore an earlier state.
+  if (o.status !== status && !force && !(TRANSITIONS[o.status] || []).includes(status)) return { ok: false, error: `cannot move ${o.status} -> ${status}` };
   const r = await putObject(env, { ...o, status, replaced_by: replaced_by || o.replaced_by || null }, { actor, event_id, summary: `status ${o.status} -> ${status}${reason ? ': ' + reason : ''}`, part: 'minor' });
-  await env.DB.prepare("UPDATE mk_edges SET status = ? , updated = ? WHERE (src = ? OR dst = ?) AND status = 'current'").bind(status === 'retired' ? 'retired' : status === 'superseded' ? 'superseded' : 'current', nowIso(), id, id).run().catch(() => {});
+  await env.DB.prepare('UPDATE mk_edges SET status = ?, updated = ? WHERE src = ? OR dst = ?').bind(status === 'retired' ? 'retired' : status === 'superseded' ? 'superseded' : 'current', nowIso(), id, id).run();
   return { ok: true, ...r };
 }
 export async function supersede(env, oldId, newId, opts = {}) {
@@ -125,8 +127,10 @@ export async function supersede(env, oldId, newId, opts = {}) {
 
 /* Query with CURRENT STATE PRIORITIZATION: current first, then highest trust (authority, evidence, freshness folded in),
    unless include_history asks for superseded and retired versions too. */
-export async function query(env, { type, types, specialty, q, status, include_history = false, limit = 50, offset = 0, gov } = {}) {
+export async function query(env, { type, types, specialty, q, status, include_history = false, limit = 50, offset = 0, gov, include_user_assets = false } = {}) {
   const where = [], args = [];
+  // Assets mapped from a learner's own record (ids ea.u<account>.*) are that learner's, never part of shared search.
+  if (!include_user_assets) where.push("id NOT LIKE 'ea.u%'");
   const ts = types || (type ? [type] : null);
   if (ts) { where.push(`type IN (${ts.map(() => '?').join(',')})`); args.push(...ts); }
   if (specialty) { where.push('specialty = ?'); args.push(specialty); }

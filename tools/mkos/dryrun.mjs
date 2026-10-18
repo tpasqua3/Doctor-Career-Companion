@@ -5,6 +5,10 @@
 //              optional learner.json ({"med/state": ..., "med/bank_x": ...}).
 // Nothing here talks to Google or Cloudflare. Library data stays in <dir>, outside the repository.
 import { readFileSync, existsSync } from 'node:fs';
+// A simulated clock: each engine run is five minutes after the last, as on the cron.
+const RealDate = Date; let FAKE = RealDate.now();
+globalThis.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [FAKE])); } static now() { return FAKE; } };
+const advance = () => { FAKE += 300000; };
 import { join } from 'node:path';
 import { d1 } from './d1shim.mjs';
 import { mkTick } from '../../src/mkos/tick.js';
@@ -52,19 +56,21 @@ const deps = {
   changedUsers: async () => [{ user_id: OWNER, updated: '2026-10-17T00:00:00Z' }],
   ai: null,
 };
-const env = { DB: d1(arg('db', ':memory:')) };
+// --budget N runs at a fixed per-run query budget (e.g. 28 = Cloudflare's free plan); default is the maximum.
+const BUDGET = Number(arg('budget', 900));
+const env = { DB: d1(arg('db', ':memory:'), { strict: true }) };
 await mkInit(env);
-await setSetting(env, 'tick', JSON.stringify({ budget: 900 }));
-let t0 = Date.now(), last;
+await setSetting(env, 'tick', JSON.stringify({ budget: BUDGET, capped: BUDGET < 880, capped_at: new Date().toISOString() }));
+let t0 = RealDate.now(), last;
 for (let i = 0; i < TICKS; i++) {
-  last = await mkTick(env, deps, { root: ROOT, mirrorRoot: 'mkos-root' });
+  last = await mkTick(env, deps, { root: ROOT, mirrorRoot: 'mkos-root' }); advance();
   if (last.error) { console.log('tick error', last.error); break; }
   const open = (await env.DB.prepare("SELECT COUNT(*) AS n FROM mk_jobs WHERE state IN ('queued','running')").first()).n;
   const scan = await env.DB.prepare("SELECT v FROM mk_settings WHERE k = 'scan_last_complete'").first();
   if (i % 25 === 0) console.log('tick', i, 'used', last.used, 'open jobs', open, last.steps.slice(-3).join(' | '));
   if (scan && !open && i > 5) { console.log('settled after', i + 1, 'ticks'); break; }
 }
-console.log('time', ((Date.now() - t0) / 1000).toFixed(1) + 's');
+console.log('time', ((RealDate.now() - t0) / 1000).toFixed(1) + 's', 'simulated days', ((FAKE - t0) / 864e5).toFixed(1));
 const st = await status(env);
 const agg = {}; for (const r of st.objects) agg[r.type] = (agg[r.type] || 0) + r.n;
 console.log('objects', agg, 'edges', st.edges);

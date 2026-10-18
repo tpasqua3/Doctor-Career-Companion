@@ -76,9 +76,11 @@ Source: ${src.short_label || src.title} (${src.year || 'n.d.'}), ${src.source_cl
 ${chunk}`;
 
 // Load the source's text into mk_text (chunks). deps.readText(fileId) -> string.
-export async function loadText(env, deps, src) {
+// complete: the caller knows a previous load finished. Otherwise any rows present are a partial load and are replaced.
+export async function loadText(env, deps, src, { complete = false } = {}) {
   const have = await env.DB.prepare('SELECT COUNT(*) AS n FROM mk_text WHERE source_id = ?').bind(src.id).first();
-  if (have && have.n) return have.n;
+  if (have && have.n && complete) return have.n;
+  if (have && have.n) await env.DB.prepare('DELETE FROM mk_text WHERE source_id = ?').bind(src.id).run();
   const text = await deps.readText(src.drive_file_id);
   const chunks = chunkText(text);
   for (let i = 0; i < chunks.length; i += 20) await env.DB.batch(chunks.slice(i, i + 20).map((c, j) => env.DB.prepare('INSERT OR REPLACE INTO mk_text (source_id, chunk, text, done) VALUES (?, ?, ?, 0)').bind(src.id, i + j, c)));
@@ -133,8 +135,12 @@ export async function extractStep(env, deps, src, { actor = 'extractor', event_i
 export async function linkConcepts(env, text, max = 6) {
   const w = norm(text).split(' ').filter(Boolean), spans = new Set();
   for (let n = Math.min(6, w.length); n >= 1; n--) for (let i = 0; i + n <= w.length; i++) { const sp = w.slice(i, i + n).join(' '); if (sp.length >= 4 || n > 1) spans.add(sp); }
-  const list = [...spans].slice(0, 400); if (!list.length) return [];
-  const { results } = await env.DB.prepare(`SELECT a.alias, a.id FROM mk_aliases a JOIN mk_objects o ON o.id = a.id WHERE o.type = 'Concept' AND o.status IN ('current','modified') AND a.alias IN (${list.map(() => '?').join(',')})`).bind(...list).all();
+  const list = [...spans].slice(0, 360); if (!list.length) return [];
+  const results = [];
+  for (let i = 0; i < list.length; i += 90) {       // D1 allows 100 bound parameters per query
+    const part = list.slice(i, i + 90);
+    results.push(...(await env.DB.prepare(`SELECT a.alias, a.id FROM mk_aliases a JOIN mk_objects o ON o.id = a.id WHERE o.type = 'Concept' AND o.status IN ('current','modified') AND a.alias IN (${part.map(() => '?').join(',')})`).bind(...part).all()).results);
+  }
   results.sort((a, b) => b.alias.length - a.alias.length);
   const out = [], used = []; for (const r of results) { if (used.some((u) => u.includes(r.alias))) continue; used.push(r.alias); if (!out.includes(r.id)) out.push(r.id); if (out.length >= max) break; }
   return out;

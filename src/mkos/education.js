@@ -14,16 +14,11 @@ const SPEC_BY_ABIM = Object.fromEntries(F.specialties.specialties.filter((s) => 
 export const appSlug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 44);   // the app's slug(), exactly
 
 // Specialties and competencies as objects, so the graph can point at them.
-export async function seedFramework(env, { actor = 'framework' } = {}) {
+export async function seedFramework(env, { actor = 'framework', prog = { at: 0 } } = {}) {
+  const items = [...F.specialties.specialties.map((s) => ({ ...s, type: 'Specialty', status: s.status || 'current', governance_status: 'approved', provenance: [prov('src.framework', 'derived', 'mkos/ontology/specialties.json v' + F.specialties.version)] })),
+    ...F.competencies.competencies.map((c) => ({ ...c, type: 'Competency', status: 'current', governance_status: 'approved', provenance: [prov('src.framework', 'derived', 'mkos/ontology/competencies.json v' + F.competencies.version)] }))];
   let n = 0;
-  for (const s of F.specialties.specialties) {
-    const r = await putObject(env, { ...s, type: 'Specialty', status: s.status || 'current', governance_status: 'approved', provenance: [prov('src.framework', 'derived', 'mkos/ontology/specialties.json v' + F.specialties.version)] }, { actor, summary: 'seeded from framework', audited: false });
-    if (r.changed) n++;
-  }
-  for (const c of F.competencies.competencies) {
-    const r = await putObject(env, { ...c, type: 'Competency', status: 'current', governance_status: 'approved', provenance: [prov('src.framework', 'derived', 'mkos/ontology/competencies.json v' + F.competencies.version)] }, { actor, summary: 'seeded from framework', audited: false });
-    if (r.changed) n++;
-  }
+  for (let i = prog.at || 0; i < items.length; i++) { const r = await putObject(env, items[i], { actor, summary: 'seeded from framework', audited: false }); if (r.changed) n++; prog.at = i + 1; }
   return n;
 }
 
@@ -63,7 +58,8 @@ export async function importBlueprint(env, reg, exam, { actor = 'blueprint_impor
     const { c, sc, t, first } = work[i], edges = [];
     const spec = SPEC_BY_ABIM[c.id] || null, domId = 'dom.' + c.id.toLowerCase() + '.' + slug(sc.name, 50);
     if (first) {
-      const dr = await putObject(env, { id: domId, type: 'Domain', name: sc.name, parent: spec, abim_code: c.id, folder_aliases: [], kind: 'abim_subcategory', exam_pct: { [exam]: sc.exam_pct_label || null }, status: 'current', governance_status: 'approved', provenance: [P] }, { actor, event_id: ev, summary: 'domain from blueprint', audited: false });
+      const oldDom = (await getObject(env, domId)) || {};
+      const dr = await putObject(env, { id: domId, type: 'Domain', name: sc.name, parent: spec, abim_code: c.id, folder_aliases: [], kind: 'abim_subcategory', exam_pct: { ...(oldDom.exam_pct || {}), [exam]: sc.exam_pct_label || null }, status: 'current', governance_status: 'approved', provenance: oldDom.provenance || [P] }, { actor, event_id: ev, summary: 'domain from blueprint', audited: false });
       if (dr.created) out.domains++;
       if (spec) edges.push({ src: domId, rel: 'in_specialty', dst: spec, conf: 100, prov: P });
     }
@@ -150,15 +146,15 @@ export async function mapLearnerAssets(env, userId, docs, { actor = 'asset_mappe
   const work = [];
   for (const [path, d] of Object.entries(docs).sort(([a], [b]) => a.localeCompare(b))) {
     if (!d || typeof d !== 'object') continue;
-    if (/^med\/les_/.test(path)) work.push({ path, kind: d.len === 'short' ? 'micro_lesson' : 'long_form_lesson', id: 'ea.' + U + '.les_' + slug(d.id || path, 20), item: d.id || '', name: d.title, tid: d.tid, extra: { minutes: d.min || null, review: d.rev || null }, src: [d.src, ...(d.segs || []).map((x) => x.src || '')], n: 'lessons' });
-    else if (/^med\/bank_/.test(path)) for (const q of d.qs || []) work.push({ path, kind: 'question', id: 'ea.' + U + '.q_' + slug(q.id, 20), item: q.id, name: (q.stem || '').slice(0, 90), tid: q.tid, extra: { difficulty: q.d || null, objective: q.obj || '' }, src: q.src, n: 'questions' });
-    else if (/^med\/cards_/.test(path)) for (const c of d.cards || []) work.push({ path, kind: 'flashcard', id: 'ea.' + U + '.card_' + slug(c.id, 20), item: c.id, name: (c.f || '').slice(0, 90), tid: c.tid, extra: {}, src: c.src, n: 'cards' });
+    if (/^med\/les_/.test(path)) work.push({ path, kind: d.len === 'short' ? 'micro_lesson' : 'long_form_lesson', id: 'ea.' + U + '.les_' + slug(d.id || path, 20), item: d.id || '', name: 'Lesson ' + (d.id || path), tid: d.tid, extra: { minutes: d.min || null }, src: [d.src, ...(d.segs || []).map((x) => x.src || '')], n: 'lessons' });
+    else if (/^med\/bank_/.test(path)) for (const q of d.qs || []) work.push({ path, kind: 'question', id: 'ea.' + U + '.q_' + slug(q.id, 20), item: q.id, name: 'Question ' + q.id, tid: q.tid, extra: { difficulty: q.d || null }, src: q.src, n: 'questions' });
+    else if (/^med\/cards_/.test(path)) for (const c of d.cards || []) work.push({ path, kind: 'flashcard', id: 'ea.' + U + '.card_' + slug(c.id, 20), item: c.id, name: 'Flashcard ' + c.id, tid: c.tid, extra: {}, src: c.src, n: 'cards' });
   }
   for (let i = prog.at || 0; i < work.length; i++) {
     const w = work[i], n = w.tid ? await getObject(env, nodeForTopic(w.tid)) : null, teaches = n ? n.concepts || [] : [], cites = await citeIds(w.src);
     await putObject(env, { id: w.id, type: 'EducationalAsset', name: String(w.name || w.kind).slice(0, 200), asset_kind: w.kind, store: { kind: 'learner_doc', user_scope: 'user', path: w.path, item_id: w.item },
       teaches, objectives: [], cites, blueprint_topics: n ? n.blueprint_topics || [] : [], status: 'current', governance_status: 'validated', provenance: [P(w.path)],
-      data: { topic_id: w.tid || '', curriculum_node: n ? n.id : null, user: U, citations_as_written: [].concat(w.src || []).filter(Boolean).slice(0, 8), ...w.extra } }, { actor, summary: 'mapped from the learner record', audited: false });
+      data: { topic_id: w.tid || '', curriculum_node: n ? n.id : null, user: U, ...w.extra } }, { actor, summary: 'mapped from the learner record', audited: false });   // pointers only: the asset's text stays in the learner's record
     const links = [...teaches.map((c) => [c, 'teaches']), ...(n ? [[n.id, 'teaches']] : []), ...cites.map((c) => [c, 'cites'])];
     if (links.length) await env.DB.batch(links.map(([o, rel]) => env.DB.prepare('INSERT OR REPLACE INTO mk_asset_links (asset_id, user_id, path, item, object_id, rel, at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(w.id, userId, w.path, w.item, o, rel, nowIso())));
     out[w.n]++; out.linked += links.length; prog.at = i + 1;

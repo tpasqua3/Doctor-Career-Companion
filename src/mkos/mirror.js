@@ -34,7 +34,8 @@ Each person's own learning state stays in their account's folder under "Doctor C
 
 const shardOf = (o) => (Array.isArray(o.specialty) ? o.specialty[0] : o.specialty) || 'general';
 async function shardKeys(env) {
-  const { results } = await env.DB.prepare("SELECT type, COALESCE(specialty, 'general') AS s, COUNT(*) AS n FROM mk_objects GROUP BY type, s").all();
+  // Learner-scoped assets (ea.u<account>.*) are per account and never written to the central folder.
+  const { results } = await env.DB.prepare("SELECT type, COALESCE(specialty, 'general') AS s, COUNT(*) AS n FROM mk_objects WHERE id NOT LIKE 'ea.u%' GROUP BY type, s").all();
   const keys = ['readme', 'ontology', 'registries/sources', 'registries/compat', 'governance/events'];
   for (const r of results) keys.push(`registry_data/${r.type}/${String(r.s).replace(/^spec\./, '')}`);
   const e = await env.DB.prepare('SELECT COUNT(*) AS n FROM mk_edges').first();
@@ -49,7 +50,7 @@ async function content(env, key) {
     const rows = results.map((r) => J(r.body)).map((s) => ({ id: s.id, label: s.short_label || s.name, title: s.title, class: s.source_class, specialty: s.specialty, status: s.status, governance: s.governance_status,
       year: s.year, citation: s.citation || '', doi: s.doi || '', orgs: s.responsible_orgs || [], population: s.population, family: s.guideline_family || null, edition_role: s.edition_role || null,
       ref_id: s.registry_ref_id || null, drive_file_id: s.drive_file_id, path: s.drive_path, ingest: s.ingest_state, trust: s.scores?.trust_score, version: s.version }));
-    return { name: 'sources_registry.json', folder: 'registries', text: JSON.stringify({ generated: nowIso(), count: rows.length, sources: rows }, null, 1) };
+    return { name: 'sources_registry.json', folder: 'registries', text: JSON.stringify({ count: rows.length, sources: rows }, null, 1) };
   }
   if (key === 'registries/compat') {
     const c = await buildCompatRegistry(env); if (!c) return null;
@@ -62,7 +63,7 @@ async function content(env, key) {
   let m = /^registry_data\/([A-Za-z]+)\/(.+)$/.exec(key);
   if (m) {
     const spec = m[2] === 'general' ? null : 'spec.' + m[2];
-    const { results } = await env.DB.prepare(`SELECT body FROM mk_objects WHERE type = ? AND ${spec ? 'specialty = ?' : "(specialty IS NULL OR specialty = 'general')"} ORDER BY id`).bind(...(spec ? [m[1], spec] : [m[1]])).all();
+    const { results } = await env.DB.prepare(`SELECT body FROM mk_objects WHERE type = ? AND id NOT LIKE 'ea.u%' AND ${spec ? 'specialty = ?' : "(specialty IS NULL OR specialty = 'general')"} ORDER BY id`).bind(...(spec ? [m[1], spec] : [m[1]])).all();
     return { name: m[2] + '.json', folder: 'registry_data/' + m[1], text: JSON.stringify({ type: m[1], specialty: spec, count: results.length, objects: results.map((r) => J(r.body)) }, null, 1) };
   }
   m = /^graph\/edges_(\d+)$/.exec(key);
@@ -92,7 +93,8 @@ async function folder(env, deps, root, path) {
 export async function mirrorStep(env, deps, root, { max = 3 } = {}) {
   if (!root) return { off: true };
   const keys = await shardKeys(env), cursor = Number(await getSetting(env, 'mirror_cursor')) || 0;
-  let written = 0, checked = 0, i = cursor;
+  let written = 0, checked = 0, i = cursor % Math.max(1, keys.length);
+  try {
   for (; checked < keys.length && written < max; checked++, i = (i + 1) % keys.length) {
     const c = await content(env, keys[i]); if (!c) continue;
     const key = c.key || keys[i], hash = await contentHash({ t: c.text });
@@ -105,14 +107,14 @@ export async function mirrorStep(env, deps, root, { max = 3 } = {}) {
     await env.DB.prepare('INSERT OR REPLACE INTO mk_mirror (key, file_id, hash, synced) VALUES (?, ?, ?, ?)').bind(key, id, hash, nowIso()).run();
     written++;
   }
-  await setSetting(env, 'mirror_cursor', String(i));
+  } finally { await setSetting(env, 'mirror_cursor', String(i)); }
   return { written, checked, shards: keys.length };
 }
 
 // The daily snapshot: every object and edge in one file.
 export async function snapshot(env, deps, root) {
   const day = nowIso().slice(0, 10); if ((await getSetting(env, 'snapshot_day')) === day) return { skipped: true };
-  const objs = (await env.DB.prepare('SELECT body FROM mk_objects ORDER BY id').all()).results.map((r) => r.body);
+  const objs = (await env.DB.prepare("SELECT body FROM mk_objects WHERE id NOT LIKE 'ea.u%' ORDER BY id").all()).results.map((r) => r.body);
   const edges = (await env.DB.prepare('SELECT src, rel, dst, status, conf FROM mk_edges').all()).results;
   const text = '{"app":"doctor-career-companion","kind":"mkos-snapshot","framework_hash":' + JSON.stringify(FRAMEWORK_HASH) + ',"saved":' + JSON.stringify(nowIso()) + ',"objects":[' + objs.join(',') + '],"edges":' + JSON.stringify(edges) + '}';
   const parent = await folder(env, deps, root, 'snapshot'), row = await env.DB.prepare("SELECT file_id FROM mk_mirror WHERE key = 'snapshot'").first();
