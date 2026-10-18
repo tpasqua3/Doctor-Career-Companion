@@ -15,6 +15,8 @@ import { checkMilestones } from './progress.js';
 import { indexLargeSource } from './outline.js';
 // Above this a PDF or Office file is not converted to text in one piece inside the Worker (memory); it is indexed instead.
 const LARGE_FILE = 25e6;
+// Files that can be converted to text; anything else is mapped by its title (outline.js title_only).
+const READABLE_MIME = /pdf|document|text\/|msword|officedocument\.wordprocessing|epub|json/i;
 import { syncOwner, generateCandidates, termsNeedingPronunciation } from './pronounce.js';
 import { aiBudgetLeft } from './extract.js';
 import { projectBlueprint, evolve, parseBlueprintText, familyOf } from './blueprint.js';
@@ -95,10 +97,12 @@ async function runJob(env, deps, job, meter = null) {
     if (job.kind === 'rescore') { const ids = p.ids || []; while (ids.length) { await rescore(env, ids.slice(0, 10), { event_id: p.event_id }); ids.splice(0, 10); p.ids = ids; } await save('done'); return true; }
     if (job.kind === 'extract') {
       const src = await getObject(env, job.subject);
-      if (!src || src.status === 'retired' || src.ingest_state === 'skipped') { await save('done', 'nothing to extract'); return true; }
+      if (!src || src.status === 'retired') { await save('done', 'nothing to extract'); return true; }
       // Size decides how a source is processed, never whether (Large Source Governance directive): a file too large to convert to
       // text in one piece is indexed from its table of contents instead (outline.js), a few byte ranges at a time.
-      if ((src.bytes || 0) > LARGE_FILE && !/google-apps|^text\/|json/i.test(src.mime_type || '')) {
+      const depth = (FRAMEWORK.frameworks.source_classes.classes.find((c) => c.key === src.source_class) || {}).extraction_depth || 'index_only';
+      if (depth === 'none') { await save('done', 'not a knowledge source'); return true; }
+      if (((src.bytes || 0) > LARGE_FILE && !/google-apps|^text\/|json/i.test(src.mime_type || '')) || (src.mime_type && !READABLE_MIME.test(src.mime_type))) {
         const r = await indexLargeSource(env, deps, src, p);
         if (!r.done) { await save('running', `indexing: ${r.sections}/${r.of} sections`); return false; }
         if (r.sections) await queue(env, 'classify', 'all', {}, 6);
@@ -250,7 +254,8 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
     report.steps.push('bootstrap ok');
     const scan = J(await getSetting(env, 'scan_last_complete'), null);
     const scanDue = !scan || Date.now() - Date.parse(scan.finished) > 30 * 60e3 || J(await getSetting(env, 'scan'), {})?.cur;
-    if (scanDue && root) { const s = await scanStep(env, deps, root, { pages: 1 }); report.steps.push(`scan +${s.files} files, ${s.changes.length} changes`); }
+    // The first full walk takes several pages a run so the library is registered within hours; later sweeps one page a run.
+    if (scanDue && root) { const s = await scanStep(env, deps, root, { pages: scan ? 1 : 4 }); report.steps.push(`scan +${s.files} files, ${s.changes.length} changes`); }
     await learnerWatch(env, deps);
     // Blueprint registry projection follows the Blueprint objects (new edition, or a changed one).
     { const { results } = await env.DB.prepare("SELECT o.id, o.version FROM mk_objects o LEFT JOIN mk_blueprint_registries r ON r.blueprint_id = o.id WHERE o.type = 'Blueprint' AND (r.blueprint_id IS NULL OR r.version != o.version) LIMIT 3").all();

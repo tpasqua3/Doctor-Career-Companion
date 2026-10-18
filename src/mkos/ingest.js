@@ -118,7 +118,9 @@ export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep
     source_class: old?.registry_ref_id ? old.source_class : cls, spec_source_type: c.spec_source_type, drive_file_id: f.id, drive_path: path, mime_type: f.mimeType || '',
     bytes: Number(f.fileSize) || 0, md5: f.md5 || '', drive_modified: f.modifiedTime || '', title: old?.title || f.title,
     responsible_orgs: orgs, year: old?.year || yearOf(f.title, path), population: old?.population || populationOf(f.title, path), copyright: c.copyright,
-    ingest_state: changed === 'source_moved' || changed === 'source_renamed' ? (old?.ingest_state || 'registered') : READABLE.test(f.mimeType || '') && c.extraction_depth !== 'none' ? 'queued' : 'skipped',
+    // Every source with an extraction depth is processed: a readable file is read; any other (images, media, other formats) is mapped
+    // by its title (Large Source Governance: never skip, always register, always map).
+    ingest_state: changed === 'source_moved' || changed === 'source_renamed' ? (old?.ingest_state || 'registered') : c.extraction_depth !== 'none' ? 'queued' : 'skipped',
     provenance: old?.provenance?.length ? old.provenance : [{ source_id: id, method: 'derived', at: now, agent: actor, note: 'registered from the library scan' }],
   };
   const ev = await event(env, changed, id, { title: f.title, path, md5: f.md5 || '', prev: prev ? { md5: prev.md5, path: prev.path, title: prev.title } : null });

@@ -257,7 +257,7 @@ const MAP_CONF = { pdf_outline: 75, title_only: 50 };
 export async function indexLargeSource(env, deps, src, p, { per = 30, actor = 'indexer' } = {}) {
   if (!p.outline) {
     let r;
-    if (!/pdf/i.test(src.mime_type || '') || !deps.readRange) r = { items: [], reason: !deps.readRange ? 'byte-range reading unavailable' : 'not a PDF: no outline to read' };
+    if (!/pdf/i.test(src.mime_type || '') || !deps.readRange) r = { items: [], reason: !deps.readRange ? 'byte-range reading unavailable' : 'not a document that can be read as text (' + (src.mime_type || 'unknown type') + ')' };
     else { try { r = await pdfOutline((s, e) => deps.readRange(src.drive_file_id, s, e), Number(src.bytes) || 0); } catch (e) { if (e.budget) throw e; r = { items: [], reason: 'outline could not be read: ' + String(e.message || e).slice(0, 120) }; } }
     p.outline = { items: r.items || [], reason: r.reason || null, pages: r.pages || null }; p.at = 0;
   }

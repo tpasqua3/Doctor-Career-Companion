@@ -63,7 +63,7 @@ const STEPS = [
   }],
   ['extractions', async (env, p, rep) => {
     const old = new Date(Date.now() - (R.stale_extraction_hours || 48) * 3600e3).toISOString();
-    const { results } = await env.DB.prepare(`SELECT id FROM mk_objects WHERE type = 'Source' AND status IN ('current','modified') AND COALESCE(json_extract(body, '$.ingest_state'), 'queued') IN ('queued','registered') AND json_extract(body, '$.drive_file_id') IS NOT NULL
+    const { results } = await env.DB.prepare(`SELECT id FROM mk_objects WHERE type = 'Source' AND status IN ('current','modified') AND COALESCE(json_extract(body, '$.ingest_state'), 'queued') IN ('queued','registered','skipped') AND COALESCE(json_extract(body, '$.source_class'), '') NOT IN ('registry_or_backend','front_matter') AND json_extract(body, '$.drive_file_id') IS NOT NULL
       AND updated < ? AND id NOT IN (SELECT subject FROM mk_jobs WHERE kind = 'extract' AND state IN ('queued','running','failed')) LIMIT 60`).bind(old).all();
     for (const r of results) await queue(env, 'extract', r.id, {}, 6);
     rep.extractions = { missing_requeued: results.length, waiting: await n(env, "SELECT COUNT(*) AS n FROM mk_jobs WHERE kind = 'extract' AND state IN ('queued','running')") };
