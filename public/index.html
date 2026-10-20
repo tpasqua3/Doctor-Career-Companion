@@ -2211,7 +2211,7 @@ async function gqFileDone(){const ready=GQ.jobs.filter(j=>j.status==='done'&&!j.
   else toast(ids.length===1?'Lesson ready: '+((docs['les_'+ready.find(j=>ids.includes(j.id)).les_id]||{}).title||''):ids.length+' lessons are ready in your lessons.',5000)}
 // While the page is open it lends the server its connection, so its own queued lessons are written sooner.
 function gqPump(){if(GQ.pumping||Date.now()-GQ.lastPump<10000||document.visibilityState!=='visible')return;GQ.pumping=true;GQ.lastPump=Date.now();
-  mk('gen_pump',{ms:WEB?100000:45000}).catch(()=>{}).finally(()=>{GQ.pumping=false;gqRefresh()})}
+  mk('gen_pump',{ms:WEB?100000:25000}).catch(()=>{}).finally(()=>{GQ.pumping=false;gqRefresh()})}
 const gqSig=()=>GQ.jobs.map(j=>j.id+j.status+(j.progress?j.progress.pct:'')+(j.filed?1:0)).join('|')+(GQ.run||'');
 function gqDraw(){const s=gqSig();if(s===GQ.sig)return;GQ.sig=s;if(!['today','boards','learn'].includes(S.tab)||S.lesson||S.quiz||S.deck||S.busy)return;
   const ae=document.activeElement;if(ae&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName))return;render()}

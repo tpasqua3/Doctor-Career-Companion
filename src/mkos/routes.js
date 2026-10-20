@@ -112,7 +112,7 @@ const OPS = {
   gen_page: { owner: false, run: async (env, u, a) => genPage(env, u, a) },
   gen_filed: { owner: false, run: async (env, u, a) => genFiled(env, u, a) },
   // An open page lends the server its connection to get its own queued lessons written sooner (the 5-minute run does it otherwise).
-  gen_pump: { owner: false, run: async (env, u, a, x) => runGen(env, x.deps, { budgetMs: Math.max(30e3, Math.min(150e3, Number(a.ms) || 100e3)), user: u.id }) },
+  gen_pump: { owner: false, run: async (env, u, a, x) => runGen(env, x.deps, { budgetMs: Math.max(20e3, Math.min(150e3, Number(a.ms) || 100e3)), user: u.id, maxSteps: Number(a.ms) && Number(a.ms) < 40e3 ? 1 : 40 }) },
   ite_map: { owner: false, run: async (env, u, a) => iteMap(env, u, a) },
   seed_status: { owner: false, run: async (env) => seedStatus(env) },
   seed_start: { owner: true, run: async (env, u, a, x) => seedStart(env, x.deps, u, a) },
