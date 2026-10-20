@@ -46,6 +46,9 @@ licensed). The server reads the library from Drive itself.
 | `decompose.js` | Knowledge decomposition: criteria, objectives, competencies, teaching points, targets, pathways, pearls (below) |
 | `classify.js` | Classification and subclassification of every object (below) |
 | `reconcile.js` | The daily reconciliation engine (below) |
+| `genjobs.js` | The generation queue: lessons as jobs bound to one model, background and batch writing, objective seeding, ITE-to-objective mapping |
+| `objmap.js` | Objective mapping: as many knowledge objects as possible mapped to the ABIM CERT and LKA objectives |
+| `curstore.js` | The Dynamic Board Objective Curriculum in Drive: one file per objective, by exam and discipline |
 | `routes.js` | `/api/mkos/<op>` and the connector tool `mkos` |
 
 The cron gives MKOS its turn in each 5-minute run in which no account records were waiting to be copied to Drive. Each run:
@@ -238,3 +241,36 @@ Owner: `reconcile {run: true}` queues a pass now and returns the last report.
 `node tools/mkos/dryrun.mjs --work <dir>` runs the whole engine on node:sqlite (`tools/mkos/d1shim.mjs`) against a library listing
 and the registries kept in `<dir>` (outside the repository), then prints the object counts, graph validation, all cutover gates,
 families, recommendations, the learner plan and the routing result.
+
+## The generation queue (src/mkos/genjobs.js, assets.json generation_queue)
+
+A lesson is a job bound to the writing model chosen when it is queued, from start to finish (runAI `strict`: no handoff part-way).
+A model the server can run writes on the server (each 5-minute run, plus `gen_pump` while a page is open), so it keeps writing with the
+page closed, waits for the next UTC day when the model's allowance is used, and continues from the step it reached. Claude without a
+server key (`ANTHROPIC_API_KEY`) writes in the page: it checkpoints each part (`gen_page`), pauses when the page goes away and resumes on
+return or with Resume. A finished server lesson is written to the account (`med/les_<id>`) for the app to file (`gen_filed`), and stored as
+an MKOS asset with its generation metadata (model, model version, prompt and template versions, time, objective, blueprint, runner, job,
+pass, reviewer). Operations: `gen_models`, `gen_add`, `gen_batch`, `gen_list`, `gen_get`, `gen_resume`, `gen_cancel`, `gen_page`,
+`gen_filed`, `gen_pump`, `ite_map`; owner `seed_start`, `seed_pause`, `seed_retry`; everyone `seed_status`.
+
+**Objective seeding**: one foundational pass-1 lesson (about 2,000 words) per ABIM blueprint objective (CERT, plus LKA-only), highest
+priority first, always leaving `seed.reserve_calls` of the writing model's daily allowance for the owner's own study; quality before speed;
+the queue persists until every objective is seeded. Later passes deepen them (2: depth; 3: advanced material, pearls, edge cases, updates).
+
+## Confidence tiers (assets.json confidence)
+
+Every asset's `asset_confidence.overall` puts it in a tier: **durable** (85+, served first, retrieved with no AI), **provisional** (70-84,
+served, marked, re-verified at each retrieval), **review** (50-69, not served to others, queued for the owner), **quarantine** (<50, never
+served). Scores are recomputed when stored, at every retrieval and in the daily reconciliation. A topic with no current lesson is served a
+servable objective lesson on one of its blueprint objectives instead of writing one (`objective_lesson`, `objective_lessons`).
+
+## Objective mapping and the Dynamic Board Objective Curriculum (objmap.js, curstore.js)
+
+Knowledge objects that map to a dynamic board exam objective are kept, durably, in Drive under Medical Knowledge Database / Dynamic Board
+Objective Curriculum / ABIM CERT or LKA / <blueprint discipline> / <code> <objective>.json (an objective on both exams in both folders):
+the objective, its knowledge objects and edges, and every lesson on it with content, tier and generation metadata. A file is rewritten
+only when its content changes and counts only when Drive confirms it (`mk_curfiles`). Objects that do not map stay under the original
+ontology (the MKOS folder). The mapping pass (daily, no AI) maps as many objects as possible: recommendations through the concepts they
+recommend, claims, teaching points, objectives and pearls through the recommendation they derive from, educational objects and source
+sections through the concepts they cover, concepts through mapped neighbours, then names. The library scan skips this folder.
+Operations: `objective_mapping_status`, `curriculum_status`; owner `objective_mapping_run`, `curriculum_sync`.

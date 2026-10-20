@@ -11,6 +11,9 @@
 // folder. The account comes from the login session (or the connector link) and the folder comes from that account's row in D1.
 // The AI models hold no Google credential at all; when one asks for a record, this server answers from the caller's rows only.
 import { mkosApi, mkosCall, MKOS_TOOLS } from './mkos/routes.js';
+import { runGen } from './mkos/genjobs.js';
+import { curSync } from './mkos/curstore.js';
+import { mapObjectives } from './mkos/objmap.js';
 import { mkTick } from './mkos/tick.js';
 import { persistNow } from './mkos/mirror.js';
 import { ttsList as mkosSays } from './mkos/pronounce.js';
@@ -659,13 +662,17 @@ async function voiceFile(request, env, ctx, url) {
   const obj = await env.VOICE.get(f.key);
   return obj ? new Response(obj.body, { headers }) : fail(502, 'That file could not be read. Try again.');
 }
-async function runAI(env, user, { input, tier, provider, account, chat, job, avoid }) {
+async function runAI(env, user, { input, tier, provider, account, chat, job, avoid, strict }) {
   tier = tier === 'quick' ? 'quick' : 'default';
   job = JOB[job] ? job : chat ? 'chat' : 'lesson';   // a request that does not say is held to the highest bar
   let messages = typeof input === 'string' ? [{ role: 'user', content: input }] : Array.isArray(input) ? input : [];
   messages = messages.slice(-40).map(m => ({ role: m && m.role === 'assistant' ? 'assistant' : 'user', content: typeof (m && m.content) === 'string' ? m.content.slice(0, 150000) : '' })).filter(m => m.content);
   if (!messages.length || messages[messages.length - 1].role !== 'user') return { status: 400, error: 'Nothing to answer.' };
-  const H = await hierarchy(env), order = route(env, H, job, provider, str(avoid, 20).toLowerCase()), who = TIER_NAME[H.jobs[job]].toLowerCase();
+  const H = await hierarchy(env), who = TIER_NAME[H.jobs[job]].toLowerCase();
+  let order = route(env, H, job, provider, str(avoid, 20).toLowerCase());
+  /* A lesson job is bound to the model chosen when it was queued: `strict` asks that one service only, so a lesson never changes writer
+     part-way (the hierarchy above still decides whether that service may do the job at all). */
+  if (strict && provider && order.includes(provider)) order = [provider];
   if (!order.length) return { status: 503, error: job === 'chat' ? 'No AI is set up on this site yet.' : `"${JOB[job].name}" needs a service in the ${who} tier or above, and none is set up on this site yet. The owner adds a key in Cloudflare or changes the tiers on the account page.` };
   const want = JOB[job].pick && order.includes(provider) ? provider : '', used = await aiUsed(env, user.id), notes = []; let capped = 0;
   for (const id of order) {
@@ -1247,7 +1254,7 @@ async function api(request, env, url, ctx) {
 
   /* MKOS, the Medical Knowledge Operating System (src/mkos): /api/mkos/<op>[/<id>]. Knowledge is central and readable by every
      account; learner state is the caller's own; administration is the owner's. */
-  if (url.pathname.startsWith('/api/mkos')) { const r = await mkosApi(request, env, url, user, body, { owner: isOwner(env, user), deps: mkDeps(env), roots: mkRoots(env) }); return json(r.body, r.status); }
+  if (url.pathname.startsWith('/api/mkos')) { const r = await mkosApi(request, env, url, user, body, { owner: isOwner(env, user), deps: mkDeps(env), roots: mkRoots(env), kick: genKick(env, ctx) }); return json(r.body, r.status); }
 
   /* Change password while logged in: the current password is asked for again. This device stays logged in; every other one is logged out. */
   if (route === 'POST /api/password') {
@@ -1511,6 +1518,15 @@ function mkDeps(env) {
     },
     lastRangeStatus: () => rangeStatus,
     mkosRoot: env.MKOS_DRIVE_FOLDER || null,
+    /* The library root, and the Dynamic Board Objective Curriculum folder inside it (found by name unless MKOS_CURRICULUM_FOLDER names it). */
+    libraryRoot: KNOW(env) || null, curriculumFolder: str(env.MKOS_CURRICULUM_FOLDER, 200) || null,
+    /* The generation queue (src/mkos/genjobs.js) writes lessons with the app's own AI, through runAI and its hierarchy, as the account
+       that queued them: the same allowances and the same order of operations as a lesson written in the page. */
+    genAI: async (uid, opts) => { const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return { status: 404, error: 'no such account' }; return runAI(env, u, opts); },
+    aiLeft: async (uid, provider) => { const used = await aiUsed(env, uid); return aiCap(env, provider) - (used[provider] || 0); },
+    genModels: async () => { const H = await hierarchy(env); const server = route(env, H, 'lesson').filter(id => hasProvider(env, id)); return { server, first: server[0] || null, names: Object.fromEntries(server.map(id => [id, PNAME[id]])) }; },
+    isLead: async (provider) => { const H = await hierarchy(env); return H.tiers[provider] === 'lead'; },
+    putDoc: async (uid, path, obj) => { obj._t = Date.now(); await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(uid, path, JSON.stringify(obj), new Date().toISOString()).run(); },
     changedUsers: async () => (await env.DB.prepare("SELECT user_id, MAX(updated) AS updated FROM docs WHERE path = 'med/state' OR path LIKE 'med/les_%' OR path LIKE 'med/bank_%' OR path LIKE 'med/cards_%' GROUP BY user_id").all()).results,
     /* Free services only (Gemini's free tier, then Cloudflare Workers AI), called directly so a paid service is never reached and the
        app's AI hierarchy is untouched. Usage is counted under the account 'mkos'. */
@@ -1524,6 +1540,17 @@ function mkDeps(env) {
       }
       throw last || new Error('No free AI service answered'); } : null,
   };
+}
+/* A lesson just queued for the server starts at once, after the reply (the 5-minute run carries on from wherever this stops). */
+const genKick = (env, ctx) => ctx ? uid => ctx.waitUntil(runGen(env, mkDeps(env), { budgetMs: 28e3, user: uid, maxSteps: 1 }).catch(e => console.error('gen kick', e))) : null;
+async function genRunSafe(env) {
+  try { if (env.GEN === 'off') return; await init(env); await runGen(env, mkDeps(env), { maxSteps: Number(env.GEN_STEPS) || 14 }); }
+  catch (e) { console.error('gen', e); }
+  /* Map as many knowledge objects as possible to the board objectives (src/mkos/objmap.js), then write the objective curriculum's
+     durable files in Drive (src/mkos/curstore.js). */
+  try { if (env.MKOS !== 'off') await mapObjectives(env, {}); } catch (e) { console.error('objective mapping', e); }
+  try { await driveState(env); if (DRIVE.mode && env.MKOS !== 'off') await curSync(env, mkDeps(env), { max: Number(env.CUR_FILES) || 8 }); }
+  catch (e) { console.error('curriculum', e); }
 }
 async function mkTickSafe(env) {
   try { await init(env); await centralize(env); await driveState(env); if (!DRIVE.mode) return; await mkTick(env, mkDeps(env), { ...mkRoots(env), maxBudget: 480 }); }
@@ -1606,7 +1633,7 @@ async function mcpServer(request, env, token, ctx) {
     }
     if (name === 'mkos') {
       const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return bad('This account no longer exists.');
-      const r = await mkosCall(env, u, String(a.op || 'status'), a.args && typeof a.args === 'object' ? a.args : {}, { owner: isOwner(env, u), deps: mkDeps(env), roots: mkRoots(env) });
+      const r = await mkosCall(env, u, String(a.op || 'status'), a.args && typeof a.args === 'object' ? a.args : {}, { owner: isOwner(env, u), deps: mkDeps(env), roots: mkRoots(env), kick: genKick(env, ctx) });
       return r.status === 200 ? out(r.body) : bad(JSON.stringify(r.body).slice(0, 2000));
     }
     const path = String(a.path || '');
@@ -1637,6 +1664,8 @@ export default {
       const third = Math.floor(new Date(event.scheduledTime || Date.now()).getUTCMinutes() / 5) % 3 === 0;
       if (env.MKOS !== 'off' && (spent <= 6 || (third && spent <= 20))) await mkTickSafe(env);
     })());
+    /* The generation queue has its own turn every run: background and batch lessons, then objective seeding (src/mkos/genjobs.js). */
+    ctx.waitUntil(genRunSafe(env));
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);

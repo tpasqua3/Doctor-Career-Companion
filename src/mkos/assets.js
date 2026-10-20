@@ -8,6 +8,7 @@ import { FRAMEWORK } from './framework.js';
 import { nowIso, audit, fwGet, overrides } from './db.js';
 import { getObject, getObjects, putObject, setStatus, slug } from './kb.js';
 import { topicContext, checkCitations } from './bridge.js';
+import { nodeForTopic } from './education.js';
 
 const U = (uid) => 'u' + String(uid).replace(/[^a-z0-9]/gi, '').slice(0, 10).toLowerCase();
 const enc = new TextEncoder();
@@ -28,6 +29,36 @@ async function policy(env) {
     max: g('max_content_bytes') || 600000, batch: g('max_batch') || 30 };
 }
 const band = (p, b) => p == null ? 'n' : p >= b.high ? 'h' : p >= b.medium ? 'm' : 'l';
+
+/* CONFIDENCE TIERS (assets.json "confidence"): every asset's overall score decides whether and how it is served. Durable assets are
+   retrieved deterministically with no AI; provisional ones are served, marked and re-verified at each retrieval; anything below is not
+   served to anyone else and waits for review or regeneration. */
+const CONF = () => FRAMEWORK.frameworks.assets.confidence;
+export const tierOf = (score) => { const t = [...CONF().tiers].sort((a, b) => b.min - a.min).find((x) => (score ?? 0) >= x.min) || CONF().tiers[CONF().tiers.length - 1]; return t; };
+export function assetScore(o, { cov = null, uses = 0 } = {}) {
+  const S = CONF().score, rs = o.review_status || 'unreviewed', b = o.basis || {};
+  let s = S.base[rs] ?? S.base.unreviewed;
+  if ((o.needs || []).includes('regenerate')) s = Math.min(s, S.base.needs_regenerate);
+  else if ((o.needs || []).length) s = Math.min(s, S.base.flagged);
+  const c = cov ?? (o.asset_confidence && o.asset_confidence.citation_coverage) ?? 0;
+  s += S.citation_coverage_max_bonus * Math.max(0, Math.min(100, c)) / 100;
+  if (Object.keys(b.recs || {}).length || Object.keys(b.families || {}).length) s += S.grounded_bonus;
+  const rv = o.review || {};
+  if (rs === 'validated') { if (!rv.flagged) s += S.clean_review_bonus; else s += Math.max(S.flagged_segments_floor, S.per_flagged_segment * rv.flagged); }
+  s += Math.min(S.reuse_bonus_max, S.reuse_bonus_per_clean_serve * (uses || 0));
+  const overall = Math.max(0, Math.min(100, Math.round(s)));
+  return { citation_coverage: c, validation_score: S.base[rs] ?? 50, overall, tier: tierOf(overall).id, scored_at: nowIso() };
+}
+const serves = (o) => !!tierOf(o && o.asset_confidence ? o.asset_confidence.overall : 0).serve;
+const GEN = () => FRAMEWORK.frameworks.assets.generation_metadata;
+/* Generation metadata (assets.json generation_metadata): who wrote it, with which prompt and template, for which objective. */
+const genMeta = (g, d) => { g = g && typeof g === 'object' ? g : {};
+  const pick = (k, max = 120) => g[k] == null || g[k] === '' ? null : String(g[k]).slice(0, max);
+  return { model: pick('model') || d.generated_by || null, model_version: pick('model_version'), prompt_version: pick('prompt_version') || GEN().prompt_version,
+    template_version: pick('template_version') || GEN().template_version, generated_at: pick('generated_at', 40) || nowIso(), objective_id: pick('objective_id') || d.objective || null,
+    blueprint_id: pick('blueprint_id') || (d.blueprint_id ? String(d.blueprint_id) : null), blueprint_source: pick('blueprint_source', 200), status: pick('status', 40) || 'complete',
+    runner: pick('runner', 20), job_id: pick('job_id', 60), pass: g.pass == null ? null : Number(g.pass) || null, reviewed_by: pick('reviewed_by') || d.reviewed_by || null }; };
+const objVariant = async (objective) => 'o' + (await sha(String(objective))).slice(0, 7);
 
 // The topic's currency fingerprint right now: current guideline editions, what its recommendations say, the board weighting.
 async function basisNow(env, u, tid, name, pol) {
@@ -96,8 +127,57 @@ async function served(env, uid, kind, ids) {
   await env.DB.batch(ids.map((id) => env.DB.prepare('INSERT INTO mk_asset_usage (asset_id, user_id, kind, at, n) VALUES (?, ?, ?, ?, 1) ON CONFLICT (asset_id, user_id) DO UPDATE SET n = n + 1, at = excluded.at').bind(id, String(uid), kind, at)));
 }
 const meta = (o) => ({ id: o.id, version: o.version, kind: o.asset_kind, review_status: o.review_status, generated_by: o.generated_by || '', reviewed_by: o.reviewed_by || '',
-  generated_at: o.created, updated: o.updated, confidence: o.asset_confidence ? o.asset_confidence.overall : null });
+  generated_at: o.created, updated: o.updated, confidence: o.asset_confidence ? o.asset_confidence.overall : null,
+  tier: o.asset_confidence ? tierOf(o.asset_confidence.overall).id : null, objective: o.objective || null, generation: o.generation || null });
 const currentWith = (ctx) => (ctx.guidelines || []).map((g) => g.current).filter(Boolean).slice(0, 4);
+
+/* Re-verification at retrieval: the asset's confidence is recomputed with what is known now (its review state, flags, citation coverage,
+   grounding and clean reuse). A tier change is stored; an asset that falls below the serving tiers is queued for the owner's review. */
+async function reverify(env, o) {
+  const uses = ((await env.DB.prepare('SELECT COUNT(*) AS n FROM mk_asset_usage WHERE asset_id = ?').bind(o.id).first()) || {}).n || 0;
+  const sc = assetScore(o, { uses }), before = o.asset_confidence || {}, t = tierOf(sc.overall);
+  if (before.tier !== sc.tier || Math.abs((before.overall ?? -99) - sc.overall) >= 3) {
+    const needs = !t.serve && !(o.needs || []).length ? ['review'] : o.needs || [];
+    await putObject(env, { ...o, asset_confidence: sc, confidence_tier: sc.tier, needs }, { actor: 'mkos-reverify', summary: `confidence ${before.overall ?? '-'} -> ${sc.overall} (${sc.tier})`, audited: false });
+  }
+  return { ...sc, serve: !!t.serve };
+}
+/* The best objective lesson (assets with an `objective`) on one of this topic's blueprint objectives, if one is servable. */
+async function objectiveLessonFor(env, u, tid, now, pol) {
+  const node = await getObject(env, nodeForTopic(tid)); const bpts = (node && node.blueprint_topics) || []; if (!bpts.length) return null;
+  const { results } = await env.DB.prepare(`SELECT body FROM mk_objects WHERE type = 'EducationalAsset' AND id LIKE 'ea.s.les.%' AND status = 'current' AND json_extract(body, '$.objective') IN (${bpts.slice(0, 60).map(() => '?').join(',')})`).bind(...bpts.slice(0, 60)).all();
+  const list = results.map((r) => JSON.parse(r.body)).sort((x, y) => ((y.asset_confidence || {}).overall || 0) - ((x.asset_confidence || {}).overall || 0));
+  for (const o of list) {
+    if (await judge(o, now, await getObjects(env, Object.keys((o.basis || {}).recs || {})), pol, false)) continue;
+    const v = await reverify(env, o); if (!v.serve) continue;
+    const c = (await loadContent(env, [o]))[o.id]; if (!c) continue;
+    await served(env, u.id, 'lesson', [o.id]);
+    return { reuse: true, reason: 'objective_lesson', asset: meta(o), content: c };
+  }
+  return null;
+}
+/* objective_lessons {objective | objectives[] | tid}: the stored objective lessons (any tier) with their confidence, for the Boards view. */
+export async function objectiveLessons(env, u, a) {
+  const ids = Array.isArray(a.objectives) ? a.objectives.map(String).slice(0, 200) : a.objective ? [String(a.objective)] : [];
+  let rows;
+  if (ids.length) rows = (await env.DB.prepare(`SELECT body FROM mk_objects WHERE type = 'EducationalAsset' AND status = 'current' AND json_extract(body, '$.objective') IN (${ids.map(() => '?').join(',')})`).bind(...ids).all()).results;
+  else rows = (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'EducationalAsset' AND status = 'current' AND json_extract(body, '$.objective') IS NOT NULL ORDER BY updated DESC LIMIT ?").bind(Math.min(1000, Number(a.limit) || 1000)).all()).results;
+  return { lessons: rows.map((r) => meta(JSON.parse(r.body))) };
+}
+/* objective_lesson {objective}: serve one objective's lesson (deterministic retrieval, no AI) when it is servable. */
+export async function objectiveLesson(env, u, a) {
+  const id = String(a.objective || ''); if (!id) return { error: 'objective required' };
+  const pol = await policy(env);
+  const rows = (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'EducationalAsset' AND status = 'current' AND json_extract(body, '$.objective') = ? AND id LIKE 'ea.s.%'").bind(id).all()).results.map((r) => JSON.parse(r.body));
+  if (!rows.length) return { reuse: false, reason: 'no_asset' };
+  const o = rows.sort((x, y) => ((y.asset_confidence || {}).overall || 0) - ((x.asset_confidence || {}).overall || 0))[0];
+  const { basis: now } = await basisNow(env, u, o.app_topic, '', pol);
+  const why = await judge(o, now, await getObjects(env, Object.keys((o.basis || {}).recs || {})), pol, false); if (why) return { reuse: false, reason: why, asset_id: o.id };
+  const v = await reverify(env, o); if (!v.serve) return { reuse: false, reason: 'low_confidence', asset_id: o.id, confidence: v };
+  const c = (await loadContent(env, [o]))[o.id]; if (!c) return { reuse: false, reason: 'no_asset' };
+  await served(env, u.id, 'lesson', [o.id]);
+  return { reuse: true, reason: 'objective_lesson', asset: meta(o), content: c, tid: o.app_topic };
+}
 
 /* asset_find {kind, tid, name, len|variant, level, n, exclude, personal}
    Lessons: the one current, validated, guideline-current asset for this topic, length and board-weighting band, or the reason to generate.
@@ -112,7 +192,13 @@ export async function findAsset(env, u, a) {
     const variant = String(a.len || a.variant || 'std'), id = lessonId(tid, variant, now.band), o = await getObject(env, id);
     let reason = await judge(o, now, o ? await getObjects(env, Object.keys((o.basis || {}).recs || {})) : {}, pol, false);
     if (reason === 'no_asset') for (const b of ['h', 'm', 'l', 'n']) if (b !== now.band) { const x = await getObject(env, lessonId(tid, variant, b)); if (x && x.status === 'current') { reason = 'blueprint_changed'; break; } }
-    if (reason) return { reuse: false, reason, asset_id: id, current_with: currentWith(ctx) };
+    if (!reason) { const v = await reverify(env, o); if (!v.serve) reason = 'low_confidence'; }
+    if (reason) {
+      // Deterministic fallback: no current lesson for the topic at this length, but an objective lesson (pass-1 seed) on one of the
+      // topic's blueprint objectives is durable or provisional and current: serve it instead of writing.
+      if (variant === 'std' && !a.no_objective) { const ob = await objectiveLessonFor(env, u, tid, now, pol); if (ob) return { ...ob, current_with: currentWith(ctx), instead_of: reason }; }
+      return { reuse: false, reason, asset_id: id, current_with: currentWith(ctx) };
+    }
     const c = (await loadContent(env, [o]))[id]; if (!c) return { reuse: false, reason: 'no_asset', asset_id: id };
     await served(env, u.id, kind, [id]);
     return { reuse: true, reason: 'current_validated', asset: meta(o), content: c, current_with: currentWith(ctx) };
@@ -123,8 +209,10 @@ export async function findAsset(env, u, a) {
   const cands = (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'EducationalAsset' AND id LIKE ? AND status = 'current' ORDER BY updated DESC LIMIT 400").bind(prefix + '%').all()).results
     .map((r) => JSON.parse(r.body)).filter((o) => !ex.has(o.id) && (lvl == null || kind !== 'question' || Number(o.variant) === lvl));
   const live = await getObjects(env, [...new Set(cands.flatMap((o) => Object.keys((o.basis || {}).recs || {})))]), ok = [], reasons = {};
-  for (const o of cands) { const r = await judge(o, now, live, pol, true); if (r) reasons[r] = (reasons[r] || 0) + 1; else ok.push(o); }
-  for (let i = ok.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ok[i], ok[j]] = [ok[j], ok[i]]; }
+  for (const o of cands) { const r = await judge(o, now, live, pol, true) || (serves(o.asset_confidence ? o : { ...o, asset_confidence: assetScore(o) }) ? null : 'low_confidence'); if (r) reasons[r] = (reasons[r] || 0) + 1; else ok.push(o); }
+  // Highest confidence first (durable before provisional); ties broken at random so a pool does not always open the same way.
+  const sc = (o) => (o.asset_confidence ? o.asset_confidence.overall : assetScore(o).overall) + Math.random() * 0.9;
+  ok.sort((x, y) => sc(y) - sc(x));
   const pick = ok.slice(0, n), contents = await loadContent(env, pick), items = pick.filter((o) => contents[o.id]).map((o) => ({ asset: meta(o), content: contents[o.id] }));
   await served(env, u.id, kind, items.map((x) => x.asset.id));
   return { reuse: items.length > 0, reason: items.length ? 'current_validated' : cands.length ? Object.keys(reasons)[0] || 'no_asset' : 'no_asset', items, missing: n - items.length,
@@ -148,7 +236,8 @@ export async function putAssets(env, u, a) {
     const cc = srcs.length ? await checkCitations(env, srcs) : { results: [], older: 0 };
     const reviewed = !!(it.validated ?? a.validated);
     const review_status = cc.older ? 'citation_outdated' : reviewed ? 'validated' : 'unreviewed';
-    const variant = K.pool ? (it.level ?? a.level ?? null) : String(a.len || a.variant || 'std');
+    const objective = !K.pool && a.objective ? String(a.objective).slice(0, 80) : null;
+    const variant = K.pool ? (it.level ?? a.level ?? null) : objective ? await objVariant(objective) : String(a.len || a.variant || 'std');
     const key = K.pool ? (await sha(tid + '|' + (kind === 'question' ? String(content.stem || '') : String(content.f || content.front || '')).toLowerCase().replace(/\s+/g, ' ').trim())).slice(0, 14) : null;
     const local = String(it.local_id || a.local_id || '');
     const id = personal ? `ea.${U(u.id)}.g.${K.code}.${(await sha(tid + '|' + (K.pool ? key : variant + '|' + local))).slice(0, 16)}`
@@ -167,10 +256,16 @@ export async function putAssets(env, u, a) {
       teaches: concepts, cites, difficulty: kind === 'question' && variant != null && !isNaN(Number(variant)) ? Math.round(Number(variant)) : null,
       generated_by: String(it.generated_by || a.generated_by || ''), reviewed_by: reviewed ? String(it.reviewed_by || a.reviewed_by || '') : '',
       derived_from_versions: { ...basis.families, ...basis.recs }, basis,
-      asset_confidence: { citation_coverage: cov, validation_score: vs, overall: Math.round(vs * 0.75 + cov * 0.25) },
+      asset_confidence: null,
+      ...(objective ? { objective, blueprint_id: a.blueprint_id ? String(a.blueprint_id).slice(0, 80) : null, len: String(a.len || 'std') } : {}),
+      generation: genMeta(it.generation || a.generation, { generated_by: String(it.generated_by || a.generated_by || ''), objective, blueprint_id: a.blueprint_id, reviewed_by: reviewed ? String(it.reviewed_by || a.reviewed_by || '') : '' }),
+      review: (it.review || a.review) && typeof (it.review || a.review) === 'object' ? { fixed: Number((it.review || a.review).fixed) || 0, flagged: Number((it.review || a.review).flagged) || 0 } : null,
       review_status, needs: [], status: 'current', governance_status: review_status === 'validated' ? 'validated' : 'pending_validation',
       provenance: [{ source_id: 'src.app_generation', method: 'ai_generation', agent: String(it.generated_by || a.generated_by || 'ai'), at: nowIso(), note: tid }],
       data: personal ? { user: U(u.id) } : {} };
+    void vs; o.asset_confidence = assetScore(o, { cov }); o.confidence_tier = o.asset_confidence.tier;
+    // A score below the serving tiers is queued for review at once, so it is never served before someone looks at it.
+    if (!tierOf(o.asset_confidence.overall).serve && review_status !== 'citation_outdated') o.needs = ['review'];
     const r = await putObject(env, o, { actor: personal ? 'learner:' + U(u.id) : 'app', summary: `generated ${kind}${review_status === 'validated' ? ', validated' : ', ' + review_status}`, audited: !K.pool });
     const last = await env.DB.prepare('SELECT content FROM mk_asset_store WHERE asset_id = ? ORDER BY at DESC, rowid DESC LIMIT 1').bind(id).first();
     if (!last || last.content !== text)
@@ -179,8 +274,14 @@ export async function putAssets(env, u, a) {
     const links = [...concepts.map((c) => [c, 'teaches']), ...cites.map((c) => [c, 'cites']), ...Object.keys(basis.recs).map((c) => [c, 'cites'])];
     await env.DB.batch([env.DB.prepare('DELETE FROM mk_asset_links WHERE asset_id = ?').bind(id),
       ...links.map(([obj, rel]) => env.DB.prepare('INSERT OR IGNORE INTO mk_asset_links (asset_id, user_id, path, item, object_id, rel, at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(id, who, 'mkos', item, obj, rel, at))]);
+    if (objective) {
+      await env.DB.prepare('INSERT OR IGNORE INTO mk_asset_links (asset_id, user_id, path, item, object_id, rel, at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(id, who, 'mkos', item, objective, 'teaches_objective', at).run();
+      const bt = await getObject(env, objective);
+      if (bt && bt.blueprint) await env.DB.prepare('INSERT OR REPLACE INTO mk_blueprint_asset_mappings (blueprint_id, asset_id, asset_type, blueprint_weight, priority_score, confidence_score) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(bt.blueprint, id, 'objective_lesson', Number(bt.est_pct) || null, Number(bt.priority_score) || null, o.asset_confidence.overall).run();
+    }
     if (!personal) await served(env, u.id, kind, [id]);
-    out.push({ id, version: r.version, review_status, changed: r.changed, older_citations: cc.older || 0 });
+    out.push({ id, version: r.version, review_status, changed: r.changed, older_citations: cc.older || 0, confidence: o.asset_confidence.overall, tier: o.asset_confidence.tier });
   }
   return { stored: out, current_with: currentWith(ctx) };
 }
@@ -235,6 +336,7 @@ export async function auditAssets(env, { prog = {}, limit = 40 } = {}) {
       const r = await judge(o, now, live, pol, false);
       if (r && r !== 'unvalidated' && r !== 'flagged') { reasons[r] = (reasons[r] || 0) + 1; flagged++;
         await putObject(env, { ...o, needs: ['regenerate'], review_status: 'needs_regenerate', data: { ...(o.data || {}), regenerate_reason: r, regenerate_at: nowIso() } }, { actor: 'reconcile', summary: 'regeneration queued: ' + r, audited: false }); }
+      else if (!r) { const v = await reverify(env, o); if (!v.serve) { reasons.low_confidence = (reasons.low_confidence || 0) + 1; flagged++; } }
     }
   }
   if (list.length) prog.after = list[list.length - 1].id;

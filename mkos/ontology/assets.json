@@ -1,60 +1,155 @@
 {
-  "id": "framework.assets",
-  "version": "1.0.0",
-  "status": "current",
-  "created_date": "2026-10-18",
-  "updated_date": "2026-10-18",
-  "change_log": [
-    {
-      "version": "1.0.0",
-      "date": "2026-10-18",
-      "summary": "Educational assets as governed MKOS objects: retrieve first, generate only when needed."
-    }
+ "id": "framework.assets",
+ "version": "1.1.0",
+ "status": "current",
+ "created_date": "2026-10-18",
+ "updated_date": "2026-10-20",
+ "change_log": [
+  {
+   "version": "1.0.0",
+   "date": "2026-10-18",
+   "summary": "Educational assets as governed MKOS objects: retrieve first, generate only when needed."
+  },
+  {
+   "version": "1.1.0",
+   "date": "2026-10-20",
+   "summary": "Confidence tiers for knowledge objects (durable, provisional, review, quarantine) with re-verification at retrieval; objective-anchored lessons; generation metadata on every asset; the generation queue (background and batch lessons, objective seeding)."
+  }
+ ],
+ "title": "Educational asset governance: retrieve first, generate only when needed",
+ "principle": "Educational assets (lessons, audio lessons, questions, flashcards, board review content and future kinds) are first-class MKOS objects: generated once, validated, versioned, stored and reused while they stay guideline-current. Knowledge Objects -> Educational Assets -> asset exists? yes: reuse; no: generate -> validate -> store.",
+ "kinds": {
+  "lesson": {
+   "asset_kind_by_variant": {
+    "short": "micro_lesson",
+    "std": "long_form_lesson",
+    "deep": "long_form_lesson",
+    "obj": "long_form_lesson"
+   },
+   "pool": false,
+   "code": "les",
+   "note": "The lesson text is also the audio lesson: the device voice reads it, applying the governed pronunciations at play time, so one asset serves both.",
+   "objective_variant": "An objective lesson is stored per ABIM blueprint objective: variant 'o' + 7 hex of the objective id, filed under the objective's curriculum topic, linked to the objective (asset.objective, mk_asset_links rel teaches_objective) and weighted in mk_blueprint_asset_mappings."
+  },
+  "question": {
+   "asset_kind": "question",
+   "pool": true,
+   "code": "q",
+   "note": "Board review questions are questions on board-blueprint topics; they share this pool."
+  },
+  "flashcard": {
+   "asset_kind": "flashcard",
+   "pool": true,
+   "code": "c"
+  }
+ },
+ "regenerate_when": [
+  "no_asset: no stored asset for this topic and variant",
+  "superseded: the asset was superseded, retired, or flagged for regeneration by impact analysis",
+  "guideline_changed: a guideline family it was built on has a new current edition, or a recommendation it relied on changed or was superseded",
+  "blueprint_changed: the learner's board weighting for the topic moved by at least blueprint_material_delta (lessons are kept per weighting band, so two blueprints never overwrite each other)",
+  "personalized: the request carries a focus, a knowledge gap, a basis lesson or other learner-specific adaptation; the result is stored as the learner's own asset, never shared",
+  "unvalidated or flagged: the only stored asset has not passed the accuracy review, cites an older guideline edition, or a learner flagged it"
+ ],
+ "validation": {
+  "validated_when": "the app's independent accuracy review ran over the whole asset and the asset cites no superseded guideline edition",
+  "reuse_unreviewed": false,
+  "learner_flag": "one flag stops reuse until the owner reviews it"
+ },
+ "blueprint_material_delta": 20,
+ "bands": {
+  "high": 67,
+  "medium": 34
+ },
+ "max_content_bytes": 600000,
+ "max_batch": 30,
+ "shared_prompt_excludes_learner_state": true,
+ "confidence": {
+  "note": "Every educational asset carries asset_confidence.overall (0-100). The tier decides how it is served. Scores are recomputed when the asset is stored, at every retrieval (re-verification against today's knowledge) and in the daily reconciliation, so a newly ingested guideline or a changed recommendation moves an asset down a tier the moment it no longer holds.",
+  "score": {
+   "base": {
+    "validated": 80,
+    "unreviewed": 50,
+    "citation_outdated": 15,
+    "flagged": 30,
+    "needs_regenerate": 10
+   },
+   "citation_coverage_max_bonus": 10,
+   "grounded_bonus": 5,
+   "grounded_when": "the topic had current MKOS recommendations or a current guideline family when the asset was written (basis.recs or basis.families not empty)",
+   "clean_review_bonus": 5,
+   "per_flagged_segment": -3,
+   "flagged_segments_floor": -12,
+   "corrected_segment": 0,
+   "reuse_bonus_per_clean_serve": 0.5,
+   "reuse_bonus_max": 5
+  },
+  "tiers": [
+   {
+    "id": "durable",
+    "min": 85,
+    "serve": true,
+    "label": "Durable",
+    "meaning": "Validated, grounded and current: served first and retrieved deterministically with no AI."
+   },
+   {
+    "id": "provisional",
+    "min": 70,
+    "serve": true,
+    "label": "Provisional",
+    "meaning": "Served, marked provisional, and re-verified at each retrieval; rises to durable as it is served cleanly or reviewed."
+   },
+   {
+    "id": "review",
+    "min": 50,
+    "serve": false,
+    "label": "Needs review",
+    "meaning": "Not served to other accounts; queued for the owner's review (asset_review ok raises it, regenerate rewrites it)."
+   },
+   {
+    "id": "quarantine",
+    "min": 0,
+    "serve": false,
+    "label": "Quarantined",
+    "meaning": "Never served; regenerated the next time it is needed."
+   }
   ],
-  "title": "Educational asset governance: retrieve first, generate only when needed",
-  "principle": "Educational assets (lessons, audio lessons, questions, flashcards, board review content and future kinds) are first-class MKOS objects: generated once, validated, versioned, stored and reused while they stay guideline-current. Knowledge Objects -> Educational Assets -> asset exists? yes: reuse; no: generate -> validate -> store.",
-  "kinds": {
-    "lesson": {
-      "asset_kind_by_variant": {
-        "short": "micro_lesson",
-        "std": "long_form_lesson",
-        "deep": "long_form_lesson"
-      },
-      "pool": false,
-      "code": "les",
-      "note": "The lesson text is also the audio lesson: the device voice reads it, applying the governed pronunciations at play time, so one asset serves both."
-    },
-    "question": {
-      "asset_kind": "question",
-      "pool": true,
-      "code": "q",
-      "note": "Board review questions are questions on board-blueprint topics; they share this pool."
-    },
-    "flashcard": {
-      "asset_kind": "flashcard",
-      "pool": true,
-      "code": "c"
-    }
-  },
-  "regenerate_when": [
-    "no_asset: no stored asset for this topic and variant",
-    "superseded: the asset was superseded, retired, or flagged for regeneration by impact analysis",
-    "guideline_changed: a guideline family it was built on has a new current edition, or a recommendation it relied on changed or was superseded",
-    "blueprint_changed: the learner's board weighting for the topic moved by at least blueprint_material_delta (lessons are kept per weighting band, so two blueprints never overwrite each other)",
-    "personalized: the request carries a focus, a knowledge gap, a basis lesson or other learner-specific adaptation; the result is stored as the learner's own asset, never shared",
-    "unvalidated or flagged: the only stored asset has not passed the accuracy review, cites an older guideline edition, or a learner flagged it"
+  "durable_storage_min": 85,
+  "serve_order": "highest confidence first; ties broken at random so a question pool does not always open the same way"
+ },
+ "generation_metadata": {
+  "note": "Stored on every generated asset (asset.generation and inside the content as gen) for auditing and regeneration.",
+  "fields": [
+   "model",
+   "model_version",
+   "prompt_version",
+   "template_version",
+   "generated_at",
+   "objective_id",
+   "blueprint_id",
+   "blueprint_source",
+   "status",
+   "runner",
+   "job_id",
+   "pass",
+   "reviewed_by"
   ],
-  "validation": {
-    "validated_when": "the app's independent accuracy review ran over the whole asset and the asset cites no superseded guideline edition",
-    "reuse_unreviewed": false,
-    "learner_flag": "one flag stops reuse until the owner reviews it"
-  },
-  "blueprint_material_delta": 20,
-  "bands": {
-    "high": 67,
-    "medium": 34
-  },
-  "max_content_bytes": 600000,
-  "max_batch": 30,
-  "shared_prompt_excludes_learner_state": true
+  "prompt_version": "lp-2026.10.20",
+  "template_version": "lt-2"
+ },
+ "generation_queue": {
+  "note": "Lessons are jobs bound to one writing model from start to finish (no model handoff mid-lesson). A job whose model the server can run (Gemini, DeepSeek, Cloudflare, or Claude when the server holds an Anthropic API key) keeps writing on the server when the page is closed; a Claude job without a server key writes in the page, checkpoints every part, pauses when the page goes away and resumes on return (or with Resume).",
+  "server_steps_per_run_ms": 420000,
+  "max_tries_per_step": 3,
+  "cap_wait": "a job whose model has used its daily allowance waits for the next UTC day and continues from the step it reached",
+  "seed": {
+   "length_words": 2000,
+   "pass": 1,
+   "pass_meaning": "Pass 1 is coverage: a foundational lesson that teaches the objective well enough to stand alone and to be deepened by later enrichment passes (2: depth; 3: advanced material, pearls, edge cases and guideline updates).",
+   "reserve_calls": 60,
+   "reserve_meaning": "Seeding only uses the writing model's allowance while at least this many calls remain for the owner's own study that day.",
+   "priority": "blueprint priority, highest first",
+   "quality_over_speed": true
+  }
+ }
 }

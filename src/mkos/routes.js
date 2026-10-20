@@ -14,7 +14,10 @@ import { FRAMEWORK, FRAMEWORK_HASH } from './framework.js';
 import { listBlueprints, blueprintDetail, boardPlan, boardRecommendations, select as selectBlueprint, selection as bpSelection, scoresFor } from './blueprint.js';
 import { appBundle, topicContext, checkCitations, assetFlags } from './bridge.js';
 import { ttsList } from './pronounce.js';
-import { findAsset, putAssets, flagAsset, reviewAsset, assetStats } from './assets.js';
+import { findAsset, putAssets, flagAsset, reviewAsset, assetStats, objectiveLessons, objectiveLesson } from './assets.js';
+import { curSync, curStatus } from './curstore.js';
+import { mapObjectives, mappingStatus } from './objmap.js';
+import { genAdd, genBatch, genList, genGet, genResume, genCancel, genPage, genFiled, runGen, genModels, seedStart, seedStatus, seedPause, seedRetry, iteMap } from './genjobs.js';
 import { durability, mirrorStep, persistNow } from './mirror.js';
 import { progress } from './progress.js';
 import { pdfOutline } from './outline.js';
@@ -96,6 +99,29 @@ const OPS = {
   asset_flag: { owner: false, run: async (env, u, a, x) => flagAsset(env, u, a, x.owner) },
   asset_stats: { owner: false, run: async (env, u, a, x) => assetStats(env, u, x.owner) },
   asset_review: { owner: true, run: async (env, u, a) => reviewAsset(env, u, a) },
+  objective_lessons: { owner: false, run: async (env, u, a) => objectiveLessons(env, u, a) },
+  objective_lesson: { owner: false, run: async (env, u, a) => objectiveLesson(env, u, a) },
+  // ---- The generation queue: lessons as jobs bound to one model, background and batch generation, objective seeding (genjobs.js)
+  gen_models: { owner: false, run: async (env, u, a, x) => genModels(env, x.deps) },
+  gen_add: { owner: false, run: async (env, u, a, x) => { const r = await genAdd(env, x.deps, u, a); if (r.job && r.job.runner === 'server' && x.kick) x.kick(u.id); return r; } },
+  gen_batch: { owner: false, run: async (env, u, a, x) => { const r = await genBatch(env, x.deps, u, a); if (x.kick) x.kick(u.id); return r; } },
+  gen_list: { owner: false, run: async (env, u, a) => genList(env, u, a) },
+  gen_get: { owner: false, run: async (env, u, a) => genGet(env, u, a) },
+  gen_resume: { owner: false, run: async (env, u, a, x) => { const r = await genResume(env, u, a); if (r.job && r.job.runner === 'server' && x.kick) x.kick(u.id); return r; } },
+  gen_cancel: { owner: false, run: async (env, u, a) => genCancel(env, u, a) },
+  gen_page: { owner: false, run: async (env, u, a) => genPage(env, u, a) },
+  gen_filed: { owner: false, run: async (env, u, a) => genFiled(env, u, a) },
+  // An open page lends the server its connection to get its own queued lessons written sooner (the 5-minute run does it otherwise).
+  gen_pump: { owner: false, run: async (env, u, a, x) => runGen(env, x.deps, { budgetMs: Math.max(30e3, Math.min(150e3, Number(a.ms) || 100e3)), user: u.id }) },
+  ite_map: { owner: false, run: async (env, u, a) => iteMap(env, u, a) },
+  seed_status: { owner: false, run: async (env) => seedStatus(env) },
+  seed_start: { owner: true, run: async (env, u, a, x) => seedStart(env, x.deps, u, a) },
+  seed_pause: { owner: true, run: async (env, u, a) => seedPause(env, u, a) },
+  seed_retry: { owner: true, run: async (env) => seedRetry(env) },
+  objective_mapping_status: { owner: false, run: async (env) => mappingStatus(env) },
+  objective_mapping_run: { owner: true, run: async (env) => mapObjectives(env, {}) },
+  curriculum_status: { owner: false, run: async (env) => curStatus(env) },
+  curriculum_sync: { owner: true, run: async (env, u, a, x) => curSync(env, x.deps, { max: Math.max(1, Math.min(30, Number(a.max) || 10)) }) },
   // ---- Decomposition and the daily reconciliation (decompose.js, classify.js, reconcile.js)
   decomposition: { owner: false, run: async (env) => ({
     objects: (await env.DB.prepare("SELECT type, COALESCE(json_extract(body, '$.edu_kind'), json_extract(body, '$.claim_kind'), json_extract(body, '$.objective_type')) AS kind, status, COUNT(*) AS n FROM mk_objects WHERE type IN ('Objective','EducationalObject','Claim') GROUP BY type, kind, status").all()).results,
