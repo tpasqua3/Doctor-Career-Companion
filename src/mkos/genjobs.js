@@ -27,6 +27,7 @@ const uid = () => 'g' + Date.now().toString(36) + Math.random().toString(36).sli
 const A = (x) => Array.isArray(x) ? x : [];
 const S = (x, n) => String(x == null ? '' : x).slice(0, n);
 const nextUtcDay = () => { const d = new Date(); d.setUTCHours(24, 6, 0, 0); return d.getTime(); };
+// (06 minutes past midnight UTC: just after the allowance resets.)
 
 let READY = false;
 export async function genInit(env) {
@@ -192,8 +193,13 @@ async function claim(env, deps, { user = null, budgetLeft = 1e9 } = {}) {
   for (const r of results) {
     if (r.batch === 'seed') {
       if (!seedOk) continue;
-      const left = deps.aiLeft ? await deps.aiLeft(r.user_id, r.model) : 999;
-      if (left <= QP().seed.reserve_calls) { await env.DB.prepare("UPDATE mk_gen SET status = 'waiting', not_before = ?, note = ? WHERE batch = 'seed' AND status IN ('queued','running','waiting') AND runner = 'server'").bind(nextUtcDay(), 'Seeding pauses to keep today\'s allowance for your own study; it continues tomorrow from the next objective.').run(); continue; }
+      // The reserve for the owner's own study holds until the last `release_hours` before the daily reset; then whatever he has
+      // not used goes to seeding rather than to waste.
+      const release = nextUtcDay() - 6 * 60e3 - (QP().seed.release_hours ?? 2) * 3600e3, late = now >= release;
+      const left = deps.aiLeft ? await deps.aiLeft(r.user_id, r.model) : 999, reserve = late ? 0 : QP().seed.reserve_calls;
+      if (left <= reserve) { const until = late ? nextUtcDay() : release;
+        await env.DB.prepare("UPDATE mk_gen SET status = 'waiting', not_before = ?, note = ? WHERE batch = 'seed' AND status IN ('queued','running','waiting') AND runner = 'server'")
+          .bind(until, late ? 'Today\'s allowance is used up; seeding continues after the daily reset from the next objective.' : 'Seeding is holding the last ' + reserve + ' calls for your own study; anything you have not used is released to seeding two hours before the daily reset.').run(); continue; }
     }
     const got = await env.DB.prepare("UPDATE mk_gen SET lease = ?, status = 'running', updated = ? WHERE id = ? AND lease = ?").bind(now + Math.min(LEASE, budgetLeft + 30e3), nowIso(), r.id, r.lease).run();
     if (got.meta && got.meta.changes) return { ...r, status: 'running' };
@@ -392,7 +398,7 @@ export async function seedStatus(env) {
   const next = (await env.DB.prepare("SELECT title, status, note, not_before FROM mk_gen WHERE batch = 'seed' AND status IN ('running','queued','waiting') ORDER BY (status = 'running') DESC, prio DESC LIMIT 5").all()).results;
   const failed = (await env.DB.prepare("SELECT id, title, note FROM mk_gen WHERE batch = 'seed' AND status = 'failed' ORDER BY updated DESC LIMIT 20").all()).results;
   return { by_status: Object.fromEntries(by.map((r) => [r.status, r.n])), tiers: Object.fromEntries(tiers.map((r) => [r.tier || 'unscored', r.n])), objectives: total, covered, coverage_pct: total ? Math.round(1000 * covered / total) / 10 : 0,
-    done_today: doneToday, paused: (await getSetting(env, 'seed_paused')) === '1', reserve_calls: QP().seed.reserve_calls, words: QP().seed.length_words, next, failed };
+    done_today: doneToday, paused: (await getSetting(env, 'seed_paused')) === '1', reserve_calls: QP().seed.reserve_calls, release_hours: QP().seed.release_hours ?? 2, words: QP().seed.length_words, next, failed };
 }
 export async function seedPause(env, u, a) { await setSetting(env, 'seed_paused', a.on === false ? null : '1'); if (a.on === false) await env.DB.prepare("UPDATE mk_gen SET status = 'queued', not_before = 0, note = '' WHERE batch = 'seed' AND status = 'waiting'").run(); return { ok: true, paused: a.on !== false }; }
 /* seed_retry: failed seed objectives go back in the queue. */

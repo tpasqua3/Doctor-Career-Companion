@@ -1,6 +1,6 @@
 {
  "id": "framework.assets",
- "version": "1.1.0",
+ "version": "1.1.1",
  "status": "current",
  "created_date": "2026-10-18",
  "updated_date": "2026-10-20",
@@ -14,6 +14,11 @@
    "version": "1.1.0",
    "date": "2026-10-20",
    "summary": "Confidence tiers for knowledge objects (durable, provisional, review, quarantine) with re-verification at retrieval; objective-anchored lessons; generation metadata on every asset; the generation queue (background and batch lessons, objective seeding)."
+  },
+  {
+   "version": "1.1.1",
+   "date": "2026-10-20",
+   "summary": "Seeding reserve is released for the last two hours before the daily reset, so unused allowance is not wasted."
   }
  ],
  "title": "Educational asset governance: retrieve first, generate only when needed",
@@ -149,7 +154,9 @@
    "reserve_calls": 60,
    "reserve_meaning": "Seeding only uses the writing model's allowance while at least this many calls remain for the owner's own study that day.",
    "priority": "blueprint priority, highest first",
-   "quality_over_speed": true
+   "quality_over_speed": true,
+   "release_hours": 2,
+   "release_meaning": "In the last release_hours before the daily allowance resets (00:00 UTC, 8 PM Eastern), the reserve is released: whatever the owner has not used that day goes to seeding instead of going to waste."
   }
  }
 }

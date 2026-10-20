@@ -1,5 +1,5 @@
 {
-  "built": "2026-10-20T19:39:30.765Z",
+  "built": "2026-10-20T23:54:40.331Z",
   "errors": 0,
   "warnings": [],
   "counts": {
@@ -17,9 +17,9 @@
     "layers": 11,
     "stop_the_line_conditions": 8
   },
-  "framework_hash": "e73f8173d247a8b6",
+  "framework_hash": "adbb0dd790312778",
   "versions": {
-    "assets": "1.1.0",
+    "assets": "1.1.1",
     "blueprints": "1.0.0",
     "competencies": "1.0.0",
     "decomposition": "1.1.0",

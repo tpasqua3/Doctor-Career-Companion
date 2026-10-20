@@ -254,7 +254,7 @@ pass, reviewer). Operations: `gen_models`, `gen_add`, `gen_batch`, `gen_list`, `
 `gen_filed`, `gen_pump`, `ite_map`; owner `seed_start`, `seed_pause`, `seed_retry`; everyone `seed_status`.
 
 **Objective seeding**: one foundational pass-1 lesson (about 2,000 words) per ABIM blueprint objective (CERT, plus LKA-only), highest
-priority first, always leaving `seed.reserve_calls` of the writing model's daily allowance for the owner's own study; quality before speed;
+priority first, leaving `seed.reserve_calls` of the writing model's daily allowance for the owner's own study until `seed.release_hours` before the daily reset (then the unused remainder goes to seeding); quality before speed;
 the queue persists until every objective is seeded. Later passes deepen them (2: depth; 3: advanced material, pearls, edge cases, updates).
 
 ## Confidence tiers (assets.json confidence)
