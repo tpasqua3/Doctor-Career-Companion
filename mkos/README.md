@@ -46,7 +46,7 @@ licensed). The server reads the library from Drive itself.
 | `decompose.js` | Knowledge decomposition: criteria, objectives, competencies, teaching points, targets, pathways, pearls (below) |
 | `classify.js` | Classification and subclassification of every object (below) |
 | `reconcile.js` | The daily reconciliation engine (below) |
-| `genjobs.js` | The generation queue: lessons as jobs bound to one model, background and batch writing, objective seeding, ITE-to-objective mapping |
+| `genjobs.js` | The generation queue: lessons as jobs bound to one model, background and batch writing, objective seeding, ITE-to-objective mapping (`ite_map`: legacy wording match, or with `items` the per-discipline shortlist the app's AI chooses from) |
 | `objmap.js` | Objective mapping: as many knowledge objects as possible mapped to the ABIM CERT and LKA objectives |
 | `curstore.js` | The Dynamic Board Objective Curriculum in Drive: one file per objective, by exam and discipline |
 | `routes.js` | `/api/mkos/<op>` and the connector tool `mkos` |

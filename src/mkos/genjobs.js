@@ -410,7 +410,7 @@ const sim = (A1, B1) => { let n = 0; for (const g of A1) if (B1.has(g)) n++; ret
 /* ite_map {missed:[text], family}: each missed educational objective is matched to the blueprint objective it belongs to (best trigram
    match of its words against the objective, its subcategory and category), with that objective's domain, priority and app topic. */
 export async function iteMap(env, u, a) {
-  const missed = A(a.missed).map((x) => String(typeof x === 'string' ? x : x && x.text || '')).filter(Boolean).slice(0, 150); if (!missed.length) return { map: [] };
+  const missed = A(a.missed).map((x) => String(typeof x === 'string' ? x : x && x.text || '')).filter(Boolean).slice(0, 150); if (!missed.length && !A(a.items).length) return { map: [] };
   const fam = a.family === 'lka' ? 'bpt.lka.%' : 'bpt.cert.%';
   const { results } = await env.DB.prepare(`SELECT o.id, json_extract(o.body, '$.name') AS name, json_extract(o.body, '$.category') AS cat, json_extract(o.body, '$.subcategory') AS sub, json_extract(o.body, '$.domain') AS dom,
     json_extract(o.body, '$.est_pct') AS pct, (SELECT json_extract(n.body, '$.legacy_topic_id') FROM mk_objects n, json_each(n.body, '$.blueprint_topics') b WHERE n.type = 'CurriculumNode' AND b.value = o.id LIMIT 1) AS tid
@@ -423,5 +423,42 @@ export async function iteMap(env, u, a) {
     if (!best || best.s < 0.3) return { text, objective: null, confidence: best ? Math.round(best.s * 100) : 0 };
     const p = best.p; return { text, objective: p.id, name: p.name, category: p.cat, subcategory: p.sub, domain: p.dom, tid: p.tid, est_pct: p.pct, priority: pri[p.id] ?? null, confidence: Math.round(best.s * 100) };
   });
-  return { map };
+  if (!A(a.items).length) return { map };
+  return iteShortlist(a, pool, pri);
+}
+
+/* ite_map {items:[{text, area}], family}: the shortlist half of ITE mapping (the AI half runs in the app, through the app's own
+   "report" job, so the AI order of operations is untouched). An in-training exam lists missed items by content area, so each item is
+   narrowed deterministically to the blueprint discipline that content area belongs to: the whole discipline (37 to 105 objectives)
+   is offered, plus the closest few objectives from other disciplines by wording, because a content area such as "Pulmonary and
+   Critical Care" or "General Internal Medicine" spans several blueprint disciplines. A content area that names no discipline gets the
+   closest objectives across the whole blueprint. Returns the pools once, each item's pool key and extra candidates, its closest
+   objective by wording, and the details of every objective offered. */
+const ITE_AREAS = [
+  [/cardio|heart/i, 'Cardiovascular Disease'], [/endocr|diabet|metabol/i, 'Endocrinology, Diabetes, and Metabolism'], [/gastro|hepat|liver/i, 'Gastroenterology'],
+  [/hemat/i, 'Hematology'], [/oncol|cancer/i, 'Medical Oncology'], [/infect/i, 'Infectious Disease'], [/nephro|kidney|renal|urolog/i, 'Nephrology and Urology'],
+  [/neurol/i, 'Neurology'], [/pulm|respir|critical/i, 'Pulmonary Disease'], [/rheum|musculo|orthop/i, 'Rheumatology and Orthopedics'], [/dermat|skin/i, 'Dermatology'],
+  [/allerg|immunol/i, 'Allergy and Immunology'], [/geriat/i, 'Geriatric Syndromes'], [/psych/i, 'Psychiatry'], [/obstet|gynec|women/i, 'Obstetrics and Gynecology'],
+  [/ophthal|eye/i, 'Ophthalmology'], [/otolar|\bent\b|dental/i, 'Otolaryngology and Dental Medicine']];
+const ITE_STOP = new Set('a an the of in on with and or for to by from at as is are be patient patients adult adults man woman men women person older younger year old who has have having presenting presents select identify recognize diagnose diagnosis evaluate evaluation manage management treat treatment treating appropriate best next step most likely initial use using indications indication'.split(' '));
+const iteWords = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter((w) => w.length > 1 && !ITE_STOP.has(w));
+function iteShortlist(a, pool, pri) {
+  const items = A(a.items).slice(0, 150).map((x) => ({ text: String(x && x.text || '').slice(0, 300), area: String(x && x.area || '').slice(0, 120) })).filter((x) => x.text);
+  const cats = (area) => [...new Set(ITE_AREAS.filter(([re]) => re.test(area)).map(([, c]) => c))];
+  const P = pool.map((p) => ({ ...p, w: new Set(iteWords((p.sub || '') + ' ' + p.name)) }));
+  const score = (g, ws, p) => { let n = 0; for (const w of ws) if (p.w.has(w)) n++; return Math.max(sim(g, p.g), sim(g, p.gs) * 0.95) + (ws.length ? 0.25 * n / ws.length : 0); };
+  const pools = {}, used = new Set(), out = [];
+  for (const it of items) {
+    const cs = cats(it.area), key = cs.length ? cs.slice().sort().join('|') : '';
+    if (key && !pools[key]) { pools[key] = P.filter((p) => cs.includes(p.cat)).map((p) => p.id); pools[key].forEach((id) => used.add(id)); }
+    const ws = iteWords(it.text), g = gramsOf(ws.join(' ') || it.text), inPool = key ? new Set(pools[key]) : null;
+    const ranked = P.map((p) => ({ p, s: score(g, ws, p) })).sort((x, y) => y.s - x.s);
+    const extra = ranked.filter((r) => !inPool || !inPool.has(r.p.id)).slice(0, key ? 4 : 12).map((r) => r.p.id);
+    const nearR = (inPool ? ranked.filter((r) => inPool.has(r.p.id)) : ranked).slice(0, 8), near = nearR.map((r) => r.p.id), top = nearR[0] || ranked[0];
+    extra.forEach((id) => used.add(id)); near.forEach((id) => used.add(id));
+    out.push({ text: it.text, area: it.area, pool: key, extra, near, best: top ? { objective: top.p.id, score: Math.round(100 * Math.min(1, top.s)) } : null });
+  }
+  const objectives = {};
+  for (const p of P) if (used.has(p.id)) objectives[p.id] = { name: p.name, category: p.cat, subcategory: p.sub, domain: p.dom, tid: p.tid, est_pct: p.pct, priority: pri[p.id] ?? null };
+  return { pools, items: out, objectives };
 }
