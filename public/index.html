@@ -1642,7 +1642,7 @@ function render(){drawTeach(); $('#tabs').innerHTML=TABS.map(([id,n])=>`<button 
   /* A screen that fails to draw says so, instead of leaving the last tab's content under the new tab's name. */
   let v;try{v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,history:vHistory,learn:vLearn,knowledge:vKnowledge,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])()}catch(e){console.error(e);v=`<div class="err">This screen could not be shown: ${esc(String((e&&e.message)||e).slice(0,160))}. Send this message to Claude.</div>`}
   if(mkOn()&&!MKLOAD&&(!MKAT||Date.now()-MKAT>300000))setTimeout(()=>mkLoad(),0);
-  $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;syncNote();drawPlayer();drawAsk();hydrateFigs();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1,P.q[P.i].say)}
+  $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;if(S.tab==='settings'&&!S.quiz&&!S.lesson)govAttach();syncNote();drawPlayer();drawAsk();hydrateFigs();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1,P.q[P.i].say)}
 const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="small muted">${/lesson/.test(S.busy)?'Writing a lesson takes about a minute. '+(st.prefs.auto?'It starts playing as soon as it is ready; keep this screen open.':'It opens as text as soon as it is ready.'):''}</p><p class="tiny muted">${st.prefs.audit?'Everything is written, then fact-checked by a second review pass before you see or hear it.':''}</p></div>`:'';
 const modeRow=()=>`<div class="plain"><span class="eyebrow">When the lesson is ready</span>${segBtns('auto',[[true,'Listen: play it aloud'],[false,'Read: show the text']],st.prefs.auto)}<span class="small muted">${st.prefs.auto?'Audio starts by itself and the text follows along on screen. Controls sit at the bottom.':'The lesson opens as text. A Listen button on it plays the audio whenever you want.'}</span></div>`;
 /* How many questions to write: one number, asked for wherever a set is started, remembered between visits. */
@@ -1896,7 +1896,7 @@ function gvoiceSelect(){const own=SITE.owner,tiers=own?GTIERS:GTIERS.filter(v=>!
   return `<label class="small" style="display:block;margin:8px 0 4px">Natural voice model <select data-gtier aria-label="Natural voice model">${tiers.map(v=>`<option value="${v[0]}"${v[0]===tier?' selected':''}>${v[1]}</option>`).join('')}</select></label><span class="small muted" style="display:block">${own?'Automatic starts with the best Google voice and steps down as each free monthly allowance is used.':'Automatic reads with Google WaveNet while its free monthly allowance lasts, then the Cloudflare voice.'} The player shows which one is reading.</span>`+`<label class="small" style="display:block;margin:8px 0 4px">Natural voice (Google) <select data-gvoice aria-label="Natural voice from Google"><option value="">${own?'Automatic (Aoede)':'Automatic (WaveNet F)'}</option>${gv.map(v=>`<option value="${v[0]}"${v[0]===want?' selected':''}>${v[1]}</option>`).join('')}</select></label>`}
 function voiceSelect(){if(!TTS)return'';const vs=speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang||''));if(!vs.length)return'';let want='';try{want=localStorage.getItem('dcc:dvoice')||''}catch(e){}
   return `<label class="small" style="display:block;margin:8px 0 4px">This device's voice <select data-dvoice aria-label="This device's voice"><option value="">Automatic</option>${vs.map(v=>`<option value="${esc(v.name)}"${v.name===want?' selected':''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select></label>`}
-function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h1></div>${mkPronCard()}
+function vSettings(){const p=st.prefs;return `<div class="plain"><h1>Settings</h1></div>${mkPronCard()}<section class="card" data-usap-governance hidden></section>
   <div class="card"><h3>About you</h3><label class="f">Used to pitch every lesson and plan<textarea id="about">${esc(p.about)}</textarea></label><div class="row"><button class="btn" data-act="saveabout">Save</button></div></div>
   <div class="card"><h3>Audio</h3><div class="plain"><span class="eyebrow">Reading speed</span>${segBtns('rate',[[.85,'0.85×'],[1,'1×'],[1.15,'1.15×'],[1.3,'1.3×'],[1.5,'1.5×']],p.rate)}</div>
    <div class="plain"><span class="eyebrow">Voice</span>${segBtns('voice',[...(kokCan()&&KOK.have?[['offline','Offline voice']]:[]),['cloud','Natural voice'],['device','This device\'s voice']],p.voice==='device'?'device':p.voice==='offline'&&kokCan()&&KOK.have?'offline':'cloud')}${gvoiceSelect()}${voiceSelect()}<span class="small muted">The natural voice is free and has allowances shared by everyone using the app: the best voices have a monthly one, and a simpler natural voice with a daily one takes over when it is spent. When neither can be reached, lessons are read in this device's voice, chosen here.</span>${kokCan()?`<div id="kokbox" style="margin-top:10px">${kokHtml()}</div>`:''}</div>
@@ -2571,6 +2571,23 @@ async function kSearch(){KN.q=($('#kq')||{}).value||'';KN.type=($('#kt')||{}).va
 
 /* Settings (owner): pronunciation governance. Mark a word incorrect, see ranked candidates, approve one; the approved respelling is
    written into the central list, so every voice, lesson, card and tutor reply uses it from the next request. */
+/* ---------- Settings > Governance (USAP) ----------
+   The section is generated by USAP's shared renderer, never by this page. It stays hidden unless the server's node kit says this person
+   may see it (the owner, or someone the owner granted): website /api/usap/governance/*, inside Claude the connector tool usap_governance.
+   The renderer is served by the website (/usap/ui.js), so inside Claude the section links to the website's Settings instead.
+   One element is kept across redraws (render() rebuilds the screen), so the mounted section is loaded once, not on every redraw. */
+const GOVSITE='https://doctor-career-companion.tpasqua3.workers.dev';let GOV=null;
+function govAttach(){const slot=$('[data-usap-governance]');if(!slot)return;if(!GOV){if(!WEB&&!(LINKED&&MCP&&CONN))return;GOV=slot;govLoad(slot);return}if(slot!==GOV)slot.replaceWith(GOV)}
+async function govLoad(sec){try{let w=null;
+  if(WEB){const r=await fetch('/api/usap/governance/whoami',{cache:'no-store'});if(!r.ok)return;w=await r.json()}
+  else{const r=await MCP.callTool(CONN,'usap_governance',{op:'whoami'},{cache:false});w=r&&(r.payload??r.structuredContent);if(typeof w==='string')w=JSON.parse(w)}
+  if(!w||!w.decision||w.decision.role==='none')return;
+  sec.hidden=false;sec.innerHTML=`<h3>Governance</h3><p class="small muted">${w.connected?'Loading…':'Registered with USAP. Health, performance and audits appear here once telemetry is connected.'}</p>`;
+  if(!w.connected)return;
+  if(!WEB){sec.innerHTML=`<h3>Governance</h3><p class="small">Governance is connected. <a href="${GOVSITE}/" target="_blank" rel="noopener">Open it on the website</a>, under Settings.</p>`;return}
+  await new Promise((ok,no)=>{const x=document.createElement('script');x.src='/usap/ui.js';x.onload=ok;x.onerror=no;document.head.append(x)});
+  if(window.UsapGovernance&&typeof window.UsapGovernance.mount==='function'){sec.innerHTML='';window.UsapGovernance.mount(sec)}
+ }catch(e){/* governance is optional; the app works without it */}}
 function mkPronCard(){if(!mkOn()||!(MK&&MK.owner))return'';const D=MKP.dash,C=MKP.cand;
   return `<div class="card"><h3>Pronunciation governance (MKOS)</h3><p class="small muted">Mark a word as mispronounced to get ranked respellings; approving one makes it the authoritative pronunciation everywhere.</p>
    <div class="row" style="align-items:flex-end"><label class="f" style="flex:1;min-width:160px">Word<input type="text" id="pterm" placeholder="sacubitril"></label><button class="btn" data-act="pflagmk">Mark incorrect</button><button class="btn sm" data-act="pdash">Review queue</button></div>

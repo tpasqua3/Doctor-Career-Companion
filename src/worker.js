@@ -15,8 +15,27 @@ import { runGen } from './mkos/genjobs.js';
 import { curSync } from './mkos/curstore.js';
 import { mapObjectives } from './mkos/objmap.js';
 import { mkTick } from './mkos/tick.js';
-import { persistNow } from './mkos/mirror.js';
+import { persistNow, durability } from './mkos/mirror.js';
+import { mkInit } from './mkos/db.js';
 import { ttsList as mkosSays } from './mkos/pronounce.js';
+/* USAP node kit (Brain domain-sdk/usap_node_kit_v1.js, copied unchanged; replace it, never edit it here).
+   Observation only: counts and timings (never user data, text or amounts) go to USAP through the USAP_UGF service binding (USAP's
+   NodeGateway entrypoint, no key needed); without the binding it does nothing. It also serves Settings > Governance
+   (/api/usap/governance/*, /usap/ui.js, the usap_governance connector tool) and the remediation hooks registered near the end of
+   this file. The AI order of operations (SERVICES, TIERS, JOBS, AI_ORDER) is locked (SR-03): nothing here wraps, reorders or
+   observes runAI or the MKOS AI calls, and the hooks that would touch AI routing or MKOS migration are refused by the kit. */
+import { createUsapNode } from './usap_node_kit_v1.js';
+/* Route templates only: the connector token in /mcp/<token> and any id never leave the app. */
+const usapRoute = url => url.pathname.startsWith('/mcp') ? '/mcp/:token'
+  : '/' + url.pathname.split('/').filter(Boolean).slice(0, 3).map(s => /^[a-f0-9]{16,}$/i.test(s) || /^\d+$/.test(s) || s.length > 40 ? ':id' : s).join('/');
+const usap = createUsapNode({
+  appId: 'doctor_companion_app',
+  isOwner: (env, u) => isOwner(env, u),   // the app's own owner check (OWNER_EMAIL); the signed-in row carries `email`
+  routeLabel: usapRoute,
+  /* SR-03: provider_circuit (and rollback_config, which could restore an AI hierarchy setting) would change AI routing.
+     SR-12: MKOS domain migration is gated, so apply_migration is refused too. */
+  lockedHooks: ['provider_circuit', 'rollback_config', 'apply_migration'],
+});
 const enc = new TextEncoder();
 const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
 const rand = n => hex(crypto.getRandomValues(new Uint8Array(n)));
@@ -393,6 +412,8 @@ async function googleSpeak(env, user, text) {
       const j = await r.json();
       if (!j || typeof j.audioContent !== 'string' || !j.audioContent) continue;
       await env.DB.prepare('INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + excluded.n').bind(user.id, today(), key, text.length).run();
+      usap.emitMetric('tts_chars_used', text.length, { provider: 'google', voice_kind: v.id });   // USAP: counts only
+      usap.emitMetric('tts_quota_utilization', ((used[key] || 0) + text.length) / v.free, { provider: 'google', voice_kind: v.id });
       return { status: 200, audio: j.audioContent, type: 'audio/mpeg', voice: 'google-' + v.id };
     } catch (e) { console.log('google voice ' + v.id + ': ' + String(e && e.message || e).slice(0, 200)); return null; }
   }
@@ -603,6 +624,8 @@ async function speak(env, user, input, only) {
   } catch (e) { console.log('speak: ' + String(e && e.message || e).slice(0, 200)); return { status: 503, error: 'The natural voice is not available just now.' }; }
   if (!audio) return { status: 502, error: 'The natural voice sent nothing back.' };
   await env.DB.prepare("INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, 'tts', ?) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + excluded.n").bind(user.id, today(), text.length).run();
+  usap.emitMetric('tts_chars_used', text.length, { provider: 'cloudflare', voice_kind: 'melotts' });   // USAP: counts only
+  usap.emitMetric('tts_quota_utilization', (((row && row.n) || 0) + text.length) / cap, { provider: 'cloudflare', voice_kind: 'melotts' });
   return { status: 200, audio, type, voice: 'cloudflare' };
 }
 /* ---------- The offline voice's files ----------
@@ -962,7 +985,10 @@ async function syncUser(env, uid, B) {
       for (const f of old.slice(KEEP_BACKUPS)) { if (B.n <= 1) break; B.n--; await trash(env, f.id); }
     }
   } catch (e) { error = e instanceof LibError ? e.message : 'Google Drive could not be reached.'; console.error('drive copy failed for ' + uid, e); }
-  finally { await env.DB.prepare('UPDATE drive_accounts SET lease = 0, error = ?, synced = ? WHERE user_id = ?').bind(error, error ? row.synced : new Date().toISOString(), uid).run(); }
+  finally {
+    await env.DB.prepare('UPDATE drive_accounts SET lease = 0, error = ?, synced = ? WHERE user_id = ?').bind(error, error ? row.synced : new Date().toISOString(), uid).run();
+    usap.emitMetric('drive_sync_success_rate', error ? 0 : 1, { store: 'drive' });   // USAP: 1 copied, 0 failed
+  }
   return { on: true, error };
 }
 const syncSoon = (env, ctx, uid) => { if (ctx && storeOn(env)) ctx.waitUntil(syncUser(env, uid, { n: 14 }).catch(e => console.error(e))); };
@@ -1553,7 +1579,9 @@ async function genRunSafe(env) {
   catch (e) { console.error('curriculum', e); }
 }
 async function mkTickSafe(env) {
-  try { await init(env); await centralize(env); await driveState(env); if (!DRIVE.mode) return; await mkTick(env, mkDeps(env), { ...mkRoots(env), maxBudget: 480 }); }
+  try { await init(env); await centralize(env); await driveState(env); if (!DRIVE.mode) return;
+    const r = await mkTick(env, mkDeps(env), { ...mkRoots(env), maxBudget: 480 });
+    if (r && typeof r.used === 'number') usap.emitMetric('d1_query_count', r.used, { job: 'mkos_tick' }); }   // USAP: the run's metered D1 statements
   catch (e) { console.error('mkos', e); }
 }
 /* A durable change made outside the engine (configuration, the central records) is persisted to Drive straight after the reply
@@ -1585,6 +1613,8 @@ const MCP_TOOLS = [
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
   { name: 'library_file', description: "One slice of a file in the reference library (a guideline PDF), base64 encoded, for the app's PDF reader. Start at `offset` 0 and continue from offset + length until `done` is true.",
     inputSchema: { type: 'object', properties: { fileId: { type: 'string' }, offset: { type: 'number' } }, required: ['fileId'] }, annotations: { readOnlyHint: true } },
+  /* USAP governance (the node kit's standard tool): Settings > Governance inside Claude. Owner and owner-granted people only. */
+  { name: usap.mcpTool.name, description: usap.mcpTool.description, inputSchema: usap.mcpTool.inputSchema, annotations: { readOnlyHint: false, destructiveHint: false } },
 ];
 async function mcpServer(request, env, token, ctx) {
   if (request.method !== 'POST') return new Response('This address is for the Doctor Career Companion connector in Claude.', { status: 405, headers: { Allow: 'POST' } });
@@ -1636,6 +1666,10 @@ async function mcpServer(request, env, token, ctx) {
       const r = await mkosCall(env, u, String(a.op || 'status'), a.args && typeof a.args === 'object' ? a.args : {}, { owner: isOwner(env, u), deps: mkDeps(env), roots: mkRoots(env), kick: genKick(env, ctx) });
       return r.status === 200 ? out(r.body) : bad(JSON.stringify(r.body).slice(0, 2000));
     }
+    if (name === usap.mcpTool.name) {
+      const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return bad('This account no longer exists.');
+      return out(await usap.mcpTool.call(env, u, a));
+    }
     const path = String(a.path || '');
     if (!PATH_OK.test(path)) return bad('That is not a valid document path. It must start with the area, like med/state.');
     if (name === 'save_doc') {
@@ -1658,14 +1692,18 @@ const app = {
   /* Every five minutes: copy waiting records to Drive first; when nothing was waiting, the same run gives MKOS its turn (scan, jobs,
      mirror). Splitting the run this way keeps each invocation inside the platform's per-run limits. */
   async scheduled(event, env, ctx) {
-    ctx.waitUntil((async () => {
+    const drive = (async () => {
       const spent = await sweep(env).catch(e => { console.error(e); return 34; });
       /* MKOS runs when the sweep had little to copy, and in every third run regardless, so it is never starved. */
       const third = Math.floor(new Date(event.scheduledTime || Date.now()).getUTCMinutes() / 5) % 3 === 0;
       if (env.MKOS !== 'off' && (spent <= 6 || (third && spent <= 20))) await mkTickSafe(env);
-    })());
+    })();
+    ctx.waitUntil(drive);
     /* The generation queue has its own turn every run: background and batch lessons, then objective seeding (src/mkos/genjobs.js). */
-    ctx.waitUntil(genRunSafe(env));
+    const gen = genRunSafe(env);
+    ctx.waitUntil(gen);
+    /* USAP: once both are done, the hourly status figures, then everything observed in this run is sent. */
+    ctx.waitUntil(Promise.allSettled([drive, gen]).then(() => usapStatus(env, event)).catch(() => { }).then(() => usap.flush(env)));
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1679,6 +1717,19 @@ const app = {
       try { return await voiceFile(request, env, ctx, url); }
       catch (e) { console.error(e); return fail(500, 'Something went wrong on the server. Try again.'); }
     }
+    /* USAP: the shared governance renderer, the remediation hooks (USAP only) and Settings > Governance (owner and granted people). */
+    if (url.pathname === '/usap/ui.js') return usap.serveUI(request, env);
+    if (url.pathname === '/api/usap/remediate') {
+      /* A request over USAP's service binding has no visitor address; one from the internet always does, so it may not claim the binding. */
+      if (request.headers.get('x-usap-ugf') === 'binding' && request.headers.get('CF-Connecting-IP')) return fail(401, 'Not allowed.');
+      return usap.handleRemediation(request, env, ctx);
+    }
+    if (url.pathname.startsWith('/api/usap/governance')) {
+      const origin = request.headers.get('Origin');
+      if (request.method !== 'GET' && origin && new URL(origin).host !== url.host) return fail(403, 'Cross-site request refused.');
+      try { await init(env); return await usap.handleGovernance(request, env, ctx, await currentUser(request, env)); }
+      catch (e) { console.error(e); return fail(500, 'Something went wrong on the server. Try again.'); }
+    }
     if (url.pathname.startsWith('/api/')) {
       try { return await api(request, env, url, ctx); }
       catch (e) { console.error(e); return fail(500, 'Something went wrong on the server. Try again.'); }
@@ -1687,9 +1738,56 @@ const app = {
   },
 };
 
-/* USAP node kit (Brain domain-sdk/usap_node_kit_v1.js, copied unchanged; replace it, never edit it here).
-   Observation only: times each /api and /mcp request and sends counts and timings (never user data) to USAP through
-   the USAP_UGF service binding (USAP's NodeGateway entrypoint, no key needed). Without the binding it does nothing. */
-import { createUsapNode } from './usap_node_kit_v1.js';
-const usap = createUsapNode({ appId: 'doctor_companion_app' });
-export default { ...app, fetch: usap.timeRequest((req, env, ctx) => app.fetch(req, env, ctx)) };
+/* ---------- USAP status figures (hourly, from the five-minute timer) ----------
+   Read-only counts and ages from tables the app already keeps; nothing about a person, no text. Every figure is optional: a table
+   that does not exist yet (MKOS before its first run) simply sends nothing. */
+async function usapStatus(env, event) {
+  if (new Date(event && event.scheduledTime || Date.now()).getUTCMinutes() >= 5) return;   // the first run of each hour
+  const one = async (sql, ...a) => { try { return await env.DB.prepare(sql).bind(...a).first(); } catch { return null; } };
+  const mkSet = async k => { const r = await one('SELECT v FROM mk_settings WHERE k = ?', k); try { return r ? JSON.parse(r.v) : null; } catch { return null; } };
+  const now = Date.now(), mins = t => t && Date.parse(t) ? Math.max(0, (now - Date.parse(t)) / 60e3) : 0, M = (k, v, d) => { if (typeof v === 'number' && Number.isFinite(v)) usap.emitMetric(k, v, d || {}); };
+  // Persistence: account records waiting for Drive, MKOS files pending Drive's confirmation, and how old the oldest of each is.
+  const acc = await one('SELECT COUNT(*) AS n, MIN(d.updated) AS t ' + DIRTY), mk = await one("SELECT COUNT(*) AS n, MIN(synced) AS t FROM mk_mirror WHERE key LIKE 'pend:%'");
+  if (acc) M('drive_sync_backlog', acc.n || 0, { store: 'drive' });
+  if (mk) M('drive_sync_backlog', mk.n || 0, { store: 'mkos' });
+  if (acc || mk) M('drive_sync_lag_minutes', Math.round(Math.max(mins(acc && acc.n ? acc.t : null), mins(mk && mk.n ? mk.t : null))), {});
+  const snap = await one("SELECT synced FROM mk_mirror WHERE key = 'snapshot'");
+  if (snap && snap.synced) M('backup_age_hours', Math.round(mins(snap.synced) / 6) / 10, { store: 'mkos' });
+  const drill = await mkSet('drill_report'); if (drill && typeof drill.pass === 'boolean') M('restore_drill_pass', drill.pass ? 1 : 0, {});
+  // Knowledge: central objects (shared knowledge only, never a learner's own assets), concepts nothing links to, retrieve-first routing.
+  const objs = await one("SELECT COUNT(*) AS n FROM mk_objects WHERE id NOT LIKE 'ea.u%'"); if (objs) M('registry_object_count', objs.n || 0, {});
+  const rec = await mkSet('reconcile_report'), concepts = await one("SELECT COUNT(*) AS n FROM mk_objects WHERE type = 'Concept'");
+  if (rec && rec.orphans && typeof rec.orphans.unlinked_concepts === 'number' && concepts && concepts.n) M('knowledge_orphan_ratio', rec.orphans.unlinked_concepts / concepts.n, {});
+  const routed = await one("SELECT COUNT(*) AS n, SUM(CASE WHEN decision != 'ai' THEN 1 ELSE 0 END) AS r FROM mk_routes WHERE at >= ?", new Date(now - 3600e3).toISOString());
+  if (routed && routed.n) M('retrieval_satisfied_rate', (routed.r || 0) / routed.n, {});
+  // The database's size, as D1 reports it after a statement.
+  try { const r = await env.DB.prepare('SELECT 1').run(); M('d1_size_bytes', r && r.meta && r.meta.size_after, { database: 'doctor-career-companion' }); } catch { }
+}
+
+/* ---------- Self-healing (USAP remediation, H7) ----------
+   The only actions USAP may ask this app to run, both safe to repeat. They run the app's own existing jobs and change no data.
+   The locked hooks (above, SR-03 and SR-12) are refused by the kit even if asked for. */
+usap.onRemediate('retry_persistence', async (env, params, { mode }) => {
+  await init(env); await driveState(env);
+  const waiting = ((await env.DB.prepare('SELECT COUNT(*) AS n ' + DIRTY).first()) || {}).n || 0;
+  if (mode === 'verify') return { waiting };
+  const googleRequests = await sweep(env);                                  // account records waiting for Drive (the timer's own copy job)
+  await mkPersist(env);                                                    // MKOS configuration and central records, pending until Drive confirms
+  return { waiting, googleRequests, waitingAfter: ((await env.DB.prepare('SELECT COUNT(*) AS n ' + DIRTY).first()) || {}).n || 0 };
+});
+/* The persistence audit: what canonical storage (Drive) is behind the database, the oldest pending file, the ledger's last day and
+   the latest restore drill. Read only, the same report the owner sees under MKOS durability. */
+usap.onRemediate('run_backup_audit', async (env) => {
+  await init(env); await mkInit(env); await driveState(env);
+  const d = await durability(env, mkDeps(env)), drill = await env.DB.prepare("SELECT v FROM mk_settings WHERE k = 'drill_report'").first().catch(() => null);
+  let pass = null; try { pass = drill ? !!JSON.parse(drill.v).pass : null; } catch { }
+  const accounts = ((await env.DB.prepare('SELECT COUNT(*) AS n ' + DIRTY).first()) || {}).n || 0;
+  return { files: d.files, persisted: d.persisted, behind: d.behind, pending: d.pending, oldest_pending_minutes: d.oldest_pending_minutes, ledger_24h: d.ledger_24h,
+    snapshot_written: d.snapshot_written, restore_drill_pass: pass, account_records_waiting: accounts };
+});
+
+/* H1: every /api and /mcp request is timed by the kit (the response is returned untouched). The kit sends each time as the median
+   sample; the same time is also sent as the 95th-percentile sample here. */
+const timed = async (req, env, ctx) => { const t0 = Date.now(); try { return await app.fetch(req, env, ctx); } finally {
+  try { const u = new URL(req.url); if (u.pathname.startsWith('/api/') || u.pathname.startsWith('/mcp')) usap.emitMetric('api_latency_p95_ms', Date.now() - t0, { route: usapRoute(u) }); } catch { } } };
+export default { ...app, fetch: usap.timeRequest(timed) };
