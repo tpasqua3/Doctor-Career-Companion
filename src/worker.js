@@ -1654,7 +1654,7 @@ async function mcpServer(request, env, token, ctx) {
   const r = await one(msg); return r ? json(r) : new Response(null, { status: 202 });
 }
 
-export default {
+const app = {
   /* Every five minutes: copy waiting records to Drive first; when nothing was waiting, the same run gives MKOS its turn (scan, jobs,
      mirror). Splitting the run this way keeps each invocation inside the platform's per-run limits. */
   async scheduled(event, env, ctx) {
@@ -1686,3 +1686,10 @@ export default {
     return env.ASSETS.fetch(request);
   },
 };
+
+/* USAP node kit (Brain domain-sdk/usap_node_kit_v1.js, copied unchanged; replace it, never edit it here).
+   Observation only: times each /api and /mcp request and sends counts and timings (never user data) to USAP through
+   the USAP_UGF service binding (USAP's NodeGateway entrypoint, no key needed). Without the binding it does nothing. */
+import { createUsapNode } from './usap_node_kit_v1.js';
+const usap = createUsapNode({ appId: 'doctor_companion_app' });
+export default { ...app, fetch: usap.timeRequest((req, env, ctx) => app.fetch(req, env, ctx)) };

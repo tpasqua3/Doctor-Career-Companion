@@ -4,6 +4,9 @@
   // privacy policy and terms of service pages from text the owner can edit.
   "name": "doctor-career-companion",
   "main": "src/worker.js",
+  // USAP (the governance service): the node kit sends telemetry through this binding to USAP's NodeGateway entrypoint,
+  // which only Service Bindings can reach, so no key is needed.
+  "services": [{ "binding": "USAP_UGF", "service": "universal-skill-acquisition-platform", "entrypoint": "NodeGateway" }],
   "compatibility_date": "2026-09-01",
   // Variables added in the Cloudflare dashboard are kept when a push from GitHub deploys, instead of being wiped.
   "keep_vars": true,
