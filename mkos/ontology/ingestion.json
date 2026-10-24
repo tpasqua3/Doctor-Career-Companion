@@ -148,8 +148,10 @@
    "concept resolution by alias table before AI"
   ],
   "ai_step": "Only for text that rules could not structure; free services only (Gemini free tier, then Cloudflare Workers AI), never a paid service; the AI returns JSON in the extraction contract; results enter as pending_validation with confidence capped at scoring.ai_extraction_cap.",
-  "daily_ai_budget_default": 250,
-  "budget_note": "Calls use the quick (flash-lite) Gemini model, a separate free quota from the default model that writes lessons. The owner changes the budget with settings {path: 'ingestion.extraction.daily_ai_budget_default'}.",
+  "daily_ai_budget_default": 60,
+  "release_hours": 2,
+  "release_ceiling": 2000,
+  "budget_note": "Owner directive 2026-10-24: the background engine (extraction, enrichment, pearls, pronunciation) uses up to daily_ai_budget_default calls a day (free Gemini first, then Cloudflare Workers AI), leaving Gemini's free allowance for lessons people write during the day. In the last release_hours before the app's day ends (midnight UTC: 6-8 pm Eastern daylight time), the cap is lifted and the engine spends whatever is left on the Gemini models only (quick models, then the default ones; each has its own free quota), until every Gemini model reports its limit or release_ceiling calls are used. Calls are counted, never estimated by AI. The owner changes the numbers with settings {path: 'ingestion.extraction.daily_ai_budget_default' | 'ingestion.extraction.release_hours' | 'ingestion.extraction.release_ceiling'}.",
   "ai_policy": {
    "recommendations": "AI only for parts where no graded recommendation table was found",
    "index_and_facets": "AI on every part (concept index and abstracted facts, in the app's own words)",

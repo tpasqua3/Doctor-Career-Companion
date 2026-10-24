@@ -40,6 +40,10 @@ intelligence, confidence, blueprint, pronunciation, curriculum and competency la
 ## AI order of operations
 The app's AI order of operations (`SERVICES`, `TIERS`, `JOBS`, `AI_ORDER` in `src/worker.js`) was deliberately worked out and is changed
 only on a deliberate, specific request from the owner. MKOS calls only free services directly and never changes that hierarchy.
+MKOS's background AI budget (owner directive 10/24/2026, `ingestion.extraction` in `mkos/ontology/ingestion.json`, `aiWindow` in
+`src/mkos/extract.js`): up to 60 calls a day (Gemini quick, then Workers AI); in the last 2 hours before midnight UTC the cap lifts and
+only the Gemini models are used until each reports its limit. Every AI call is timed for USAP with `usap.timeAI` (counts and timings
+only, owner go-ahead 10/24/2026); the timing never changes which service answers.
 
 ## Builds
 - `python3 tools/build.py` after changing `app/companion.html`.

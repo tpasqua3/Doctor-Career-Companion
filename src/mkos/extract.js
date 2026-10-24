@@ -88,9 +88,21 @@ export async function loadText(env, deps, src, { complete = false } = {}) {
 }
 
 export async function aiBudgetLeft(env) {
-  const day = nowIso().slice(0, 10), used = J(await getSetting(env, 'ai_budget'), {}), cap = Number(fwGet('ingestion.extraction.daily_ai_budget_default', await overrides(env)));
-  return { left: cap - (used.day === day ? used.n : 0), spend: async () => setSetting(env, 'ai_budget', JSON.stringify({ day, n: (used.day === day ? used.n : 0) + 1 })) };
+  const w = await aiWindow(env), used = J(await getSetting(env, 'ai_budget'), {}), n = used.day === w.day ? used.n : 0;
+  // Release window (owner directive 2026-10-24): the daily cap is lifted for the Gemini models until they report their limit.
+  const left = w.release ? (w.gemini_out ? 0 : w.ceiling - n) : w.cap - n;
+  return { left, release: w.release, spend: async () => setSetting(env, 'ai_budget', JSON.stringify({ day: w.day, n: n + 1 })) };
 }
+/* The background engine's AI day: its cap, whether this is the release window (the last release_hours before midnight UTC, when the
+   app's allowances reset) and whether every Gemini model has already reported its limit today. Pure counting and clock time. */
+export async function aiWindow(env, at = Date.now()) {
+  const ovr = await overrides(env), day = new Date(at).toISOString().slice(0, 10);
+  const hoursLeft = (Date.parse(day + 'T00:00:00Z') + 864e5 - at) / 36e5;
+  const relH = Number(fwGet('ingestion.extraction.release_hours', ovr)) || 0;
+  return { day, cap: Number(fwGet('ingestion.extraction.daily_ai_budget_default', ovr)) || 0, ceiling: Number(fwGet('ingestion.extraction.release_ceiling', ovr)) || 0,
+    release: relH > 0 && hoursLeft <= relH, gemini_out: (await getSetting(env, 'ai_gemini_out')) === day, hours_left: hoursLeft };
+}
+export async function markGeminiOut(env) { await setSetting(env, 'ai_gemini_out', new Date().toISOString().slice(0, 10)); }
 
 /* Process the next chunk of a source. Returns {done, chunk, used_ai}. Rules first; AI only when the chunk is substantive, rules found
    nothing, the source's depth calls for it, and budget remains. */

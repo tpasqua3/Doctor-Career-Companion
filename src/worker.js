@@ -15,6 +15,7 @@ import { runGen } from './mkos/genjobs.js';
 import { curSync } from './mkos/curstore.js';
 import { mapObjectives } from './mkos/objmap.js';
 import { mkTick } from './mkos/tick.js';
+import { aiWindow, markGeminiOut } from './mkos/extract.js';
 import { persistNow, durability } from './mkos/mirror.js';
 import { mkInit } from './mkos/db.js';
 import { ttsList as mkosSays } from './mkos/pronounce.js';
@@ -702,11 +703,12 @@ async function runAI(env, user, { input, tier, provider, account, chat, job, avo
     const cap = aiCap(env, id);
     if ((used[id] || 0) >= cap) { capped++; notes.push(`${PNAME[id]} has used today's ${cap} requests for your account`); continue; }
     let out = { text: '', model: '' };
-    try { out = await SERVICE[id].run(env, messages, tier, account ? accountTools(env, user) : null); }
+    try { out = await usap.timeAI(() => SERVICE[id].run(env, messages, tier, account ? accountTools(env, user) : null), { provider: id, job, fell_back: notes.length ? 1 : 0 }); }   // USAP: timing and counts only (owner go-ahead 2026-10-24); the order is unchanged
     catch (e) { console.error(e); notes.push(PNAME[id] + (e.busy ? ' is over its limit right now' : ' did not answer') + (isOwner(env, user) ? ' [' + String(e && e.message || e).slice(0, 300) + ']' : '')); continue; }
     if (!out.text) { notes.push(PNAME[id] + ' did not answer'); continue; }
     await env.DB.prepare('INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, ?, 1) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + 1').bind(user.id, today(), id).run();
     used[id] = (used[id] || 0) + 1;
+    usap.emitMetric('ai_quota_utilization', used[id] / cap, { provider: id, job });   // USAP: share of today's allowance used
     return { status: 200, text: out.text, model: out.model, provider: id, name: PNAME[id], job, asked: want || 'auto', fellBack: notes.length > 0, note: notes.join('; '), left: cap - used[id], providers: aiList(env, used, H) };
   }
   const only = job === 'chat' ? '' : ` "${JOB[job].name}" is done only by: ${order.map(id => PNAME[id]).join(', ')}.`;
@@ -1558,12 +1560,19 @@ function mkDeps(env) {
        app's AI hierarchy is untouched. Usage is counted under the account 'mkos'. */
     ai: (geminiKey(env) || env.AI) && env.MKOS_AI !== 'off' ? async prompt => {
       const messages = [{ role: 'user', content: prompt }]; let last = null;
-      for (const id of ['gemini', 'llama']) {
+      /* Owner directive 2026-10-24: in the release window (the last hours before midnight UTC) only the Gemini models are used, quick
+         models first and then the default ones, so their remaining free allowance is spent; when every one reports its limit the
+         engine stops for the day. Outside it: Gemini quick, then Cloudflare Workers AI, within the daily cap (aiBudgetLeft). */
+      const w = await aiWindow(env), plan = w.release ? [['gemini', 'quick'], ['gemini', 'default']] : [['gemini', 'quick'], ['llama', 'quick']];
+      let geminiBusy = 0;
+      for (const [id, tier] of plan) {
         if (!hasProvider(env, id)) continue;
-        try { const out = await SERVICE[id].run(env, messages, 'quick'); if (out && out.text) {
+        try { const out = await usap.timeAI(() => SERVICE[id].run(env, messages, tier), { provider: id, job: 'mkos', fell_back: last ? 1 : 0 });   // USAP: timing and counts only
+          if (out && out.text) {
           await env.DB.prepare('INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, ?, 1) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + 1').bind('mkos', today(), id).run();
-          return out.text; } } catch (e) { last = e; }
+          return out.text; } } catch (e) { last = e; if (id === 'gemini' && e.busy) geminiBusy++; }
       }
+      if (w.release && geminiBusy === plan.length) await markGeminiOut(env);   // every Gemini model is at its limit: done for today
       throw last || new Error('No free AI service answered'); } : null,
   };
 }
