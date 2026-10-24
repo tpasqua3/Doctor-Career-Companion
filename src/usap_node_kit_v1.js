@@ -15,11 +15,14 @@
 //   7. onRemediate / handleRemediation — opt-in deterministic remediation hooks (UARF). The app registers only the
 //      actions it allows; USAP can call nothing else, and actions blocked by a locked policy are always refused.
 //
+// Changes: 1.1.1 (2026-10-24) remediation endpoint: the binding marker is trusted only without CF-Connecting-IP (internet
+// requests always carry it); key compared in constant time. 1.1.0 remediation hooks, MCP tool, access policy.
+//
 // Safe by default: with no UGF binding/URL configured the kit is a silent no-op (ugf_stage 'registered').
 // Privacy: no user identity, user text, amounts or content ever leaves the app in telemetry. Access checks send only
 // sha256(lowercased email).
 
-export const KIT_VERSION = "1.1.0";
+export const KIT_VERSION = "1.1.1";
 
 const DIMS_ALLOW = new Set(["route", "status_class", "provider", "model_id", "job", "outcome", "fell_back", "tool", "store",
   "database", "voice_kind", "surface", "subsystem", "tokens"]);
@@ -280,8 +283,13 @@ export function createUsapNode(config) {
     if (request.method !== "POST") return J({ error: "method" }, 405);
     const key = env && env[keyVar];
     const auth = request.headers.get("authorization") || "";
-    const viaBinding = request.headers.get("x-usap-ugf") === "binding" && env && env[bindingName];
-    if (!viaBinding && !(key && auth === "Bearer " + key)) return J({ error: "unauthorized" }, 401);
+    // 1.1.1: the binding marker alone is not proof. Cloudflare adds CF-Connecting-IP to every request that arrives from the
+    // internet (and a client cannot remove it); a Worker-to-Worker Service Binding call does not carry it. So a request is
+    // trusted as USAP's only if it has the marker AND no CF-Connecting-IP; otherwise it needs the ingest key (constant-time).
+    const viaBinding = request.headers.get("x-usap-ugf") === "binding" && !request.headers.get("cf-connecting-ip") && env && env[bindingName];
+    const want = key ? "Bearer " + key : "";
+    let same = !!want && auth.length === want.length; if (same) { let x = 0; for (let i = 0; i < want.length; i++) x |= want.charCodeAt(i) ^ auth.charCodeAt(i); same = x === 0; }
+    if (!viaBinding && !same) return J({ error: "unauthorized" }, 401);
     const body = await request.json().catch(() => ({}));
     const name = String(body.hook || "");
     if (lockedHooks.has(name)) return J({ ok: false, refused: "locked_policy", hook: name }, 409);
