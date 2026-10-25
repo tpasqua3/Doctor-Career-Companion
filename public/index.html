@@ -218,6 +218,7 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 .tipbox{position:fixed;z-index:40;max-width:min(300px,calc(100vw - 24px));background:var(--ink);color:var(--paper);padding:7px 10px;border-radius:8px;font-size:.8rem;line-height:1.35;pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.18);white-space:pre-line}
 [data-tip]{cursor:help}.meter[data-tip]:focus-visible,.bars div[data-tip]:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
 .sbar{display:flex;height:12px;border-radius:4px;overflow:hidden;background:var(--line);min-width:120px}.sbar i{display:block;height:100%}
+.surebg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40;display:flex;align-items:center;justify-content:center;padding:16px}.surebox{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:18px;max-width:420px;width:100%;display:flex;flex-direction:column;gap:14px}.surebox .row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(120px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:9px 14px;border-radius:9px;font-size:.88rem;z-index:20;max-width:calc(100% - 32px)}
 </style>
 <div class="wrap">
@@ -259,6 +260,7 @@ document.addEventListener('focusout',()=>tipHide());
 addEventListener('scroll',()=>{if(TIP&&Date.now()-(TIP._s||0)>400)tipHide()},{passive:true});
 // A tap on a chart element shows its data instead of doing anything else; a second tap, or a tap elsewhere, closes it.
 document.addEventListener('click',e=>{const el=e.target.closest&&e.target.closest('[data-tip]');if(el&&(el.classList.contains('meter')||el.closest('.bars,.sbar,.meter'))){e.preventDefault();e.stopPropagation();if(TIP&&!TIP.hidden&&TIP._el===el&&Date.now()-(TIP._t||0)>600){TIP._sticky=false;tipHide();return}tipShow(el);TIP._sticky=true;return}if(TIP&&!TIP.hidden){TIP._sticky=false;tipHide()}},true);
+function sure(msg,yes='Yes',no='No'){return new Promise(res=>{const bg=document.createElement('div');bg.className='surebg';bg.setAttribute('role','dialog');bg.setAttribute('aria-modal','true');const box=document.createElement('div');box.className='surebox';const p=document.createElement('div');p.textContent=msg;const row=document.createElement('div');row.className='row';const n=document.createElement('button');n.className='btn';n.textContent=no;const y=document.createElement('button');y.className='btn';y.textContent=yes;row.append(n,y);box.append(p,row);bg.append(box);const done=v=>{bg.remove();res(v)};n.onclick=ev=>{ev.stopPropagation();done(false)};y.onclick=ev=>{ev.stopPropagation();done(true)};bg.onclick=ev=>{if(ev.target===bg){ev.stopPropagation();done(false)}};document.body.append(bg);y.focus()})}
 let toastT=null;function toast(t,ms=3500){const el=$('#toast');el.textContent=t;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,ms)}
 /* A table from the AI, cut to a safe size. Tables are visual aids: they are shown, never read aloud. */
 const cleanTable=x=>{if(!x||typeof x!=='object')return null;const c=A(x.columns).map(v=>String(v).slice(0,80)).slice(0,8),r=A(x.rows).filter(Array.isArray).map(row=>row.slice(0,c.length||8).map(v=>String(v??'').slice(0,260))).filter(row=>row.some(Boolean)).slice(0,30);return c.length>=2&&r.length>=2?{t:String(x.title||'').slice(0,140),c,r}:null};
@@ -2027,7 +2029,7 @@ document.addEventListener('click',async e=>{unlock();
     if(sayPending(x)){x.on=true;sayLearn(x,'ok');toast('Kept. That counts toward the next suggestions.')}else{x.on=x.on===false;if(x.on&&x.g&&sayClean(x.s)!==x.g)sayLearn(x,'edit')}
     spTouch(x.w);spMark(row,x);saveState();return}
   if(a==='pasis'){const row=b.closest('.prow'),i=Number(row&&row.dataset.i),x=(st.says||[])[i];if(!x)return;
-    if(sayClean(x.s)&&x.on!==false&&!sayPending(x)&&!confirm('Remove the respelling for "'+x.w+'"? The voice will read it as written.'))return;
+    if(sayClean(x.s)&&x.on!==false&&!sayPending(x)&&!(await sure('Remove the respelling for "'+x.w+'"? The voice will read it as written.','Remove','Keep')))return;
     sayLearn(x,'asis');sayTried(x.w);const aw=sayW(x);if(aw)st.sayasis=[...new Set(A(st.sayasis).concat(aw))];spTouch(x.w);const L=(st.says||[]).slice();L.splice(i,1);st.says=L;saveState();drawSay();drawSug();toast('Noted: "'+x.w+'" sounds right as written.');return}
   if(a==='sugmore')return sugMore();
   if(a==='saydel'){const L=(st.says||[]).slice(),gone=L.splice(Number(b.dataset.i),1)[0];st.says=L;if(gone)sayTried(gone.w);saysChanged([gone&&gone.w]);render();return}
@@ -2065,7 +2067,7 @@ document.addEventListener('click',async e=>{unlock();
     return run('Claude is writing a dig deeper lesson beyond "'+L.title+'"…',async()=>{const D=await genLesson(t,'deep',L.focus||'',{basis:basisDeep(L),from:L.id});openLesson(D);if(st.prefs.auto)playLesson(D)})}
   if(a==='gqresume'){const id=b.dataset.id,j=GQ.jobs.find(x=>x.id===id);if(!j)return;b.disabled=true;b.textContent='Continuing to write…';
     if(j.runner==='page'){gqRunPage(id);return}mk('gen_resume',{id,force:j.status==='failed'}).then(()=>{j.status='queued';gqRefresh()}).catch(x=>toast(errMsg(x),5000));return}
-  if(a==='gqcancel'){const id=b.dataset.id;if(!confirm('Cancel this lesson? What is written so far is kept only if it was saved partway.'))return;mk('gen_cancel',{id}).then(gqRefresh).catch(x=>toast(errMsg(x),5000));return}
+  if(a==='gqcancel'){const id=b.dataset.id;if(!(await sure('Cancel this lesson? What is written so far is kept only if it was saved partway.','Cancel lesson','Keep going')))return;mk('gen_cancel',{id}).then(gqRefresh).catch(x=>toast(errMsg(x),5000));return}
   if(a==='batchgo'){const bt=$('#batchtext');if(bt)GQ.batch.text=bt.value;const items=splitTopics(GQ.batch.text);if(!items.length)return toast('Put one topic on each line first.');
     const len=LEN[st.prefs.batchlen]?st.prefs.batchlen:'std';return run('Queuing '+items.length+' lessons…',async()=>{const r=await queueBatch(items.map(text=>({text})),len);GQ.batch.text='';
       toast(r.n+' lesson'+(r.n===1?'':'s')+' queued'+(r.reused?', '+r.reused+' already in the MKOS library and filed now':'')+(r.failed?', '+r.failed+' could not be queued':'')+(r.page?'. Claude writes them one after another while this page is open.':'. They keep writing if you leave.'),7000)})}
@@ -2749,7 +2751,7 @@ document.addEventListener('click',async e=>{const k=e.target.closest('[data-kobj
   if(a==='kback'){const id=KN.stack.pop();if(id)kOpen(id,false);else{KN.cur=null;render()}return}
   if(a==='kmall'){KM.all=!KM.all;render();return}
   if(a==='kmreload'){KM.map=null;KM.err='';kMap();return}
-  if(a==='kspec'){if(!confirm((b.dataset.res==='approve'?'Approve':'Reject')+' this proposed specialty?'))return;try{const r=await mk('specialty_review',{id:b.dataset.id,result:b.dataset.res});toast(r&&r.ok?(b.dataset.res==='approve'?'Approved; '+r.sources_assigned+' source'+(r.sources_assigned===1?'':'s')+' assigned.':'Rejected.'):errMsg(r&&r.error||'Not changed'),4000)}catch(x){toast(errMsg(x),5000)}KM.map=null;kMap();return}
+  if(a==='kspec'){if(!(await sure((b.dataset.res==='approve'?'Approve':'Reject')+' this proposed specialty?')))return;try{const r=await mk('specialty_review',{id:b.dataset.id,result:b.dataset.res});toast(r&&r.ok?(b.dataset.res==='approve'?'Approved; '+r.sources_assigned+' source'+(r.sources_assigned===1?'':'s')+' assigned.':'Rejected.'):errMsg(r&&r.error||'Not changed'),4000)}catch(x){toast(errMsg(x),5000)}KM.map=null;kMap();return}
   if(a==='pflagmk'||a==='pcand'){const term=(a==='pcand'?b.dataset.term:($('#pterm')||{}).value||'').trim().toLowerCase();if(!term)return;MKP.busy='Finding respellings for '+term+'…';render();
     try{const r=await mk(a==='pcand'?'pronunciation':'pron_flag',a==='pcand'?{term}:{term,source_system:'app'});const rec=r.record||{};MKP.cand={term,candidates:A(r.candidates||rec.candidates)}}catch(x){toast(errMsg(x),5000)}MKP.busy=false;render();return}
   if(a==='papprove'){MKP.busy='Approving…';render();try{await mk('pron_approve',{term:b.dataset.term,index:Number(b.dataset.i),lock:true});MKP.cand=null;toast('Approved. Every voice uses it from now on.');try{await sayRefresh()}catch(x){}mkLoad(true)}catch(x){toast(errMsg(x),5000)}MKP.busy=false;render();return}
