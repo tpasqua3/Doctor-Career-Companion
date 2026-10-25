@@ -125,7 +125,7 @@ async function examplesFor(env, deps, terms) {
 export async function generateCandidates(env, deps, terms, { actor = 'pronunciation', event_id = null, flagged = false } = {}) {
   if (!deps.ai || !terms.length) return { generated: 0 };
   const L = J(await getSetting(env, 'pron_learning'), {}) || {}, calib = L.calibration || 0.8;
-  const reply = await deps.ai(CANDIDATE_PROMPT(terms, await examplesFor(env, deps, terms)));
+  const reply = await deps.ai(CANDIDATE_PROMPT(terms, await examplesFor(env, deps, terms)), { action: 'mkos_pronounce' });
   const j = J(String(reply || '').replace(/^```(?:json)?|```$/g, '').trim(), null); let n = 0;
   for (const t of (j && j.terms) || []) {
     const cands = (t.candidates || []).filter((c) => c && c.simplified).slice(0, 3).map((c) => ({ simplified: String(c.simplified).slice(0, 120), ipa: String(c.ipa || '').slice(0, 160), confidence: clamp(Number(c.confidence) || 50) * calib, source: 'ai_generated', at: nowIso() }));

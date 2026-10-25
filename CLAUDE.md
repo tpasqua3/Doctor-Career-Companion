@@ -55,6 +55,9 @@ MKOS's background AI budget (owner directive 10/24/2026, `ingestion.extraction` 
 `src/mkos/extract.js`): up to 60 calls a day (Gemini quick, then Workers AI); in the last 2 hours before midnight UTC the cap lifts and
 only the Gemini models are used until each reports its limit. Every AI call is timed for USAP with `usap.timeAI` (counts and timings
 only, owner go-ahead 10/24/2026); the timing never changes which service answers.
+Each timed call also carries its USAP AI governance label (node kit 1.3.0, `src/aigov.js`: catalog action
+`doctor_companion_app.<action>`, feature, path ai or hybrid, user_initiated); rules answers in MKOS extraction call
+`deps.recordDeterministic`. Labels only: no prompt text or user id, and nothing changes routing.
 
 ## Builds
 - `python3 tools/build.py` after changing `app/companion.html`.

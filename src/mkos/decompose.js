@@ -236,7 +236,7 @@ export async function pearlStep(env, deps, { actor = 'pearls' } = {}) {
   const con = await getObject(env, cid), recs = await conceptRecs(env, cid);
   const key = pearlKey(cid), at = nowIso(), basis = await pearlBasis(env, cid, recs);
   let pearls = [];
-  if (recs.length) { const reply = await deps.ai(PEARL_PROMPT(con, recs)); await b.spend();
+  if (recs.length) { const reply = await deps.ai(PEARL_PROMPT(con, recs), { action: 'mkos_pearls' }); await b.spend();
     const j = J(String(reply || '').replace(/^```(?:json)?|```$/g, '').trim(), null); pearls = (j && Array.isArray(j.pearls) ? j.pearls : []).filter((p) => p && p.text).slice(0, 3); }
   const list = pearls.length ? pearls : [{ text: '', none: true }], written = [];
   for (const [i, p] of list.entries()) {

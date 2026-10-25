@@ -108,7 +108,7 @@ export async function markGeminiOut(env) { await setSetting(env, 'ai_gemini_out'
    nothing, the source's depth calls for it, and budget remains. */
 // Language that marks a part of a guideline as carrying recommendations (graded statements, recommendation verbs).
 const REC_SIGNAL = /\b(COR|LOE|class\s+(?:I{1,3}|1|2a|2b|3)\b|level of evidence|grade\s+[A-D]\b|we (?:recommend|suggest)|is recommended|are recommended|is reasonable|may be considered|is not recommended|should (?:be|not)|strong recommendation|conditional recommendation)\b/i;
-export async function extractStep(env, deps, src, { actor = 'extractor', event_id = null, allowAI = true } = {}) {
+export async function extractStep(env, deps, src, { actor = 'extractor', event_id = null, allowAI = true, kind = 'extract' } = {}) {
   const row = await env.DB.prepare('SELECT chunk, text FROM mk_text WHERE source_id = ? AND done = 0 ORDER BY chunk LIMIT 1').bind(src.id).first();
   if (!row) return { done: true };
   const rules = parseRules(row.text);
@@ -124,12 +124,15 @@ export async function extractStep(env, deps, src, { actor = 'extractor', event_i
   for (const r of rules.recommendations) if (!r.concepts.length) r.concepts = await linkConcepts(env, r.statement);
   // A guideline part with no recommendation language is background or references: rules only, no AI.
   const worthAI = wantsAI && (depth !== 'recommendations' || REC_SIGNAL.test(row.text));
+  // USAP: the rules answered a substantive recommendations part that would otherwise have gone to the AI (a label only).
+  if (allowAI && deps.ai && deps.recordDeterministic && depth === 'recommendations' && rules.recommendations.length && row.text.replace(/\s+/g, ' ').length > 1500) deps.recordDeterministic(kind === 'enrich' ? 'mkos_enrich' : 'mkos_extract', { feature: 'mkos', route: 'mkos:' + kind, user_initiated: 0 });
   let aiPending = false;
   if (worthAI) {
     const b = await aiBudgetLeft(env);
     if (b.left > 0) {
       const known = (await env.DB.prepare("SELECT name FROM mk_objects WHERE type = 'Concept' AND specialty = ? ORDER BY trust DESC LIMIT 80").bind((src.specialty || [])[0] || '').all()).results.map((r) => r.name);
-      const reply = await deps.ai(EXTRACT_PROMPT(src, row.chunk, row.text, known));
+      // USAP AI governance label (never changes the call): hybrid when the rules ran first and found no recommendation here.
+      const reply = await deps.ai(EXTRACT_PROMPT(src, row.chunk, row.text, known), { action: kind === 'enrich' ? 'mkos_enrich' : 'mkos_extract', path: rules.recommendations.length ? 'ai' : 'hybrid' });
       await b.spend(); usedAI = true;
       const j = J(String(reply || '').replace(/^```(?:json)?|```$/g, '').trim(), null);
       if (j && typeof j === 'object') {

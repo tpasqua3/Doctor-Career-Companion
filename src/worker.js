@@ -30,6 +30,8 @@ import { createUsapNode } from './usap_node_kit_v1.js';
 /* USAP Account-Level Data Framework (SR-42): src/adf.js wires the Brain's shared module src/usap_adf_v1.js (a copy: replace it, never
    edit it here) into the account folders only. See the note above syncUser. */
 import { driveAdapter, adfOnce, adfConformance, adfExport } from './adf.js';
+/* USAP AI governance (kit 1.3.0): the catalog action of each AI call. Labels only; see src/aigov.js. */
+import { govDims, govOf, GOV_APP } from './aigov.js';
 /* Route templates only: the connector token in /mcp/<token> and any id never leave the app. */
 const usapRoute = url => url.pathname.startsWith('/mcp') ? '/mcp/:token'
   : '/' + url.pathname.split('/').filter(Boolean).slice(0, 3).map(s => /^[a-f0-9]{16,}$/i.test(s) || /^\d+$/.test(s) || s.length > 40 ? ':id' : s).join('/');
@@ -621,7 +623,7 @@ async function speak(env, user, input, only) {
   if (((row && row.n) || 0) + text.length > cap) return { status: 429, error: 'The natural voice has reached its limit for today.' };
   let audio = '', type = 'audio/mpeg';
   try {
-    const r = await env.AI.run(env.TTS_MODEL || TTS_MODEL, { prompt: text, lang: 'en' });
+    const r = await usap.timeAI(() => env.AI.run(env.TTS_MODEL || TTS_MODEL, { prompt: text, lang: 'en' }), { provider: 'cloudflare', model_id: env.TTS_MODEL || TTS_MODEL, job: 'speak', ...govOf('speak_tts', { route: 'speak' }) });   // USAP: timing only
     if (r && typeof r.audio === 'string') audio = r.audio;
     else if (r instanceof ArrayBuffer) audio = b64(new Uint8Array(r));
     else if (r instanceof Uint8Array) audio = b64(r);
@@ -691,13 +693,15 @@ async function voiceFile(request, env, ctx, url) {
   const obj = await env.VOICE.get(f.key);
   return obj ? new Response(obj.body, { headers }) : fail(502, 'That file could not be read. Try again.');
 }
-async function runAI(env, user, { input, tier, provider, account, chat, job, avoid, strict }) {
+async function runAI(env, user, { input, tier, provider, account, chat, job, avoid, strict, gov }) {
   tier = tier === 'quick' ? 'quick' : 'default';
+  const rawJob = job;
   job = JOB[job] ? job : chat ? 'chat' : 'lesson';   // a request that does not say is held to the highest bar
   let messages = typeof input === 'string' ? [{ role: 'user', content: input }] : Array.isArray(input) ? input : [];
   messages = messages.slice(-40).map(m => ({ role: m && m.role === 'assistant' ? 'assistant' : 'user', content: typeof (m && m.content) === 'string' ? m.content.slice(0, 150000) : '' })).filter(m => m.content);
   if (!messages.length || messages[messages.length - 1].role !== 'user') return { status: 400, error: 'Nothing to answer.' };
   const H = await hierarchy(env), who = TIER_NAME[H.jobs[job]].toLowerCase();
+  const G = govDims({ job, rawJob, chat, head: messages[0].content, gov });   // USAP AI governance labels only (src/aigov.js)
   let order = route(env, H, job, provider, str(avoid, 20).toLowerCase());
   /* A lesson job is bound to the model chosen when it was queued: `strict` asks that one service only, so a lesson never changes writer
      part-way (the hierarchy above still decides whether that service may do the job at all). */
@@ -708,7 +712,7 @@ async function runAI(env, user, { input, tier, provider, account, chat, job, avo
     const cap = aiCap(env, id);
     if ((used[id] || 0) >= cap) { capped++; notes.push(`${PNAME[id]} has used today's ${cap} requests for your account`); continue; }
     let out = { text: '', model: '' };
-    try { out = await usap.timeAI(() => SERVICE[id].run(env, messages, tier, account ? accountTools(env, user) : null), { provider: id, job, fell_back: notes.length ? 1 : 0 }); }   // USAP: timing and counts only (owner go-ahead 2026-10-24); the order is unchanged
+    try { out = await usap.timeAI(() => SERVICE[id].run(env, messages, tier, account ? accountTools(env, user) : null), { provider: id, job, fell_back: notes.length ? 1 : 0, ...G }); }   // USAP: timing and counts only (owner go-ahead 2026-10-24); the order is unchanged
     catch (e) { console.error(e); notes.push(PNAME[id] + (e.busy ? ' is over its limit right now' : ' did not answer') + (isOwner(env, user) ? ' [' + String(e && e.message || e).slice(0, 300) + ']' : '')); continue; }
     if (!out.text) { notes.push(PNAME[id] + ' did not answer'); continue; }
     await env.DB.prepare('INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, ?, 1) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + 1').bind(user.id, today(), id).run();
@@ -829,7 +833,7 @@ const driveQuery = q => '(' + String(q).replace(/\btitle\s+(contains|=|!=)/g, 'n
 const GDOC = 'application/vnd.google-apps.document';
 const chapters = new Map();
 const tidyMarkdown = t => String(t).replace(/^\[[^\]\n]+\]:\s*<data:[^>\n]*>\s*$/gm, '').replace(/!\[[^\]\n]*\]\[[^\]\n]*\]/g, '').replace(/!\[[^\]\n]*\]\(data:[^)\n]*\)/g, '').replace(/\n{3,}/g, '\n\n');
-async function driveTool(env, tool, input) {
+async function driveTool(env, tool, input, opt = {}) {
   input = input && typeof input === 'object' ? input : {};
   if (tool === 'search_files') {
     const q = str(input.query, 600); if (!q) throw new LibError('Nothing to search for.', 400);
@@ -853,7 +857,7 @@ async function driveTool(env, tool, input) {
       if (Number(meta.size) > 25e6) throw new LibError('That file is too large to read on the website. Split it into chapters, or keep it as Google Docs.', 413);
       if (!env.AI || !env.AI.toMarkdown) throw new LibError('Only Google Docs and text files can be read on this website.', 415);
       const blob = await (await gfetch(env, 'files/' + id, { alt: 'media' })).blob();
-      const out = await env.AI.toMarkdown([{ name: meta.name || 'file', blob: new Blob([blob], { type: meta.mimeType || 'application/octet-stream' }) }]);
+      const out = await usap.timeAI(() => env.AI.toMarkdown([{ name: meta.name || 'file', blob: new Blob([blob], { type: meta.mimeType || 'application/octet-stream' }) }]), { provider: 'cloudflare', job: 'to_markdown', ...govOf('doc_to_markdown', { user_initiated: opt.bg ? 0 : 1, route: opt.bg ? 'mkos:read_text' : 'library:read_file_content' }) });   // USAP: timing only
       const one = Array.isArray(out) ? out[0] : out; text = tidyMarkdown((one && one.data) || '');
       if (!text.trim()) throw new LibError('That file could not be read as text on the website.', 415);
     }
@@ -1480,7 +1484,7 @@ async function api(request, env, url, ctx) {
     return json({ ok: true });
   }
   if (route === 'POST /api/ai') {
-    const out = body.job === 'speak' || body.job === 'speak_cf' ? await speak(env, user, body.input, body.job === 'speak_cf' ? 'cf' : '') : await runAI(env, user, { input: body.input, tier: body.tier, provider: str(body.provider, 20).toLowerCase(), account: body.account === true, chat: body.chat === true, job: str(body.job, 20), avoid: str(body.avoid, 20) });
+    const out = body.job === 'speak' || body.job === 'speak_cf' ? await speak(env, user, body.input, body.job === 'speak_cf' ? 'cf' : '') : await runAI(env, user, { input: body.input, tier: body.tier, provider: str(body.provider, 20).toLowerCase(), account: body.account === true, chat: body.chat === true, job: str(body.job, 20), avoid: str(body.avoid, 20), gov: { route: '/api/ai' } });
     return out.status === 200 ? json({ ...out, status: undefined }) : fail(out.status, out.error);
   }
   if (route === 'GET /api/drive/file') {
@@ -1542,7 +1546,7 @@ function mkDeps(env) {
   };
   return {
     list: async (folderId, token) => { const j = await (await gfetch(env, 'files', { q: `'${folderId}' in parents and trashed = false`, pageSize: 100, pageToken: token || '', fields: META, includeItemsFromAllDrives: 'true' })).json(); return { files: (j.files || []).map(shape), next: j.nextPageToken || '' }; },
-    readText: async fileId => (await driveTool(env, 'read_file_content', { fileId })).fileContent || '',
+    readText: async fileId => (await driveTool(env, 'read_file_content', { fileId }, { bg: true })).fileContent || '',
     readJson: async fileId => { await inLibrary(env, fileId); return await (await gfetch(env, 'files/' + fileId, { alt: 'media' })).json(); },
     findJson: async q => { const j = await (await gfetch(env, 'files', { q: driveQuery(q), pageSize: 20, fields: 'files(id,name,mimeType,parents)', includeItemsFromAllDrives: 'true' })).json();
       for (const f of j.files || []) if (/json/i.test(f.mimeType + f.name) && await inside(env, (f.parents || [])[0], KNOW(env))) return { id: f.id, title: f.name }; return null; },
@@ -1575,12 +1579,14 @@ function mkDeps(env) {
       return all.subarray(start, Math.min(got, want));
     },
     lastRangeStatus: () => rangeStatus,
+    /* USAP AI governance: a deterministic path (rules) answered where the catalog action could have used AI. Labels only. */
+    recordDeterministic: (action, d) => { try { usap.recordDeterministic(GOV_APP + action, d); } catch { } },
     mkosRoot: env.MKOS_DRIVE_FOLDER || null,
     /* The library root, and the Dynamic Board Objective Curriculum folder inside it (found by name unless MKOS_CURRICULUM_FOLDER names it). */
     libraryRoot: KNOW(env) || null, curriculumFolder: str(env.MKOS_CURRICULUM_FOLDER, 200) || null,
     /* The generation queue (src/mkos/genjobs.js) writes lessons with the app's own AI, through runAI and its hierarchy, as the account
        that queued them: the same allowances and the same order of operations as a lesson written in the page. */
-    genAI: async (uid, opts) => { const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return { status: 404, error: 'no such account' }; return runAI(env, u, opts); },
+    genAI: async (uid, opts) => { const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return { status: 404, error: 'no such account' }; return runAI(env, u, { ...opts, gov: { action: opts && opts.gov, user_initiated: 0, route: 'gen:' + ((opts && opts.job) || 'lesson') } }); },
     aiLeft: async (uid, provider) => { const used = await aiUsed(env, uid); return aiCap(env, provider) - (used[provider] || 0); },
     genModels: async () => { const H = await hierarchy(env); const server = route(env, H, 'lesson').filter(id => hasProvider(env, id)); return { server, first: server[0] || null, names: Object.fromEntries(server.map(id => [id, PNAME[id]])) }; },
     isLead: async (provider) => { const H = await hierarchy(env); return H.tiers[provider] === 'lead'; },
@@ -1588,7 +1594,8 @@ function mkDeps(env) {
     changedUsers: async () => (await env.DB.prepare("SELECT user_id, MAX(updated) AS updated FROM docs WHERE path = 'med/state' OR path LIKE 'med/les_%' OR path LIKE 'med/bank_%' OR path LIKE 'med/cards_%' GROUP BY user_id").all()).results,
     /* Free services only (Gemini's free tier, then Cloudflare Workers AI), called directly so a paid service is never reached and the
        app's AI hierarchy is untouched. Usage is counted under the account 'mkos'. */
-    ai: (geminiKey(env) || env.AI) && env.MKOS_AI !== 'off' ? async prompt => {
+    ai: (geminiKey(env) || env.AI) && env.MKOS_AI !== 'off' ? async (prompt, meta = {}) => {
+      const G = govOf(meta.action || 'mkos_other', { user_initiated: 0, route: 'mkos:' + (meta.action || 'other'), path: meta.path });   // USAP AI governance labels only
       const messages = [{ role: 'user', content: prompt }]; let last = null;
       /* Owner directive 2026-10-24: in the release window (the last hours before midnight UTC) only the Gemini models are used, quick
          models first and then the default ones, so their remaining free allowance is spent; when every one reports its limit the
@@ -1597,7 +1604,7 @@ function mkDeps(env) {
       let geminiBusy = 0;
       for (const [id, tier] of plan) {
         if (!hasProvider(env, id)) continue;
-        try { const out = await usap.timeAI(() => SERVICE[id].run(env, messages, tier), { provider: id, job: 'mkos', fell_back: last ? 1 : 0 });   // USAP: timing and counts only
+        try { const out = await usap.timeAI(() => SERVICE[id].run(env, messages, tier), { provider: id, job: 'mkos', fell_back: last ? 1 : 0, ...G });   // USAP: timing and counts only
           if (out && out.text) {
           await env.DB.prepare('INSERT INTO ai_usage (user_id, day, provider, n) VALUES (?, ?, ?, 1) ON CONFLICT (user_id, day, provider) DO UPDATE SET n = n + 1').bind('mkos', today(), id).run();
           return out.text; } } catch (e) { last = e; if (id === 'gemini' && e.busy) geminiBusy++; }
@@ -1691,7 +1698,7 @@ async function mcpServer(request, env, token, ctx) {
       const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return bad('This account no longer exists.');
       if (name === 'storage_status') return out(await storage(env, u));
       if (name === 'ai_providers') { const H = await hierarchy(env); return out({ providers: aiList(env, await aiUsed(env, uid), H), hierarchy: chart(env, H), says: await siteSays(env, u) }); }
-      const r = a.job === 'speak' || a.job === 'speak_cf' ? await speak(env, u, a.input, a.job === 'speak_cf' ? 'cf' : '') : await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true, chat: a.chat === true, job: String(a.job || ''), avoid: String(a.avoid || '') });
+      const r = a.job === 'speak' || a.job === 'speak_cf' ? await speak(env, u, a.input, a.job === 'speak_cf' ? 'cf' : '') : await runAI(env, u, { input: a.input, tier: a.tier, provider: String(a.provider || '').toLowerCase(), account: a.account === true, chat: a.chat === true, job: String(a.job || ''), avoid: String(a.avoid || ''), gov: { route: 'mcp:ask_ai' } });
       return r.status === 200 ? out({ ...r, status: undefined }) : out({ error: r.error, code: r.status === 429 ? 'rate_limited' : 'upstream_error' });
     }
     if (name === 'library_status' || name === 'library_file') {

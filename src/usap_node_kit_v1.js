@@ -15,7 +15,10 @@
 //   7. onRemediate / handleRemediation — opt-in deterministic remediation hooks (UARF). The app registers only the
 //      actions it allows; USAP can call nothing else, and actions blocked by a locked policy are always refused.
 //
-// Changes: 1.2.0 (2026-10-24) handleClient (shared browser reporter: page load time, script errors, page views) and
+// Changes: 1.3.0 (2026-10-25) AI invocation record: timeAI also emits ai_invocation (latency) with governance dims
+// feature, action, path (ai | hybrid), user_initiated, tokens; recordDeterministic(action) for deterministic hits. Labels and
+// counts only (AI Governance framework, Brain governance/usap_ai_governance_ontology_v1.json).
+// 1.2.0 (2026-10-24) handleClient (shared browser reporter: page load time, script errors, page views) and
 // heartbeat (a daily zero for activity counters, so "no activity" is measured instead of looking like missing telemetry).
 // 1.1.1 (2026-10-24) remediation endpoint: the binding marker is trusted only without CF-Connecting-IP (internet
 // requests always carry it); key compared in constant time. 1.1.0 remediation hooks, MCP tool, access policy.
@@ -24,10 +27,10 @@
 // Privacy: no user identity, user text, amounts or content ever leaves the app in telemetry. Access checks send only
 // sha256(lowercased email).
 
-export const KIT_VERSION = "1.2.0";
+export const KIT_VERSION = "1.3.0";
 
 const DIMS_ALLOW = new Set(["route", "status_class", "provider", "model_id", "job", "outcome", "fell_back", "tool", "store",
-  "database", "voice_kind", "surface", "subsystem", "tokens"]);
+  "database", "voice_kind", "surface", "subsystem", "tokens", "feature", "action", "path", "user_initiated"]);
 const MAX_BUFFER = 500;
 const ACCESS_TTL_MS = 60_000;
 const LEVEL_RANK = { none: 0, view: 1, operate: 2, owner: 3 };
@@ -177,13 +180,29 @@ export function createUsapNode(config) {
         const u = out && (out.usage || out.usageMetadata);
         const tokens = u && ((u.total_tokens ?? u.totalTokenCount) ?? ((u.input_tokens || u.prompt_tokens || 0) + (u.output_tokens || u.completion_tokens || 0)));
         if (finite(tokens) && tokens > 0) emitMetric("ai_tokens_total", tokens, dims);
+        if (dims.action) emitMetric("ai_invocation", now() - t0, invocationDims(dims, out, tokens, "ok"));
       } catch { /* ignore */ }
       return out;
     } catch (err) {
+      if (dims.action) emitMetric("ai_invocation", now() - t0, invocationDims(dims, null, null, "error"));
       emitMetric("ai_calls", 1, { ...dims, outcome: "error" });
       emitMetric("ai_latency_p95_ms", now() - t0, { ...dims, outcome: "error" });
       throw err;
     }
+  }
+
+  // ---- AI invocation record (1.3.0) ---------------------------------------------------------------------------------
+  // dims for timeAI: { provider, model_id?, job?, feature, action: "<app>.<action>", path: "ai" | "hybrid", user_initiated: 1|0 }
+  // USAP fills the governance category and expected path from the Brain catalog; the app reports only what happened.
+  function invocationDims(dims, out, tokens, outcome) {
+    const d = { feature: dims.feature, action: dims.action, path: dims.path === "hybrid" ? "hybrid" : "ai", user_initiated: dims.user_initiated ? 1 : 0,
+      provider: dims.provider, model_id: dims.model_id || (out && typeof out === "object" && typeof out.model === "string" ? out.model : undefined), route: dims.route, job: dims.job, outcome };
+    if (finite(tokens) && tokens > 0) d.tokens = Math.round(tokens);
+    return d;
+  }
+  // A request a deterministic path answered without AI (retrieval hit, cache, rules) for an action that could have used AI.
+  function recordDeterministic(action, { feature, route, user_initiated = 1, ms = 0 } = {}) {
+    emitMetric("ai_invocation", finite(ms) ? ms : 0, { action, feature, route, path: "deterministic", user_initiated: user_initiated ? 1 : 0, outcome: "ok" });
   }
 
   // ---- governance access -----------------------------------------------------------------------------------------
@@ -343,7 +362,7 @@ export function createUsapNode(config) {
   }
   const remediationHooks = () => [...remediationHandlers.keys()];
 
-  return { appId, KIT_VERSION, onRemediate, handleRemediation, remediationHooks, emitMetric, emitEvent, timeRequest, timeAI, flush, handleGovernance, mcpTool, serveUI, handleClient, heartbeat, _decide: decide };
+  return { appId, KIT_VERSION, onRemediate, handleRemediation, remediationHooks, emitMetric, emitEvent, timeRequest, timeAI, flush, handleGovernance, mcpTool, serveUI, handleClient, heartbeat, recordDeterministic, _decide: decide };
 }
 
 // The page side of handleClient: inline this in the app's page (once). It posts load time, whether a script error happened

@@ -219,8 +219,9 @@ export async function runGen(env, deps, { budgetMs = QP().server_steps_per_run_m
   return { steps, done, ms: Date.now() - t0 };
 }
 
-async function ask(deps, job, input, aiJob, { strict = true, avoid = '' } = {}) {
-  const r = await deps.genAI(job.user_id, { input, job: aiJob, provider: job.model, strict, avoid });
+/* `gov` is the USAP AI governance action of the call (a label only; it never changes which service answers). */
+async function ask(deps, job, input, aiJob, { strict = true, avoid = '', gov = '' } = {}) {
+  const r = await deps.genAI(job.user_id, { input, job: aiJob, provider: job.model, strict, avoid, gov });
   if (r.status === 200) return { ok: true, text: r.text, provider: r.provider, model: r.model };
   return { ok: false, cap: r.status === 429, error: r.error || 'no answer' };
 }
@@ -242,7 +243,7 @@ async function step(env, deps, job) {
 
   if (st.ph === 'write') {
     const k = st.k, N = st.N;
-    const r = await ask(deps, job, sp.head + partTask(k, N, st.per, st.words, st.outline, st.segs), sp.ljob || 'lesson');
+    const r = await ask(deps, job, sp.head + partTask(k, N, st.per, st.words, st.outline, st.segs), sp.ljob || 'lesson', { gov: 'gen_lesson_write' });
     const x = r.ok ? parseJ(r.text) : null, got = A(x && x.segments).filter((y) => y && typeof y === 'object' && y.text);
     if (!got.length) {
       if (!r.ok && r.cap) return miss(r, `part ${k + 1}`);
@@ -266,7 +267,7 @@ async function step(env, deps, job) {
       st.doReview = !!sp.audit || !lead || !!sp.seed;
       if (!st.doReview) { st.ph = 'qwrite'; return put(); }
     }
-    const g = st.g, r = await ask(deps, job, reviewPrompt(sp, { ...st, title: st.title }, g), 'review', { strict: false, avoid: st.by.w });
+    const g = st.g, r = await ask(deps, job, reviewPrompt(sp, { ...st, title: st.title }, g), 'review', { strict: false, avoid: st.by.w, gov: 'gen_lesson_review' });
     const a = r.ok ? parseJ(r.text) : null;
     if (!a) { if (!r.ok && r.cap) return miss(r, 'the accuracy review'); if (!tooMany()) { st.fails = (st.fails || 0) + 1; return put({ status: 'queued', not_before: Date.now() + 60e3 }); } }
     else {
@@ -284,12 +285,12 @@ async function step(env, deps, job) {
   if (st.ph === 'qwrite') {
     const n = sp.checks == null ? 2 : Number(sp.checks); if (!n) { st.ph = 'cwrite'; return put(); }
     const basis = `These questions follow a lesson the physician has studied: ${lessonGist(L())}\nTest whether what that lesson taught can be applied to new patients. Every question must rest on something the lesson covered, in a case the lesson did not use.`;
-    const r = await ask(deps, job, `${sp.qhead || sp.rhead}\n\nTASK: Write ${n} board-style questions on this topic. ${QSPEC}\n${basis}\n${sp.qlevel || BOARD_LEVEL}\n\nReply with JSON only: {"questions":[${QJSON}]}`, 'questions');
+    const r = await ask(deps, job, `${sp.qhead || sp.rhead}\n\nTASK: Write ${n} board-style questions on this topic. ${QSPEC}\n${basis}\n${sp.qlevel || BOARD_LEVEL}\n\nReply with JSON only: {"questions":[${QJSON}]}`, 'questions', { gov: 'gen_questions_write' });
     const x = r.ok ? parseJ(r.text) : null; if (!x && r.cap) return miss(r, 'the check questions');
     st.checks = A(x && x.questions).map(qFromAI).filter(Boolean).slice(0, n); st.ph = st.checks.length && (sp.audit || sp.seed) ? 'qreview' : 'cwrite'; return put();
   }
   if (st.ph === 'qreview') {
-    const qs = st.checks, r = await ask(deps, job, `${sp.rhead}\n\nYou are now the item reviewer for a board examination committee. Check each question below against current guidelines${sp.hasRef ? ' and the reference text' : ''}. Reject a question if the keyed answer is not clearly the single best answer, if any stated fact, dose or threshold is wrong or outdated, or if two options are equally defensible. Be strict: when in doubt, reject.\n\nQUESTIONS:\n${JSON.stringify(qs.map((q, i) => ({ i, stem: q.stem, options: q.opts, keyed: 'ABCDE'[q.ans], explanation: q.exp })))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject","note":"reason if rejected"}]}`, 'review', { strict: false, avoid: st.by.w });
+    const qs = st.checks, r = await ask(deps, job, `${sp.rhead}\n\nYou are now the item reviewer for a board examination committee. Check each question below against current guidelines${sp.hasRef ? ' and the reference text' : ''}. Reject a question if the keyed answer is not clearly the single best answer, if any stated fact, dose or threshold is wrong or outdated, or if two options are equally defensible. Be strict: when in doubt, reject.\n\nQUESTIONS:\n${JSON.stringify(qs.map((q, i) => ({ i, stem: q.stem, options: q.opts, keyed: 'ABCDE'[q.ans], explanation: q.exp })))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject","note":"reason if rejected"}]}`, 'review', { strict: false, avoid: st.by.w, gov: 'gen_questions_review' });
     const x = r.ok ? parseJ(r.text) : null; if (!x && r.cap) return miss(r, 'the question review');
     if (x) { const bad = new Set(A(x.reviews).filter((v) => v.verdict === 'reject').map((v) => v.i)); st.checks = qs.filter((q, i) => !bad.has(i)).map((q) => ({ ...q, rev: 1 })); } else st.checks = [];
     st.ph = 'cwrite'; return put();
@@ -297,13 +298,13 @@ async function step(env, deps, job) {
   if (st.ph === 'cwrite') {
     const n = sp.cards == null ? 4 : Number(sp.cards); if (!n) { st.ph = 'store'; return put(); }
     const basis = `These cards follow a lesson the physician has just studied: ${lessonGist(L())}\nTake every card from what that lesson taught, on its highest-yield facts, and keep each one consistent with it.`;
-    const r = await ask(deps, job, `${sp.qhead || sp.rhead}\n\nTASK: Write ${n} flashcards on this topic. ${CSPEC}\n${basis}\n Cover different facts across the topic, favoring what is tested on the ABIM examination and what changes management in clinic.\n\nReply with JSON only: {"cards":[{"front":"","back":"","source":"Organization and year, if a guideline backs it","caveat":"empty unless the answer is uncertain, disputed or recently changed; then one sentence"}]}`, 'cards');
+    const r = await ask(deps, job, `${sp.qhead || sp.rhead}\n\nTASK: Write ${n} flashcards on this topic. ${CSPEC}\n${basis}\n Cover different facts across the topic, favoring what is tested on the ABIM examination and what changes management in clinic.\n\nReply with JSON only: {"cards":[{"front":"","back":"","source":"Organization and year, if a guideline backs it","caveat":"empty unless the answer is uncertain, disputed or recently changed; then one sentence"}]}`, 'cards', { gov: 'gen_cards_write' });
     const x = r.ok ? parseJ(r.text) : null; if (!x && r.cap) return miss(r, 'the flashcards');
     st.cards = A(x && x.cards).filter((c) => c && c.front && c.back).slice(0, n).map((c) => ({ f: String(c.front), b: String(c.back), src: String(c.source || ''), cav: String(c.caveat || '').trim(), ref: '', fig: null }));
     st.ph = st.cards.length ? 'creview' : 'store'; return put();
   }
   if (st.ph === 'creview') {
-    const r = await ask(deps, job, `${sp.rhead}\n\nYou are checking flashcards for accuracy against current guidelines${sp.hasRef ? ' and the reference text' : ''}. Reject any card whose answer is wrong, outdated, or only sometimes true. Be strict.\n\nCARDS:\n${JSON.stringify(st.cards.map((c, i) => ({ i, front: c.f, back: c.b })))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject"}]}`, 'review', { strict: false, avoid: st.by.w });
+    const r = await ask(deps, job, `${sp.rhead}\n\nYou are checking flashcards for accuracy against current guidelines${sp.hasRef ? ' and the reference text' : ''}. Reject any card whose answer is wrong, outdated, or only sometimes true. Be strict.\n\nCARDS:\n${JSON.stringify(st.cards.map((c, i) => ({ i, front: c.f, back: c.b })))}\n\nReply with JSON only: {"reviews":[{"i":0,"verdict":"ok" or "reject"}]}`, 'review', { strict: false, avoid: st.by.w, gov: 'gen_cards_review' });
     const x = r.ok ? parseJ(r.text) : null; if (!x && r.cap) return miss(r, 'the card review');
     if (x) { const bad = new Set(A(x.reviews).filter((v) => v.verdict === 'reject').map((v) => v.i)); st.cards = st.cards.filter((c, i) => !bad.has(i)); st.cardsChecked = true; } else st.cards = [];
     st.ph = 'store'; return put();

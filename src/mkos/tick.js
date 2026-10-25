@@ -173,7 +173,7 @@ async function runJob(env, deps, job, meter = null) {
       const per = Number(FRAMEWORK.frameworks.ingestion.extraction.parts_per_run) || 1;
       for (let k = 0; k < per; k++) {
         if ((await aiBudgetLeft(env)).left <= 0) break;   // never spend a pending part on rules alone: stop and wait for budget
-        const r = await extractStep(env, deps, src, { event_id: p.event_id, allowAI: true });
+        const r = await extractStep(env, deps, src, { event_id: p.event_id, allowAI: true, kind: 'enrich' });
         if (r.done) { await finishSource(env, src, {}); const cur = await getObject(env, src.id); await putObject(env, { ...cur, ai_pending: [] }, { summary: 'AI enrichment complete', audited: false }); await queue(env, 'decompose', src.id, {}, 5); await save('done', 'enriched'); return true; }
       }
       await save('running'); return false;
