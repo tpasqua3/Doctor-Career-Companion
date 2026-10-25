@@ -738,6 +738,26 @@ async function runAI(env, user, { input, tier, provider, account, chat, job, avo
    unless the folders are in a shared drive. Library text is read when a lesson needs it and held in memory for a few minutes. */
 const KNOW = env => str(env.DRIVE_KNOWLEDGE_FOLDER, 200), ACCTS = env => str(env.DRIVE_ACCOUNTS_FOLDER, 200);
 const isOwner = (env, user) => !!env.OWNER_EMAIL && !!user && String(env.OWNER_EMAIL).trim().toLowerCase() === String(user.email).toLowerCase();
+/* Is this person a USAP admin? (owner decision 2026-10-25) Only someone who signed up at USAP and was granted a Control Center
+   role by the owner sees the admin sections of the account page; standard users see only their own settings. USAP answers
+   through the USAP_UGF binding (the node kit's access decision, by sha256 of the email); the role is never stored here.
+   integrations: 'edit' (owner, USAP developers) may connect, disconnect or test Google Drive; 'view' only sees it.
+   Fails closed. Kept five minutes per isolate. */
+const adminCache = new Map();
+async function adminOf(env, user) {
+  if (!user || !user.email) return null;
+  if (isOwner(env, user)) return { role: 'owner', integrations: 'edit' };
+  if (!env.USAP_UGF || typeof env.USAP_UGF.fetch !== 'function') return null;
+  const subject = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(user.email).trim().toLowerCase())))].map(b => b.toString(16).padStart(2, '0')).join('');
+  const hit = adminCache.get(subject); if (hit && Date.now() - hit.at < 300000) return hit.v;
+  let v = null;
+  try {
+    const r = await env.USAP_UGF.fetch('https://usap.internal/api/v1/governance/access/decision?app_id=doctor_companion_app&subject=' + subject, { headers: { 'x-usap-app': 'doctor_companion_app' }, signal: AbortSignal.timeout(5000) });
+    if (r.ok) { const d = await r.json(); if (d && d.admin && d.usap_role) v = { role: String(d.usap_role), integrations: d.integrations === 'edit' ? 'edit' : 'view' }; }
+  } catch { v = null; }
+  adminCache.set(subject, { at: Date.now(), v }); return v;
+}
+const maskMail = e => { const [a, b] = String(e || '').split('@'); return b ? a.slice(0, 1) + '***@' + b : ''; };
 const setting = async (env, k) => { const r = await env.DB.prepare('SELECT v FROM settings WHERE k = ?').bind(k).first(); return r ? r.v : null; };
 const setSetting = (env, k, v) => v == null ? env.DB.prepare('DELETE FROM settings WHERE k = ?').bind(k).run()
   : env.DB.prepare('INSERT INTO settings (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v').bind(k, String(v)).run();
@@ -1355,16 +1375,16 @@ async function api(request, env, url, ctx) {
   }
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
-    const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user);
+    const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user), admin = await adminOf(env, user);
     return json({ ...profile(user), reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), says: await siteSays(env, user), connector: link ? link.created : null, areas: await summary(env, user.id),
-      library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: await storage(env, user), owner,
-      drive: owner ? { mode: DRIVE.mode, account: DRIVE.email, canConnect: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET), redirect: url.origin + '/api/google/callback' } : undefined });
+      library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: await storage(env, user), owner, admin,
+      drive: admin ? { mode: DRIVE.mode, account: owner ? DRIVE.email : maskMail(DRIVE.email), canConnect: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET), canEdit: admin.integrations === 'edit', redirect: url.origin + '/api/google/callback' } : undefined });
   }
   /* The owner connects their own Google account once, so this server can write the account folders in their Drive. Google sends
      the owner back to /api/google/callback with a code; the long-lived token it is traded for is kept encrypted in D1. */
   if (route === 'GET /api/google/connect' || route === 'GET /api/google/callback') {
     const back = t => Response.redirect(url.origin + '/account.html?drive=' + encodeURIComponent(t), 302);
-    if (!isOwner(env, user)) return back('Only the site owner (the OWNER_EMAIL secret) can connect Google Drive.');
+    if (((await adminOf(env, user)) || {}).integrations !== 'edit') return back('Only the site owner or a USAP developer can connect Google Drive.');
     if (!env.GOOGLE_OAUTH_CLIENT_ID || !env.GOOGLE_OAUTH_CLIENT_SECRET) return back('Add the GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET secrets in Cloudflare first.');
     const redirect = url.origin + '/api/google/callback';
     if (route === 'GET /api/google/connect') {
@@ -1385,13 +1405,13 @@ async function api(request, env, url, ctx) {
     return back('ok');
   }
   if (route === 'DELETE /api/google/connect') {
-    if (!isOwner(env, user)) return fail(403, 'Only the site owner can do that.');
+    if (((await adminOf(env, user)) || {}).integrations !== 'edit') return fail(403, 'Only the site owner or a USAP developer can change the Google Drive connection.');
     await setSetting(env, 'google_refresh', null); await setSetting(env, 'google_email', null); gToken = null; await driveState(env, true);
     return json({ ok: true });
   }
   /* The owner's check that both folders can be reached, and that the accounts folder can be written to. */
   if (route === 'POST /api/google/test') {
-    if (!isOwner(env, user)) return fail(403, 'Only the site owner can do that.');
+    if (((await adminOf(env, user)) || {}).integrations !== 'edit') return fail(403, 'Only the site owner or a USAP developer can change the Google Drive connection.');
     const out = { mode: DRIVE.mode, account: DRIVE.email, knowledge: { ok: false }, accounts: { ok: false, write: false } };
     const look = async (id, o) => { if (!id) { o.error = 'The folder setting is missing on the server.'; return; } try { o.name = (await (await gfetch(env, 'files/' + id, { fields: 'id,name' })).json()).name; o.ok = true; } catch (e) { if (!(e instanceof LibError)) throw e; o.error = e.message; } };
     await look(KNOW(env), out.knowledge); await look(ACCTS(env), out.accounts);
@@ -1414,7 +1434,7 @@ async function api(request, env, url, ctx) {
   }
   /* The owner reads and rewrites the privacy policy and the terms of service. DELETE goes back to the built-in wording. */
   if (url.pathname === '/api/admin/page') {
-    if (!isOwner(env, user)) return fail(403, 'Only the site owner can do that.');
+    if (request.method === 'GET' ? !(await adminOf(env, user)) : !isOwner(env, user)) return fail(403, 'Only the site owner can do that.');   // USAP admins may read, only the owner rewrites
     const name = str(request.method === 'GET' || request.method === 'DELETE' ? url.searchParams.get('name') : body.name, 20);
     if (!PAGES[name]) return fail(400, 'No such page.');
     if (request.method === 'PUT') {
@@ -1427,11 +1447,13 @@ async function api(request, env, url, ctx) {
   }
   /* Every account and how much of it is in Drive, for the owner. Counts and folder links only: no record is read here. */
   if (route === 'GET /api/admin/accounts') {
-    if (!isOwner(env, user)) return fail(403, 'Only the site owner can do that.');
+    const owner = isOwner(env, user);
+    if (!owner && !(await adminOf(env, user))) return fail(403, 'Only the site owner can do that.');
     const { results } = await env.DB.prepare(`SELECT u.email, u.first, u.last, u.created, a.folder, a.synced, a.backup_day AS backupDay, a.error,
       (SELECT COUNT(*) FROM docs d WHERE d.user_id = u.id) AS records, (SELECT COUNT(*) FROM drive_docs x WHERE x.user_id = u.id) AS inDrive
       FROM users u LEFT JOIN drive_accounts a ON a.user_id = u.id ORDER BY u.created LIMIT 500`).all();
-    return json({ accounts: results.map(r => ({ ...r, folder: r.folder ? 'https://drive.google.com/drive/folders/' + r.folder : '' })) });
+    /* USAP admins other than the owner see the accounts masked: no names, the email as a hint, no folder links. */
+    return json({ accounts: results.map(r => owner ? { ...r, folder: r.folder ? 'https://drive.google.com/drive/folders/' + r.folder : '' } : { ...r, email: maskMail(r.email), first: '', last: '', folder: '' }) });
   }
   /* This account's own folder in Drive: how much is copied, copy the rest now, and its dated backups. */
   if (route === 'GET /api/storage') return json(await storage(env, user));
@@ -1894,3 +1916,4 @@ usap.onRemediate('run_backup_audit', async (env) => {
 const timed = async (req, env, ctx) => { const t0 = Date.now(); try { return await app.fetch(req, env, ctx); } finally {
   try { const u = new URL(req.url); if (u.pathname.startsWith('/api/') || u.pathname.startsWith('/mcp')) usap.emitMetric('api_latency_p95_ms', Date.now() - t0, { route: usapRoute(u) }); } catch { } } };
 export default { ...app, fetch: usap.timeRequest(timed) };
+export { adminOf };   // for test/admin.test.mjs

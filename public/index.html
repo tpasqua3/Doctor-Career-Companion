@@ -31,7 +31,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .sync{font-size:.78rem;color:var(--muted)} .sync[data-warn="1"]{color:var(--amber)}
 .tabs{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--paper);display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;padding-block:6px;border-bottom:1px solid var(--line);margin-bottom:16px}
 .tabs::-webkit-scrollbar{display:none}
-.tab{border:0;background:none;padding:8px 12px;border-radius:8px;font-weight:500;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tab{border:0;background:none;padding:8px 12px;text-decoration:none;border-radius:8px;font-weight:500;color:var(--muted);cursor:pointer;white-space:nowrap}
 .tab[aria-selected="true"]{background:var(--teal-soft);color:var(--teal);font-weight:600}
 .stack{display:flex;flex-direction:column;gap:14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
@@ -1664,7 +1664,10 @@ const S={askOpen:false,asking:false,deck:null,clist:false,cscope:'all',tab:'toda
 const TABS=[['today','Today'],['boards','Boards'],['history','History'],['learn','Curriculum'],['knowledge','Knowledge'],['questions','Questions'],['cards','Cards'],['progress','Progress'],['ask','Ask'],['career','Career'],['settings','Settings']];
 /* The teaching choice sits at the top of every screen, so it can be changed right where a lesson or question set is asked for. */
 function drawTeach(){const el=$('#teachpick');if(el)el.innerHTML=aiPick('teach','Teaching by')}
-function render(){drawTeach(); $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('');
+/* Profile: the account page (account-level settings for everyone; admin sections only for USAP admins, decided by the server).
+   On the website it opens in place; inside Claude or Life OS it opens the website's page in its own tab (sign in there if asked). */
+const profileTab=()=>WEB?'<a class="tab" href="/account.html">Profile</a>':`<a class="tab" href="${GOVSITE}/account.html" target="_blank" rel="noopener">Profile ↗</a>`;
+function render(){drawTeach(); $('#tabs').innerHTML=TABS.map(([id,n])=>`<button class="tab" role="tab" aria-selected="${S.tab===id}" data-tab="${id}">${n}</button>`).join('')+profileTab();
   /* A screen that fails to draw says so, instead of leaving the last tab's content under the new tab's name. */
   let v;try{v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,history:vHistory,learn:vLearn,knowledge:vKnowledge,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings}[S.tab])()}catch(e){console.error(e);v=`<div class="err">This screen could not be shown: ${esc(String((e&&e.message)||e).slice(0,160))}. Send this message to Claude.</div>`}
   if(mkOn()&&!MKLOAD&&(!MKAT||Date.now()-MKAT>300000))setTimeout(()=>mkLoad(),0);
