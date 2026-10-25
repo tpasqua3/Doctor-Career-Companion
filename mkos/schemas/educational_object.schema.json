@@ -67,7 +67,8 @@
         "assessment",
         "board",
         "remediation",
-        "review"
+        "review",
+        "canonical"
       ]
     },
     "subcompetencies": {
@@ -117,6 +118,11 @@
         "string",
         "null"
       ]
+    },
+    "anchor_concept": {
+      "type": "string",
+      "x-ref": "Concept",
+      "description": "Canonical objectives (objective_type canonical): the concept the objective is anchored on (lifecycle.json objectives)."
     }
   },
   "required": [

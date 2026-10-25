@@ -4,6 +4,11 @@ The knowledge backend of Doctor Career Companion, built from the *MKOS V3 Canoni
 Currency and Continuous Evolution Principle* and the *Universal Confidence, Uncertainty and Trust Model* (Medical Training App Push,
 week of 10/17/2026), following the *MKOS Implementation Directive*.
 
+**The MKOS Constitution** (`mkos/directives/mkos_constitution.md`) binds everything here. MKOS models medicine, and exams, lessons and
+curricula are projections of it. Knowledge objects are canonical and owned by no educational product. No specialty or source is
+primary. Nothing is mapped to only one objective. No knowledge asset may stop at ingestion: every source goes through the ten-stage
+Continuous Knowledge Lifecycle (below).
+
 MKOS turns the documents in the library (guidelines, MKSAP, textbooks, blueprints) into versioned, scored, provenance-carrying
 knowledge objects in a graph. The app teaches from that structure. AI is the last layer: it may teach, explain and generate
 educational assets, but it never creates authority.
@@ -12,7 +17,7 @@ educational assets, but it never creates authority.
 
 | Tier | Where | What |
 |---|---|---|
-| Framework (this repo) | `mkos/ontology/*.json`, `mkos/schemas/*.json` | The ontology (21 concept types, 26 facet groups / 252 facets, 16 spec relationships + 15 structural ones, evidence levels, authority hierarchy, versioning, difficulty, competency, learner, confidence, routing, stop-the-line), the specialty taxonomy, source classes, scoring numbers, competencies, the ingestion pipeline, and 25 JSON Schemas. `node tools/mkos/build.mjs` validates it and writes `src/mkos/framework.js`. |
+| Framework (this repo) | `mkos/ontology/*.json`, `mkos/schemas/*.json` | The ontology (21 concept types, 26 facet groups / 252 facets, 16 spec relationships + 19 structural ones, evidence levels, authority hierarchy, versioning, difficulty, competency, learner, confidence, routing, stop-the-line), the specialty taxonomy, source classes, scoring numbers, competencies, the ingestion pipeline, the Continuous Knowledge Lifecycle (`lifecycle.json`), and 26 JSON Schemas. `node tools/mkos/build.mjs` validates it and writes `src/mkos/framework.js`. |
 | Live store | Cloudflare D1, tables `mk_*` | Every knowledge object (`mk_objects`) and every version of it (`mk_versions`), the graph (`mk_edges`), aliases, the library as last scanned (`mk_files`), change events, jobs, audit, reviews, owner settings, asset links, learner state, misconceptions, reconciliation items, routing decisions, mirror state. |
 | Durable central record | Google Drive: Side Gigs › App Backends › Doctor Companion App › Doctor Companion App Central Registry Data › **MKOS** (`MKOS_DRIVE_FOLDER`) | One file per object type and specialty, the graph, a readable sources registry, the staged compatibility registry, governance reports and a daily snapshot. Written by the server; not read back. |
 | Per account | `mk_learner*`, `mk_misconceptions`, `mk_reconcile` (D1, keyed by account) | The learner's digital twin. Never written to the central folder. |
@@ -49,6 +54,8 @@ licensed). The server reads the library from Drive itself.
 | `genjobs.js` | The generation queue: lessons as jobs bound to one model, background and batch writing, objective seeding, ITE-to-objective mapping (`ite_map`: legacy wording match, or with `items` the per-discipline shortlist the app's AI chooses from) |
 | `objmap.js` | Objective mapping: as many knowledge objects as possible mapped to the ABIM CERT and LKA objectives |
 | `curstore.js` | The Dynamic Board Objective Curriculum in Drive: one file per objective, by exam and discipline |
+| `lifecycle.js`, `lifecycle_state.js` | The Continuous Knowledge Lifecycle orchestrator and the per-source lifecycle record (below) |
+| `relevance.js` | The weighted relevance graph, canonical objectives and the exam projection (below) |
 | `routes.js` | `/api/mkos/<op>` and the connector tool `mkos` |
 
 The cron gives MKOS its turn in each 5-minute run in which no account records were waiting to be copied to Drive. Each run:
@@ -67,7 +74,7 @@ Files over 25 MB cannot be read by the server; split them into chapters or keep 
 
 ## Operations (`/api/mkos/<op>` or the connector tool `mkos` with `{op, args}`)
 
-Everyone: `status`, `search`, `object/<id>`, `context/<concept id>`, `route?q=`, `learner`, `plan`, `refresh_me`, `framework`,
+Everyone: `status`, `lifecycle`, `relevance`, `exam_relevance`, `search`, `object/<id>`, `context/<concept id>`, `route?q=`, `learner`, `plan`, `refresh_me`, `framework`,
 `app_bundle`, `topic_context`, `check_citations`, `asset_flags`, `asset_find`, `asset_put`, `asset_flag`, `asset_stats`, `blueprints`,
 `board-review`, `select_blueprint`, `pronunciation`.
 Owner: `events`, `jobs`, `audit`, `review {id, result, note}`, `edit {object}`, `set_status`, `settings {path, value}` (for example
@@ -236,11 +243,98 @@ Owner: `reconcile {run: true}` queues a pass now and returns the last report.
 8. **Retire**: only after 3-7 pass within 24 hours and the owner confirms; the new registry is published as `_CURRENT`, the old one
    moves to Old versions, and `cutover_rollback` reverses it.
 
+## The Continuous Knowledge Lifecycle (src/mkos/lifecycle.js, relevance.js, mkos/ontology/lifecycle.json)
+
+Every source has a lifecycle record (`mk_lifecycle`: `source_id`, `stage`, `stages_json`, `status`, `cycle`). A new or changed source
+enters it from the scanner (`ingest.js registerFile`). Sources that existed before enter once, by backfill. A changed source starts a
+new cycle, and earlier cycles are kept in the record's history. The orchestrator runs in each engine run after the queued jobs, within
+the run's query budget (at most `orchestrator.budget_share_max` of it), and every unit is resumable. Status: `waiting` (not read
+yet), `in_progress`, `blocked` (extraction failed), `pending_engine` (every built stage done; the rest wait for their engines),
+`complete`, `retired`. The `status` operation shows the counts, `lifecycle {id}` shows one record, `relevance {id}` shows an object's
+objectives and exam projections, and `exam_relevance {ids, family}` shows the projection for one exam. Variable `lifecycle=off` in
+`mk_settings` pauses it.
+
+| Stage | Step 1 (built, rules only) |
+|---|---|
+| `ingested` | The source has been read, indexed or mapped by title. Its Metadata Object is computed, a refined class is applied if one exists, and `cites` edges are added. |
+| `knowledge_objects` | Counts of what it produced, once its extraction and decomposition jobs are finished. |
+| `ontology_mapped` | Its concepts carry `classified_as` edges to the eleven ConceptClass nodes (`cls.*`). |
+| `relevance_mapped` | Canonical objectives for its concepts, their relevance rows, and the rows of its own objects. |
+| `exam_projected` | Projection edges, and its recommendations' relevance on every current blueprint. |
+| `lesson_penetration`, `curriculum_penetration`, `confidence`, `gaps` | `pending_engine` (step 2: the penetration score, enrichment, lesson layers, the three confidence domains, coverage and gaps). |
+
+Global passes do the bulk for the existing corpus, and each restarts daily for what is new: concept classes, canonical objectives,
+projection edges (every run, so a new blueprint projects at once), and the relevance sweep (every 24 hours, or immediately when the
+rule table's version changes). Between sweeps, concepts that are new or near a new objective catch up.
+
+**Source Metadata Object.** `source_metadata` is a typed sub-object of the Source (`source.schema.json`). It holds the source
+organization, publication date, version date, review date (from the owner registry or a "reaffirmed/reviewed" title), specialty
+domain, source type and class, superseded-by, the evidence strength system (the grading system of most of its recommendations, with
+the full list), and referenced sources. Referenced sources are the trial acronyms in its recommendations that MKOS already holds as
+EvidenceObjects, also linked as `cites` edges. It is derived, so it is in `kb.js VOLATILE` like scores and classification. It is
+written in place, makes no new version and no `mk_versions` row, and leaves the content hash unchanged. On Drive it rewrites only the
+`registry_data/Source/*` files once, not the history files. A change to the source's content version recomputes it.
+
+**Source classes.** `government_guidance`, `landmark_trial`, `systematic_review` and `meta_analysis` are recognised by the
+`classification_rules` of `source_classes.json` (title and folder patterns). A rule applies only when it refines the base class: it
+is more specific, as when a research article becomes a landmark trial, or a guideline becomes government guidance. An
+already-classified source is reclassified only by such a refinement. Owner-registry sources are never reclassified. Every
+reclassification is logged (audit `source_reclassified`).
+
+**Stage 2 classes.** Disease, syndrome, procedure, diagnostic, medication, risk factor and biomarker come from the 21 concept types.
+Four classes come from rules over the existing types and relations:
+
+- complication: a name pattern, or the source of a `complicates` edge;
+- preventive: a name pattern, or recommended by a preventive or immunization source;
+- population: a name pattern;
+- educational: an anatomical or physiologic concept, or the anchor of a curriculum node or blueprint topic.
+
+Impact reach never follows `classified_as` (`non_propagating_relations`).
+
+**Canonical objectives.** `obj.c.<concept id without "c.">` (type Objective, `objective_type: canonical`, `anchored_on` the concept).
+There is one per objective-worthy concept: it anchors a blueprint topic or curriculum node, or has at least three current
+recommendations. The id is derived from the concept, so it is stable and exam-independent, and any number of blueprints can project
+onto the same objective. An exam-scoped id such as `bpt.<exam>.<code>` cannot do that. Each BlueprintTopic `projects_objective` onto
+the canonical objectives of the concepts its blueprint concept mapping names. That gives the chain knowledge object → objective graph
+→ exam graph.
+
+**The relevance rule table** (`lifecycle.json` relevance; deterministic, no AI):
+
+| Path from the object to an objective's anchor concept | Score |
+|---|---|
+| the concept itself | 1.00 foundational |
+| attached directly: a recommendation (`recommended_by`), an objective or educational object that `teaches` or `assesses` it | x 0.95 |
+| derived from such a recommendation (claims, objectives, teaching points: `derived_from`) | x 0.90 |
+| `covers` (educational objects, source sections), `supported_by` (evidence) | x 0.85 |
+| each hop between concepts: `is_a`, `part_of` | x 0.85 |
+| `treats`, `diagnoses`, `causes`, `complicates`, `predisposes_to`, `contraindicates` | x 0.70 |
+| `evaluates`, `measures`, `contributes_to`, `requires`, `prerequisite_of`, `associated_with` | x 0.50 |
+| `related_to` | x 0.25 |
+
+The score is the best path of at most two hops. The band is the spec band nearest the score. Scores below 0.10 are pruned. There is
+no small fan-out cap; `max_per_object` (400) is only a safety ceiling for the run budget.
+
+**Exam projection.** An exam's relevance for an object is max over the object's objectives of (relevance x topic priority / 100),
+over the topics of that exam's current blueprint that project onto the objective. It is computed on read (`examProjection`, the view
+`mk_exam_relevance`) and never stored per exam. Exam data comes from the blueprint registry data (`blueprints.json` families:
+`exam_key`, `blueprint_name`, `registry_find`, `curriculum_folder`, `counterpart`). A registry for an exam not listed there names its
+own `blueprint_family`, `board_name` and `board_type`. `importBlueprint`, `projectBlueprint`, the bootstrap and the board objective
+curriculum read the family from that data, so a future exam needs only its blueprint and ABIM behaves exactly as before.
+`importBlueprint` no longer writes `board.*` into concepts. Weights, tiers and task ratings stay on the BlueprintTopic and in the
+blueprint tables, and `learner.js` and the concept context read them there, falling back to the old fields of concepts written
+before.
+
+**Durable or derived.** Durable, so mirrored (`registries/lifecycle.json`) and restored: `mk_lifecycle`, the canonical objectives,
+the ConceptClass nodes, and the `classified_as`, `anchored_on`, `projects_objective` and `cites` edges (with the graph). Derived, so
+not mirrored and rebuilt by the relevance sweep after a restore: `mk_relevance` and `mk_relevance_marks`. The lifecycle's cursors
+(`lc_*` settings) are run state.
+
 ## Testing locally
 
 `node tools/mkos/dryrun.mjs --work <dir>` runs the whole engine on node:sqlite (`tools/mkos/d1shim.mjs`) against a library listing
 and the registries kept in `<dir>` (outside the repository), then prints the object counts, graph validation, all cutover gates,
-families, recommendations, the learner plan and the routing result.
+families, recommendations, the learner plan, the routing result and the lifecycle counts. `node --test test/*.mjs` runs the unit
+tests (`test/mkos_lifecycle.test.mjs` uses synthetic fixtures only).
 
 ## The generation queue (src/mkos/genjobs.js, assets.json generation_queue)
 

@@ -6,6 +6,7 @@ import { J, nowIso, getSetting, setSetting, audit } from './db.js';
 import { putObject, getObject, setStatus, norm, slug } from './kb.js';
 import { addEdges } from './graph.js';
 import { sourceClass } from './scoring.js';
+import { enterLifecycle } from './lifecycle_state.js';
 
 const F = FRAMEWORK.frameworks, ING = F.ingestion;
 const SPEC_BY_ALIAS = new Map(); for (const s of F.specialties.specialties) for (const a of s.folder_aliases) SPEC_BY_ALIAS.set(a.toLowerCase(), s.id);
@@ -38,7 +39,8 @@ export function specialtyOf(pathParts) {
 }
 const YEAR = /\b(19[89]\d|20[0-4]\d)\b/g;
 export const yearOf = (...xs) => { for (const x of xs) { const m = String(x || '').match(YEAR); if (m) return Math.max(...m.map(Number)); } return null; };
-export function classify(title, pathParts, mime) {
+// The base rules (unchanged since 1.0); classify() then applies the more specific classification_rules of source_classes.json.
+export function classifyBase(title, pathParts, mime) {
   const t = String(title || ''), p = pathParts.join('/').toLowerCase();
   if (SKIP_TITLES.some((r) => r.test(t)) && /json|spreadsheet|csv/i.test(mime || '')) return 'registry_or_backend';
   if (/blueprint/.test(p) || /blueprint/i.test(t)) return 'board_blueprint';
@@ -61,6 +63,21 @@ export function classify(title, pathParts, mime) {
   if (/guideline/.test(p) || /guideline|recommendation|standards of care|kdigo|statement/i.test(t)) return 'clinical_practice_guideline';
   return 'unclassified';
 }
+// Refinement rules (source_classes.json classification_rules): a rule replaces the base class only when the base class is one it
+// refines, i.e. the new rule is more specific. Returns the class key.
+const REFINE = ((F.source_classes.classification_rules || {}).rules || []).map((r) => ({ ...r, ti: rx(r.title_patterns || []),
+  tc: (r.title_patterns_cs || []).map((x) => new RegExp(x)), pp: rx(r.path_patterns || []) }));
+export function refineClass(base, title, pathParts = []) {
+  const t = String(title || '').replace(/\.(pdf|docx?|epub)$/i, '');
+  for (const r of REFINE) {
+    if (!r.refines.includes(base)) continue;
+    if (r.ti.some((x) => x.test(t)) || r.tc.some((x) => x.test(t)) || pathParts.some((part) => r.pp.some((x) => x.test(String(part))))) return r.class;
+  }
+  return base;
+}
+export const classify = (title, pathParts, mime) => refineClass(classifyBase(title, pathParts, mime), title, pathParts);
+// Is `to` a refinement of `from` (a more specific class for the same document)?
+export const refines = (from, to) => REFINE.some((r) => r.class === to && r.refines.includes(from));
 export function populationOf(title, path) {
   const s = (title + ' ' + path).toLowerCase();
   const ped = /\b(pediatric|paediatric|children|child|infant|neonat|adolescent|newborn|youth)\b/.test(s), adult = /\badult/.test(s);
@@ -99,7 +116,8 @@ export const familyId = (orgs, title) => 'gl.' + slug((orgs.slice(0, 2).join('_'
 export const sourceIdFor = (fileId) => 'src.' + String(fileId).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40);
 export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep = 0 } = {}) {
   const now = nowIso(), prev = await env.DB.prepare('SELECT * FROM mk_files WHERE drive_file_id = ?').bind(f.id).first();
-  const path = pathParts.join('/'), cls = classify(f.title, pathParts, f.mimeType);
+  const path = pathParts.join('/');
+  let cls = classify(f.title, pathParts, f.mimeType);
   const changed = !prev ? 'source_added' : (prev.md5 && f.md5 && prev.md5 !== f.md5) || (!f.md5 && prev.modified !== f.modifiedTime) ? 'source_modified'
     : prev.path !== path ? 'source_moved' : prev.title !== f.title ? 'source_renamed' : prev.state === 'removed' ? 'source_added' : null;
   const touch = async () => {
@@ -109,7 +127,17 @@ export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep
     .bind(f.id, sourceIdFor(f.id), f.title, path, f.parentId || '', f.mimeType || '', Number(f.fileSize) || 0, f.md5 || '', f.modifiedTime || '', sweep, 'seen', now).run();
   };
   if (!changed) { await touch(); return null; }
-  const id = sourceIdFor(f.id), old = await getObject(env, id), c = sourceClass(old?.registry_ref_id ? old.source_class : cls);
+  const id = sourceIdFor(f.id), old = await getObject(env, id);
+  // A source already classified keeps its class unless the base rules themselves now say otherwise (as before), or a more specific
+  // rule refines it (logged as a reclassification).
+  let reclassified = null;
+  if (old && old.source_class && !old.registry_ref_id && cls !== old.source_class) {
+    const base = classifyBase(f.title, pathParts, f.mimeType);
+    if (refines(old.source_class, cls)) reclassified = { from: old.source_class, to: cls, rule: 'refinement' };
+    else if (base !== old.source_class) { cls = base === cls || refines(base, cls) ? cls : base; }
+    else cls = old.source_class;
+  }
+  const c = sourceClass(old?.registry_ref_id ? old.source_class : cls);
   const orgs = old?.responsible_orgs?.length ? old.responsible_orgs : orgsOf(f.title, pathParts);
   const src = {
     ...(old || {}), id, type: 'Source', name: old?.short_label || cleanTitle(f.title).slice(0, 200) || f.title,
@@ -124,7 +152,10 @@ export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep
     provenance: old?.provenance?.length ? old.provenance : [{ source_id: id, method: 'derived', at: now, agent: actor, note: 'registered from the library scan' }],
   };
   const ev = await event(env, changed, id, { title: f.title, path, md5: f.md5 || '', prev: prev ? { md5: prev.md5, path: prev.path, title: prev.title } : null });
-  await putObject(env, src, { actor, event_id: ev, summary: changed.replace('source_', 'source ') });
+  await putObject(env, src, { actor, event_id: ev, summary: changed.replace('source_', 'source ') + (reclassified ? `; reclassified ${reclassified.from} -> ${reclassified.to}` : '') });
+  if (reclassified) await audit(env, actor, 'source_reclassified', id, null, null, reclassified);
+  // Every new or changed source enters the Continuous Knowledge Lifecycle (lifecycle.js): no knowledge asset may stop at ingestion.
+  if (changed === 'source_added' || changed === 'source_modified') await enterLifecycle(env, id, { event: changed });
   if (old && old.status === 'retired') await setStatus(env, id, 'current', { actor, event_id: ev, force: true, reason: 'back in the library' });
   if (src.ingest_state === 'queued' && (changed === 'source_added' || changed === 'source_modified')) await queue(env, 'extract', id, { event_id: ev }, src.copyright === 'licensed_no_verbatim' ? 7 : 4);
   if (changed === 'source_added' || changed === 'source_modified') await queue(env, 'family', id, { event_id: ev }, 3);

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mkos/schemas/concept_class.schema.json",
+  "title": "ConceptClass",
+  "description": "One of the eleven mappable classes of lifecycle stage 2 (disease, syndrome, procedure, diagnostic, medication, risk factor, complication, biomarker, preventive, population, educational). Concepts point at it with classified_as.",
+  "allOf": [
+    {
+      "$ref": "mkos_object.schema.json"
+    }
+  ],
+  "type": "object",
+  "properties": {
+    "class_key": {
+      "type": "string"
+    },
+    "concept_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "class_key"
+  ]
+}

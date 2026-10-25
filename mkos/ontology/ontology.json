@@ -2,10 +2,10 @@
   "id": "ontology.core",
   "type": "Ontology",
   "name": "MKOS Ontology",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "status": "current",
   "created_date": "2026-10-17",
-  "updated_date": "2026-10-17",
+  "updated_date": "2026-10-24",
   "supersedes": null,
   "replaced_by": null,
   "source_attribution": [
@@ -22,6 +22,11 @@
       "version": "1.1.0",
       "date": "2026-10-17",
       "summary": "Pronunciation: Pronunciation object type, pronunciation facet group on every concept, has_pronunciation relationship."
+    },
+    {
+      "version": "1.2.0",
+      "date": "2026-10-24",
+      "summary": "Continuous Knowledge Lifecycle (step 1): ConceptClass object type (the eleven mappable classes of lifecycle.json), structural relationships classified_as, anchored_on and projects_objective."
     }
   ],
   "project": {
@@ -325,6 +330,14 @@
       "layer": "knowledge",
       "table": "mk_objects",
       "schema": "pronunciation.schema.json",
+      "versioned": true
+    },
+    {
+      "type": "ConceptClass",
+      "prefix": "cls",
+      "layer": "ontology",
+      "table": "mk_objects (seeded from lifecycle.json concept_classes)",
+      "schema": "concept_class.schema.json",
       "versioned": true
     }
   ],
@@ -962,6 +975,24 @@
       "name": "has_pronunciation",
       "basis": "Pronunciation Facet: a concept's governed pronunciation record",
       "inverse": "pronunciation_of"
+    },
+    {
+      "key": "classified_as",
+      "name": "classified_as",
+      "basis": "Lifecycle stage 2 (Ontology Mapping): a concept belongs to one or more of the eleven mappable classes (lifecycle.json concept_classes). Not followed by impact reach (non-propagating).",
+      "inverse": "class_of"
+    },
+    {
+      "key": "anchored_on",
+      "name": "anchored_on",
+      "basis": "Lifecycle stage 3: a canonical, exam-independent Objective is anchored on the concept it teaches (lifecycle.json objectives).",
+      "inverse": "anchors"
+    },
+    {
+      "key": "projects_objective",
+      "name": "projects_objective",
+      "basis": "Lifecycle stage 4 (Exam Mapping Layer): a BlueprintTopic of an exam projects onto a canonical objective; exams are projections of the corpus.",
+      "inverse": "projected_by"
     }
   ],
   "facet_model": {

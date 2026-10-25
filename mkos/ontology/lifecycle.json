@@ -1,0 +1,131 @@
+{
+  "id": "framework.lifecycle",
+  "type": "Framework",
+  "name": "MKOS Continuous Knowledge Lifecycle",
+  "version": "1.0.0",
+  "status": "current",
+  "created_date": "2026-10-24",
+  "updated_date": "2026-10-24",
+  "supersedes": null,
+  "replaced_by": null,
+  "source_attribution": [
+    "MKOS Continuous Knowledge Lifecycle Specification and the MKOS Constitutional Addendum (roadmap Phase 3.1, owner, 10/24/2026)",
+    "mkos/directives/mkos_constitution.md"
+  ],
+  "change_log": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-24",
+      "summary": "Step 1: lifecycle stages, the eleven mappable concept classes, canonical objectives, the relevance rule table and the exam projection."
+    }
+  ],
+  "doctrine": "No knowledge asset may stop at ingestion. Every source passes through every stage below as one workflow. Every stage is deterministic (rules only, no AI).",
+  "stages": [
+    { "key": "ingested", "spec_stage": 1, "name": "Source ingestion and metadata", "engine": "lifecycle.js stageIngested", "implemented": true },
+    { "key": "knowledge_objects", "spec_stage": 1, "name": "Knowledge objects generated", "engine": "lifecycle.js stageObjects", "implemented": true },
+    { "key": "ontology_mapped", "spec_stage": 2, "name": "Ontology mapping (eleven concept classes)", "engine": "lifecycle.js classifyConcepts", "implemented": true },
+    { "key": "relevance_mapped", "spec_stage": 3, "name": "Objective relevance graph", "engine": "relevance.js", "implemented": true },
+    { "key": "exam_projected", "spec_stage": 4, "name": "Exam projection", "engine": "relevance.js examProjection", "implemented": true },
+    { "key": "lesson_penetration", "spec_stage": 5, "name": "Lesson penetration score", "engine": null, "implemented": false },
+    { "key": "curriculum_penetration", "spec_stage": 5, "name": "Curriculum penetration", "engine": null, "implemented": false },
+    { "key": "confidence", "spec_stage": 8, "name": "Confidence recalculation (evidence, relevance, lesson)", "engine": null, "implemented": false },
+    { "key": "gaps", "spec_stage": 10, "name": "Coverage and gap analysis", "engine": null, "implemented": false }
+  ],
+  "orchestrator": {
+    "budget_share_max": 0.9,
+    "sources_per_run": 6,
+    "concept_batch": 30,
+    "objective_batch": 25,
+    "class_batch": 60,
+    "history_cycles_kept": 10,
+    "ingest_done_states": ["extracted", "indexed", "title_only", "skipped"],
+    "ingest_failed_states": ["failed"]
+  },
+  "metadata": {
+    "version": "1",
+    "review_date_title_patterns": ["\\b(?:reaffirmed|reviewed|review date|re-?affirmed)\\s*(?:in|:)?\\s*((?:19|20)\\d\\d(?:-\\d\\d(?:-\\d\\d)?)?)"],
+    "review_date_legacy_fields": ["review_date", "reviewed", "last_reviewed", "reaffirmed"],
+    "trial_token_pattern": "\\b[A-Z][A-Z0-9]{1,}(?:-[A-Z0-9]+)*\\b",
+    "trial_token_min_length": 3,
+    "trial_token_max_per_source": 60
+  },
+  "concept_classes": [
+    { "key": "disease", "name": "Disease concepts", "concept_types": ["disease", "pathophysiologic_process"] },
+    { "key": "syndrome", "name": "Clinical syndromes", "concept_types": ["syndrome", "symptom", "sign", "clinical_finding"] },
+    { "key": "procedure", "name": "Procedures", "concept_types": ["procedure"] },
+    { "key": "diagnostic", "name": "Diagnostics", "concept_types": ["laboratory_test", "diagnostic_test", "imaging_study", "score", "decision_tool", "classification"] },
+    { "key": "medication", "name": "Medications", "concept_types": ["medication"] },
+    { "key": "risk_factor", "name": "Risk factors", "concept_types": ["risk_factor"] },
+    { "key": "complication", "name": "Complications", "concept_types": [], "name_patterns": ["\\bcomplications?\\b", "-induced\\b", "\\btoxicity\\b", "\\badverse (?:effects?|events?|reactions?)\\b"], "as_source_of": ["complicates"] },
+    { "key": "biomarker", "name": "Biomarkers", "concept_types": ["biomarker"] },
+    { "key": "preventive", "name": "Preventive concepts", "concept_types": [], "name_patterns": ["\\bscreening\\b", "\\bvaccin", "\\bimmuniz", "\\bprophyla", "\\bprevention\\b", "\\bpreventive\\b", "\\bcounsel"], "recommended_by_source_classes": ["preventive_recommendations", "immunization_schedule"] },
+    { "key": "population", "name": "Population concepts", "concept_types": [], "name_patterns": ["\\bpregnan", "\\bolder adults?\\b", "\\belderly\\b", "\\bgeriatric", "\\bpediatric", "\\bchildren\\b", "\\badolescen", "\\binfants?\\b", "\\bneonat", "\\bpostmenopausal\\b", "\\bpostpartum\\b", "\\btransplant recipients?\\b", "\\bathletes?\\b", "\\bveterans?\\b", "\\bnursing home\\b", "\\bmen who have sex with men\\b"] },
+    { "key": "educational", "name": "Educational concepts", "concept_types": ["anatomical_structure", "physiologic_process"], "anchors": ["curriculum_node", "blueprint_topic"] }
+  ],
+  "class_edge_confidence": { "concept_type": 90, "rule": 70 },
+  "objectives": {
+    "id_prefix": "obj.c.",
+    "id_rule": "obj.c.<concept id without its leading 'c.'>: one canonical objective per concept, exam-independent, so any blueprint projects onto the same objective",
+    "objective_type": "canonical",
+    "name_template": "Master: {name}",
+    "criteria": {
+      "blueprint_anchor": true,
+      "curriculum_anchor": true,
+      "min_current_recommendations": 3
+    },
+    "anchor_relation": "anchored_on",
+    "projection_relation": "projects_objective"
+  },
+  "relevance": {
+    "version": "1",
+    "note": "Deterministic. Score of a knowledge object for a canonical objective = max over paths of (attachment factor of the object to a concept) x (product of hop weights from that concept to the objective's anchor concept), at most max_hops hops. The band is the band value nearest to the score (a tie goes to the lower band). Scores below min_score are pruned. No binary mapping and no small fan-out cap: an object relates to every objective that clears the threshold; max_per_object is a safety ceiling for the per-run budget only, keeping the highest scores.",
+    "bands": [
+      { "value": 0.0, "key": "not_relevant", "name": "Not Relevant" },
+      { "value": 0.1, "key": "remote", "name": "Remote Relevance" },
+      { "value": 0.25, "key": "peripheral", "name": "Peripheral Relevance" },
+      { "value": 0.5, "key": "supporting", "name": "Supporting Knowledge" },
+      { "value": 0.7, "key": "adjacent_core", "name": "Adjacent Core Knowledge" },
+      { "value": 0.85, "key": "high", "name": "High Relevance" },
+      { "value": 0.95, "key": "directly_tested", "name": "Directly Tested" },
+      { "value": 1.0, "key": "foundational", "name": "Foundational Objective" }
+    ],
+    "min_score": 0.1,
+    "max_hops": 2,
+    "max_per_object": 400,
+    "self": { "factor": 1.0, "why": "a concept is foundational to its own canonical objective" },
+    "hops": {
+      "is_a": 0.85,
+      "part_of": 0.85,
+      "complicates": 0.7,
+      "treats": 0.7,
+      "diagnoses": 0.7,
+      "causes": 0.7,
+      "predisposes_to": 0.7,
+      "contraindicates": 0.7,
+      "evaluates": 0.5,
+      "measures": 0.5,
+      "contributes_to": 0.5,
+      "requires": 0.5,
+      "prerequisite_of": 0.5,
+      "associated_with": 0.5,
+      "related_to": 0.25
+    },
+    "attachments": [
+      { "rel": "recommended_by", "object_is": "dst", "factor": 0.95, "why": "a recommendation about the concept" },
+      { "rel": "teaches", "object_is": "src", "factor": 0.95, "why": "an objective or educational object that teaches the concept" },
+      { "rel": "assesses", "object_is": "src", "factor": 0.95, "why": "an assessment objective on the concept" },
+      { "rel": "covers", "object_is": "src", "factor": 0.85, "why": "an educational object or source section covering the concept" },
+      { "rel": "supported_by", "object_is": "dst", "factor": 0.85, "why": "evidence supporting knowledge about the concept" }
+    ],
+    "via_recommendation": { "rel": "derived_from", "factor": 0.9, "why": "a claim, objective or teaching point derived from a recommendation about the concept" },
+    "object_types": ["Concept", "Recommendation", "Claim", "EvidenceObject", "EducationalObject", "Objective", "SourceSection"],
+    "excluded_governance": ["stopped", "rejected"],
+    "sweep_hours": 24
+  },
+  "exam_projection": {
+    "rule": "exam relevance(object, blueprint) = max over the object's objectives of (relevance score x topic weight), topic weight = blueprint objective priority_score / 100, over the blueprint topics that project onto that objective",
+    "stored": false,
+    "view": "mk_exam_relevance"
+  },
+  "non_propagating_relations": ["classified_as"]
+}

@@ -1,6 +1,8 @@
 # MKOS directives
 
-These are the owner's governing directives, kept verbatim. They run in this order, and each starts only when the one before has
+These are the owner's governing directives, kept verbatim. Above them all stands **the MKOS Constitution**
+(`mkos_constitution.md`, 2026-10-24): the corpus-first doctrines and the ten-stage Continuous Knowledge Lifecycle, binding on every
+directive below and on everything built later. They run in this order, and each starts only when the one before has
 done its job.
 
 | # | Directive | Status |

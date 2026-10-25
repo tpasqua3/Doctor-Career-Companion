@@ -16,7 +16,8 @@ const enc = new TextEncoder();
 const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)))].map((x) => x.toString(16).padStart(2, '0')).join('');
 // Content hash: everything except the envelope fields that change on every write.
 // classification and decomposition bookkeeping are derived values too (decomposition.json), like the scores.
-const VOLATILE = new Set(['version', 'updated', 'change_log', 'scores', 'confidence', 'created', 'classification', 'decomposition']);
+// source_metadata is a Source's derived Metadata Object (lifecycle.js, lifecycle stage 1): recomputed by rules, never a new version.
+const VOLATILE = new Set(['version', 'updated', 'change_log', 'scores', 'confidence', 'created', 'classification', 'decomposition', 'source_metadata']);
 // Timestamps inside provenance steps and facet items ('at') are not content: a rewrite that changes only them is not a new version.
 const canon = (v) => Array.isArray(v) ? '[' + v.map(canon).join(',') + ']' : v && typeof v === 'object' ? '{' + Object.keys(v).filter((k) => k !== 'at').sort().map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}' : JSON.stringify(v);
 export const contentHash = (o) => sha(canon(Object.fromEntries(Object.entries(o).filter(([k]) => !VOLATILE.has(k)))));

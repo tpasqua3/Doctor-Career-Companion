@@ -27,6 +27,14 @@ const confFor = (kind) => {
   c.overall_blueprint_confidence = clamp((c.source_confidence + c.classification_confidence + c.version_confidence + c.objective_extraction_confidence + c.weighting_confidence + c.priority_confidence) / 6);
   return c;
 };
+/* The family of a Blueprint object, from the blueprint registry data: its id is bp.<family>.<edition> (education.js importBlueprint),
+   a family the registry declared itself is kept in data.family_def; older objects fall back to their data or name. */
+export function familyOfBlueprint(bpId, bp = {}) {
+  const byId = [...B.families].sort((a, b) => b.id.length - a.id.length).find((f) => bpId.startsWith('bp.' + f.id + '.'));
+  if (byId) return byId.id;
+  if (bp.data && bp.data.family_def && bp.data.family_def.id) return bp.data.family_def.id;
+  return (bp.data && bp.data.family) || familyOf(bp.name || '').family;
+}
 const impPoints = (imp) => [...String(imp || '')].reduce((a, ch) => a + (B.importance_points[ch] ?? 0), 0);
 
 /* Project one Blueprint object (and its topics) into the registry tables. Resumable via prog (topics in id order).
@@ -34,8 +42,8 @@ const impPoints = (imp) => [...String(imp || '')].reduce((a, ch) => a + (B.impor
    (H 3, M 1, L 0 over four tasks; x0.75 if low frequency), or the share when ratings are absent; priority = 0.55 importance + 0.45 frequency. */
 export async function projectBlueprint(env, bpId, { prog = { at: 0 }, kind = 'owner_registry' } = {}) {
   const bp = await getObject(env, bpId); if (!bp) return { error: 'no blueprint ' + bpId };
-  const fam = bpId.includes('_lka') ? 'abim_im_lka' : bpId.includes('_cert') ? 'abim_im_cert' : (bp.data?.family || familyOf(bp.name).family);
-  const F = B.families.find((f) => f.id === fam) || {}, c = confFor(kind);
+  const fam = familyOfBlueprint(bpId, bp);
+  const F = B.families.find((f) => f.id === fam) || (bp.data && bp.data.family_def) || {}, c = confFor(kind);
   if (!prog.at) {
     await env.DB.prepare(`INSERT INTO mk_blueprint_registries (blueprint_id, blueprint_family, board_name, board_type, year, version, publication_date, effective_date, current_status, supersession_status, source_confidence, overall_blueprint_confidence, confidence, created_at, updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (blueprint_id) DO UPDATE SET current_status = excluded.current_status, supersession_status = excluded.supersession_status, version = excluded.version,

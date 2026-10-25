@@ -11,13 +11,29 @@
 // Drive confirms it (MD5 or size); refused or unconfirmed writes stay pending and are retried by the next run (mk_curfiles).
 // The library scan skips this folder (ingestion.json skip_folder_patterns), so generated material is never ingested as a source.
 import { J, nowIso, getSetting, setSetting } from './db.js';
+import { FRAMEWORK } from './framework.js';
 
 const FOLDER = 'application/vnd.google-apps.folder';
 const enc = new TextEncoder();
 const sha = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)))].map((x) => x.toString(16).padStart(2, '0')).join('');
 async function md5hex(text) { try { return [...new Uint8Array(await crypto.subtle.digest('MD5', enc.encode(text)))].map((b) => b.toString(16).padStart(2, '0')).join(''); } catch { return null; } }
 const safe = (s, n = 110) => String(s || '').replace(/[\\/:*?"<>|#\n\r\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n) || 'Untitled';
-const EXAMS = { cert: 'ABIM CERT', lka: 'LKA' };
+// The exams come from the blueprint registry data (blueprints.json families: exam_key, curriculum_folder, curriculum_folder_match,
+// counterpart), plus any family a registry declared itself (its Blueprint's data.family_def). ABIM: cert -> "ABIM CERT", lka -> "LKA".
+const FAMS = FRAMEWORK.frameworks.blueprints.families;
+export async function examsInUse(env) {
+  const ex = {};
+  for (const f of FAMS) if (f.exam_key && f.curriculum_folder) ex[f.exam_key] = { key: f.exam_key, family: f.id, folder: f.curriculum_folder, match: f.curriculum_folder_match ? new RegExp(f.curriculum_folder_match, 'i') : null, counterpart: f.counterpart || null };
+  const { results } = await env.DB.prepare("SELECT id, body FROM mk_objects WHERE type = 'Blueprint' AND status = 'current'").all();
+  for (const r of results) {
+    const b = J(r.body, {}) || {}, d = (b.data && b.data.family_def) || null, f = FAMS.find((x) => r.id.startsWith('bp.' + x.id + '.'));
+    const key = (f && (f.exam_key || f.id)) || (d && (d.exam_key || d.id)); if (!key || ex[key]) continue;
+    const name = (f && (f.curriculum_folder || f.board_name)) || (d && (d.curriculum_folder || d.board_name)) || key;
+    ex[key] = { key, family: (f || d).id, folder: name, match: null, counterpart: (f && f.counterpart) || null };
+  }
+  return ex;
+}
+const examOfTopic = (id) => String(id).split('.')[1] || '';
 
 let READY = false;
 async function init(env) {
@@ -27,7 +43,7 @@ async function init(env) {
 }
 
 /* The three folders by name under the library root (or MKOS_CURRICULUM_FOLDER), found once and remembered; discipline folders are made as needed. */
-async function folders(env, deps) {
+async function folders(env, deps, EX) {
   const F = J(await getSetting(env, 'cur_folders'), null) || { disc: {} };
   if (!F.root) {
     const root = deps.curriculumFolder || null;
@@ -40,11 +56,11 @@ async function folders(env, deps) {
       F.root = hit.id;
     }
   }
-  if (!F.cert || !F.lka) {
+  const missing = Object.values(EX).filter((e) => !F[e.key]);
+  if (missing.length) {
     const kids = await listAll(deps, F.root);
-    const find = (re) => (kids.find((f) => f.mimeType === FOLDER && re.test(f.title.trim())) || {}).id;
-    F.cert = F.cert || find(/^abim\s*cert(ification)?$/i) || await deps.mkdir(EXAMS.cert, F.root);
-    F.lka = F.lka || find(/^lka$/i) || await deps.mkdir(EXAMS.lka, F.root);
+    const find = (e) => (kids.find((f) => f.mimeType === FOLDER && (e.match ? e.match.test(f.title.trim()) : f.title.trim().toLowerCase() === safe(e.folder, 80).toLowerCase())) || {}).id;
+    for (const e of missing) F[e.key] = find(e) || await deps.mkdir(safe(e.folder, 80), F.root);
   }
   await setSetting(env, 'cur_folders', JSON.stringify(F));
   return F;
@@ -60,7 +76,8 @@ async function discFolder(env, deps, F, exam, name) {
 }
 
 /* Everything one objective file holds. */
-async function payload(env, bt, exam, counterpart) {
+async function payload(env, bt, exam, counterpart, EX) {
+  const label = (k) => (EX[k] ? EX[k].folder : k);
   const bp = await env.DB.prepare('SELECT priority_score, frequency_score, importance_score, confidence_score FROM mk_blueprint_objectives WHERE objective_id = ?').bind(bt.id).first().catch(() => null);
   const edges = (await env.DB.prepare("SELECT src, rel, dst FROM mk_edges WHERE status = 'current' AND ((dst = ? AND rel = 'mapped_to_blueprint') OR (src = ? AND rel IN ('develops','in_domain')))").bind(bt.id, bt.id).all()).results;
   const ids = [...new Set([...(bt.concepts || []), ...edges.map((e) => (e.dst === bt.id ? e.src : e.dst))])].slice(0, 90);
@@ -75,10 +92,10 @@ async function payload(env, bt, exam, counterpart) {
       tier: o.confidence_tier || (o.asset_confidence && o.asset_confidence.tier) || null, generation: o.generation || null, cites: o.cites || [], updated: o.updated, content: c ? J(c.content, null) : null });
   }
   return {
-    schema: 'mkos.board_objective/1', exam: EXAMS[exam], blueprint_id: bt.blueprint || null,
+    schema: 'mkos.board_objective/1', exam: label(exam), blueprint_id: bt.blueprint || null,
     objective: { id: bt.id, code: bt.code || null, name: bt.name, category: bt.category || null, subcategory: bt.subcategory || null, domain: bt.domain || null, importance: bt.importance || null,
       est_pct: bt.est_pct ?? null, low_frequency: !!bt.low_frequency, priority_score: bp ? bp.priority_score : null, frequency_score: bp ? bp.frequency_score : null, importance_score: bp ? bp.importance_score : null },
-    counterpart: counterpart ? { exam: EXAMS[exam === 'cert' ? 'lka' : 'cert'], id: counterpart.id, code: counterpart.code || null } : null,
+    counterpart: counterpart ? { exam: label(examOfTopic(counterpart.id)), id: counterpart.id, code: counterpart.code || null } : null,
     knowledge_objects: ko, edges: edges.map((e) => [e.src, e.rel, e.dst]), lessons: out,
     coverage: { lessons: out.length, best_tier: out.map((l) => l.tier).find((t) => t === 'durable') || out.map((l) => l.tier).find((t) => t === 'provisional') || out.map((l) => l.tier)[0] || null },
     note: 'Generated and maintained by MKOS (Doctor Career Companion). Lessons are AI-written teaching material checked by an independent accuracy review; they are not source documents and are not ingested as such.',
@@ -89,19 +106,25 @@ async function payload(env, bt, exam, counterpart) {
 export async function curSync(env, deps, { max = 10 } = {}) {
   await init(env);
   if (!deps.upload || !deps.list || !deps.mkdir) return { skipped: 'Drive is not connected' };
-  const F = await folders(env, deps);
-  const cert = (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'BlueprintTopic' AND status = 'current' AND (id LIKE 'bpt.cert.%' OR id LIKE 'bpt.lka.%')").all()).results.map((r) => J(r.body, {}));
-  const byCode = { cert: {}, lka: {} }; for (const b of cert) byCode[b.id.startsWith('bpt.cert.') ? 'cert' : 'lka'][b.code] = b;
+  const EX = await examsInUse(env), F = await folders(env, deps, EX);
+  const cert = (await env.DB.prepare("SELECT id, body FROM mk_objects WHERE type = 'BlueprintTopic' AND status = 'current'").all()).results.filter((r) => EX[examOfTopic(r.id)]).map((r) => J(r.body, {}));
+  const byCode = Object.fromEntries(Object.keys(EX).map((k) => [k, {}])); for (const b of cert) byCode[examOfTopic(b.id)][b.code] = b;
+  // Counterparts (an objective on two exams), from the family data: cert topics name their LKA twin in data.lka_ref.
+  const pairs = Object.values(EX).filter((e) => e.counterpart && EX[e.counterpart.exam_key]).map((e) => ({ from: e.key, to: e.counterpart.exam_key, field: e.counterpart.ref_field }));
+  const twin = (b, exam) => { for (const p of pairs) {
+    if (p.from === exam) return b.data && b.data[p.field] ? byCode[p.to][b.data[p.field]] || null : null;
+    if (p.to === exam) return Object.values(byCode[p.from]).find((c) => c.data && c.data[p.field] === b.code) || null; }
+    return null; };
   const withLessons = new Set((await env.DB.prepare("SELECT DISTINCT json_extract(body, '$.objective') AS o FROM mk_objects WHERE type = 'EducationalAsset' AND status = 'current' AND id LIKE 'ea.s.%' AND json_extract(body, '$.objective') IS NOT NULL").all()).results.map((r) => r.o));
   const known = Object.fromEntries((await env.DB.prepare('SELECT key, file_id, hash, state, folder FROM mk_curfiles').all()).results.map((r) => [r.key, r]));
   // Order: pending retries, then objectives with lessons, then the rest (so the curriculum's skeleton fills in as runs allow).
-  const items = cert.map((b) => { const exam = b.id.startsWith('bpt.cert.') ? 'cert' : 'lka'; const cp = exam === 'cert' ? (b.data && b.data.lka_ref ? byCode.lka[b.data.lka_ref] : null) : Object.values(byCode.cert).find((c) => c.data && c.data.lka_ref === b.code) || null;
+  const items = cert.map((b) => { const exam = examOfTopic(b.id); const cp = twin(b, exam);
     const key = exam + ':' + b.id, k = known[key]; return { b, exam, cp, key, k, rank: k && k.state !== 'synced' ? 0 : withLessons.has(b.id) || (cp && withLessons.has(cp.id)) ? 1 : k ? 3 : 2 }; })
     .sort((x, y) => x.rank - y.rank);
   let written = 0, same = 0, failed = 0, checked = 0;
   for (const it of items) {
     if (written + failed >= max || checked >= max * 12) break; checked++;
-    const body = await payload(env, it.b, it.exam, it.cp);
+    const body = await payload(env, it.b, it.exam, it.cp, EX);
     const text = JSON.stringify(body, null, 1), hash = (await sha(text)).slice(0, 24);
     if (it.k && it.k.hash === hash && it.k.state === 'synced') { same++; continue; }
     try {
@@ -124,7 +147,8 @@ export async function curSync(env, deps, { max = 10 } = {}) {
 export async function curStatus(env) {
   await init(env);
   const by = (await env.DB.prepare("SELECT substr(key, 1, instr(key, ':') - 1) AS exam, state, COUNT(*) AS n FROM mk_curfiles GROUP BY exam, state").all()).results;
-  const total = ((await env.DB.prepare("SELECT COUNT(*) AS n FROM mk_objects WHERE type = 'BlueprintTopic' AND status = 'current' AND (id LIKE 'bpt.cert.%' OR id LIKE 'bpt.lka.%')").first()) || {}).n || 0;
+  const EX = await examsInUse(env);
+  const total = (await env.DB.prepare("SELECT id FROM mk_objects WHERE type = 'BlueprintTopic' AND status = 'current'").all()).results.filter((r) => EX[examOfTopic(r.id)]).length;
   const errs = (await env.DB.prepare("SELECT key, detail FROM mk_curfiles WHERE state != 'synced' LIMIT 10").all()).results;
   return { objectives: total, files: by, pending: errs, folders: J(await getSetting(env, 'cur_folders'), null) };
 }

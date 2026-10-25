@@ -12,6 +12,7 @@
 //   graph/edges_<bucket>.json                                   the knowledge graph (typed relationships), in stable buckets
 //   assets/<asset kind>/<specialty>.json                        shared educational assets (lessons, questions, flashcards) with content
 //   registries/sources_registry.json, blueprints.json           readable sources registry; blueprint execution tables and mappings
+//   registries/lifecycle.json                                   every source's Continuous Knowledge Lifecycle record (stages, history)
 //   registries/guidelines_registry_vN_MKOS_STAGED.json          the compatibility registry (cutover step 2)
 //   governance/events_YYYY-MM.json, audit_YYYY-MM.json, reviews.json, reconciliation.json
 //   config/configuration.json                                   configuration: the AI order of operations (built-in and the owner's
@@ -50,7 +51,8 @@ registry_data/   every knowledge object: sources, guidelines, concepts, recommen
 history/         every version of every object (version history).
 graph/           the knowledge graph: typed relationships between all of the above.
 assets/          the shared library of educational assets (lessons, questions, flashcards) with their content.
-registries/      the readable sources registry, the board blueprint tables, and the staged compatibility registry.
+registries/      the readable sources registry, the board blueprint tables, the staged compatibility registry, and each source's
+                 knowledge lifecycle record (lifecycle.json).
 governance/      change events, audit records, reviews and the daily reconciliation report.
 snapshot/        one bundled file holding the knowledge base, as a restore point.
 ontology/        the ontology, frameworks and schemas the knowledge base follows.
@@ -70,7 +72,8 @@ const BUCKET = "CASE WHEN lower(substr(src, -1)) GLOB '[a-z0-9]' THEN lower(subs
 // Operational state (cursors, leases, counters, reports persisted elsewhere) is not configuration and stays in D1. Everything else in
 // mk_settings and the app's settings table is configuration and persists by default, so a setting added later is covered without a
 // change here. Credentials are never written to Drive.
-const STATE_KEYS = /^(tick|tick_lease|scan|scan_last_complete|ai_budget|drill_prog|drill_report|learner_watch|mirror_errors|reconcile_day|reconcile_report|snapshot_day|pron_gen_day|pron_sync|pron_sync_t|persist_lease|restore_prog)$/;
+// lc_*: the lifecycle orchestrator's cursors and pass state (lifecycle.js), run state like the scan cursor.
+const STATE_KEYS = /^(tick|tick_lease|scan|scan_last_complete|ai_budget|drill_prog|drill_report|learner_watch|mirror_errors|reconcile_day|reconcile_report|snapshot_day|pron_gen_day|pron_sync|pron_sync_t|persist_lease|restore_prog|lc_[a-z_]+)$/;
 const CREDENTIAL = /^google_|token|secret|refresh|password|credential|api_?key/i;
 // Settings that change as the engine runs; a restore drill compares only the rest (they can move between the persist and the compare).
 export const CONFIG_MOVING = /^(bootstrap|paused|framework_hash|legacy_registry_check)$/;
@@ -106,6 +109,9 @@ async function fingerprints(env, deps) {
     out.push({ key: `assets/${r.k}/${spec2(r.s)}`, fp: `${r.n}|${r.u}|${r.l}|${r.sc}`, n: r.n });
   const bp = await env.DB.prepare("SELECT (SELECT COUNT(*) || '|' || COALESCE(MAX(version), '') FROM mk_blueprint_registries) || '/' || (SELECT COUNT(*) FROM mk_blueprint_domains) || '/' || (SELECT COUNT(*) FROM mk_blueprint_objectives) || '/' || (SELECT COUNT(*) || '|' || COALESCE(SUM(priority_score), 0) FROM mk_blueprint_concept_mappings) || '/' || (SELECT COUNT(*) FROM mk_blueprint_asset_mappings) AS fp").first();
   out.push({ key: 'registries/blueprints', fp: bp ? bp.fp : '' });
+  // The lifecycle records (durable: a source's lifecycle history is not derivable). The relevance graph is derived and not written.
+  const lc = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM mk_lifecycle').first();
+  out.push({ key: 'registries/lifecycle', fp: lc && lc.n ? `${lc.n}|${lc.u}` : '', n: lc ? lc.n : 0 });
   const month = nowIso().slice(0, 7);
   const ev = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(updated) AS u FROM mk_events WHERE created LIKE ?').bind(month + '%').first();
   out.push({ key: 'governance/events_' + month, fp: `${ev.n}|${ev.u}` });
@@ -147,6 +153,10 @@ async function content(env, key, deps) {
     const doc = { kind: 'mkos-blueprint-tables', registries: await t('mk_blueprint_registries'), domains: await t('mk_blueprint_domains'), objectives: await t('mk_blueprint_objectives'),
       concept_mappings: await t('mk_blueprint_concept_mappings'), asset_mappings: await t('mk_blueprint_asset_mappings') };
     return { name: 'blueprints.json', folder: 'registries', text: JSON.stringify(doc), n: doc.concept_mappings.length };
+  }
+  if (key === 'registries/lifecycle') {
+    const rows = (await env.DB.prepare('SELECT * FROM mk_lifecycle ORDER BY source_id').all()).results.map((r) => ({ ...r, stages_json: J(r.stages_json, {}) }));
+    return { name: 'lifecycle.json', folder: 'registries', text: JSON.stringify({ kind: 'mkos-lifecycle', count: rows.length, records: rows }), n: rows.length };
   }
   let m = /^governance\/(events|audit)_(\d{4}-\d{2})$/.exec(key);
   if (m) {

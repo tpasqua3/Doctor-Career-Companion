@@ -1,5 +1,5 @@
 {
-  "built": "2026-10-24T22:52:37.075Z",
+  "built": "2026-10-25T03:58:48.586Z",
   "errors": 0,
   "warnings": [],
   "counts": {
@@ -8,26 +8,27 @@
     "facets": 263,
     "concept_types": 21,
     "relationships": 16,
-    "structural_relationships": 16,
-    "object_types": 18,
-    "schemas": 26,
+    "structural_relationships": 19,
+    "object_types": 19,
+    "schemas": 27,
     "specialties": 27,
-    "source_classes": 25,
+    "source_classes": 28,
     "competencies": 9,
     "layers": 11,
     "stop_the_line_conditions": 8
   },
-  "framework_hash": "868b86993f9c99d0",
+  "framework_hash": "e2865d320163cdb1",
   "versions": {
     "assets": "1.1.1",
-    "blueprints": "1.0.0",
+    "blueprints": "1.1.0",
     "competencies": "1.0.0",
     "decomposition": "1.1.0",
     "ingestion": "1.0.2",
-    "ontology": "1.1.0",
+    "lifecycle": "1.0.0",
+    "ontology": "1.2.0",
     "pronunciation": "1.0.0",
     "scoring": "1.0.0",
-    "source_classes": "1.0.0",
+    "source_classes": "1.1.0",
     "specialties": "1.0.0"
   }
 }

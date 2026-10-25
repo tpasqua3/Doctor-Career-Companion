@@ -84,6 +84,21 @@ export const TABLES = [
   `CREATE TABLE IF NOT EXISTS mk_asset_store (asset_id TEXT NOT NULL, version TEXT NOT NULL, content TEXT NOT NULL, bytes INTEGER NOT NULL, at TEXT NOT NULL, PRIMARY KEY (asset_id, version))`,
   `CREATE TABLE IF NOT EXISTS mk_asset_usage (asset_id TEXT NOT NULL, user_id TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (asset_id, user_id))`,
   `CREATE INDEX IF NOT EXISTS mk_asset_usage_user ON mk_asset_usage (user_id, kind)`,
+  // Continuous Knowledge Lifecycle (lifecycle.js, mkos/ontology/lifecycle.json): one record per source of the stages it has reached.
+  // Durable: mirrored to Drive (registries/lifecycle.json) and restored. stages_json holds {stage: {state, at, v, detail}} and the
+  // history of earlier cycles (a source re-enters the lifecycle when its content version changes).
+  `CREATE TABLE IF NOT EXISTS mk_lifecycle (source_id TEXT PRIMARY KEY, stage TEXT NOT NULL, stages_json TEXT NOT NULL, status TEXT NOT NULL, source_v TEXT,
+     cycle INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS mk_lifecycle_status ON mk_lifecycle (status, updated_at)`,
+  // The weighted relevance graph (relevance.js): knowledge object -> canonical objective, score 0..1 with its band and the path that
+  // gave it. Derived: rebuilt by the relevance sweep from objects, edges and the rule table (never mirrored; recomputed after a restore).
+  `CREATE TABLE IF NOT EXISTS mk_relevance (object_id TEXT NOT NULL, objective_id TEXT NOT NULL, score REAL NOT NULL, band TEXT NOT NULL, basis_json TEXT NOT NULL,
+     computed_v TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (object_id, objective_id))`,
+  `CREATE INDEX IF NOT EXISTS mk_relevance_objective ON mk_relevance (objective_id, score DESC)`,
+  `CREATE INDEX IF NOT EXISTS mk_relevance_v ON mk_relevance (computed_v)`,
+  // Which concepts the relevance sweep has computed at which rules version and sweep (derived, like mk_relevance).
+  `CREATE TABLE IF NOT EXISTS mk_relevance_marks (object_id TEXT PRIMARY KEY, computed_v TEXT NOT NULL, n INTEGER NOT NULL, at TEXT NOT NULL)`,
+  // The exam projection view mk_exam_relevance is created by relevance.js (best effort: the projection is a function first).
 ];
 
 let ready = '';

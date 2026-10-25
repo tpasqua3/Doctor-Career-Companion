@@ -2,10 +2,10 @@
   "id": "framework.source_classes",
   "type": "Framework",
   "name": "Source classes",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "current",
   "created_date": "2026-10-17",
-  "updated_date": "2026-10-17",
+  "updated_date": "2026-10-24",
   "supersedes": null,
   "replaced_by": null,
   "source_attribution": [
@@ -17,6 +17,11 @@
       "version": "1.0.0",
       "date": "2026-10-17",
       "summary": "Initial source classes mapped onto the spec's SOURCE TYPES and AUTHORITY HIERARCHY."
+    },
+    {
+      "version": "1.1.0",
+      "date": "2026-10-24",
+      "summary": "Lifecycle stage 1: government guidance, systematic review and meta-analysis classes; landmark trials recognised. classification_rules refine the base classification only where they are more specific (refines)."
     }
   ],
   "note": "Every Source is classified into one class. authority_tier names an entry of ontology.authority_hierarchy; base_authority is the authority_score before freshness/supersession adjustment. copyright governs storage: 'licensed_no_verbatim' content (MKSAP, textbooks, question banks) is indexed and abstracted only — no verbatim text, no question stems — and never leaves the private store (D1 + the owner's Drive), never the repository. 'publisher_copyright_paraphrase' sources are paraphrased and cited, never reproduced (owner rule 7 of the registry precedence rules).",
@@ -130,8 +135,35 @@
       "extraction_depth": "claims"
     },
     {
+      "key": "government_guidance",
+      "name": "Government guidance (CDC, NIH, FDA, CMS, AHRQ, WHO, NICE, VA/DoD, HHS)",
+      "spec_source_type": "Guidelines",
+      "authority_tier": "Current Guideline",
+      "base_authority": 96,
+      "copyright": "public_domain_or_open",
+      "extraction_depth": "recommendations"
+    },
+    {
+      "key": "systematic_review",
+      "name": "Systematic review",
+      "spec_source_type": "Review Articles",
+      "authority_tier": "Supporting Evidence",
+      "base_authority": 82,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "evidence"
+    },
+    {
+      "key": "meta_analysis",
+      "name": "Meta-analysis",
+      "spec_source_type": "Review Articles",
+      "authority_tier": "Supporting Evidence",
+      "base_authority": 85,
+      "copyright": "publisher_copyright_paraphrase",
+      "extraction_depth": "evidence"
+    },
+    {
       "key": "landmark_trial",
-      "name": "Clinical trial report",
+      "name": "Landmark or clinical trial report",
       "spec_source_type": "Review Articles",
       "authority_tier": "Landmark Trial",
       "base_authority": 80,
@@ -255,5 +287,87 @@
       "copyright": "varies",
       "extraction_depth": "index_only"
     }
-  ]
+  ],
+  "classification_rules": {
+    "note": "Applied after the base rules of ingest.js classify, in this order. A rule changes the base class only when the base class is in its refines list (the new rule is more specific). Patterns are regular expressions over the title (title_patterns, case-insensitive; title_patterns_cs, case-sensitive, for acronyms) or each folder name of the path (path_patterns, case-insensitive); a rule matches when any pattern matches. A source already classified is reclassified only by a refinement, and every reclassification is logged (audit source_reclassified).",
+    "rules": [
+      {
+        "class": "meta_analysis",
+        "refines": [
+          "review_article",
+          "research_article",
+          "unclassified"
+        ],
+        "title_patterns": [
+          "\\bmeta-?analys[ie]s\\b",
+          "\\bnetwork meta-?analys"
+        ],
+        "path_patterns": [
+          "meta-?analys"
+        ]
+      },
+      {
+        "class": "systematic_review",
+        "refines": [
+          "review_article",
+          "research_article",
+          "unclassified"
+        ],
+        "title_patterns": [
+          "\\bsystematic (?:literature )?review\\b",
+          "\\bumbrella review\\b",
+          "\\bcochrane\\b"
+        ],
+        "path_patterns": [
+          "systematic reviews?"
+        ]
+      },
+      {
+        "class": "landmark_trial",
+        "refines": [
+          "research_article",
+          "unclassified"
+        ],
+        "title_patterns": [
+          "\\brandomi[sz]ed,? (?:double-blind,? |open-label,? |placebo-controlled,? |controlled |clinical )*trial\\b",
+          "\\btrial investigators\\b"
+        ],
+        "path_patterns": [
+          "landmark",
+          "\\btrials?\\b"
+        ],
+        "title_patterns_cs": [
+          "\\b[A-Z][A-Z0-9-]{2,}\\b[^A-Za-z]{0,3}[Tt]rials?\\b"
+        ]
+      },
+      {
+        "class": "government_guidance",
+        "refines": [
+          "clinical_practice_guideline",
+          "protocol",
+          "unclassified"
+        ],
+        "title_patterns": [
+          "centers for disease control",
+          "national institutes of health",
+          "food and drug administration",
+          "department of (?:health|veterans affairs|defense)",
+          "world health organization",
+          "agency for healthcare research",
+          "public health service",
+          "dietary guidelines for americans",
+          "national heart, lung"
+        ],
+        "path_patterns": [
+          "\\bgovernment\\b",
+          "\\bpublic health\\b",
+          "^cdc$",
+          "^nih$"
+        ],
+        "title_patterns_cs": [
+          "\\b(?:CDC|NIH|NHLBI|NIDDK|FDA|CMS|AHRQ|HHS|VA/DoD|VA-DoD|NICE|WHO)\\b"
+        ]
+      }
+    ]
+  }
 }

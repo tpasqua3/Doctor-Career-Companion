@@ -54,6 +54,35 @@ const comps = new Set(fw.competencies.competencies.map((c) => c.id));
 for (const [k, v] of Object.entries(fw.competencies.facet_to_competency)) { if (!groups.has(k)) err("competencies.facet_to_competency", `unknown facet group ${k}`); if (!comps.has(v)) err("competencies.facet_to_competency", `unknown competency ${v}`); }
 for (const [k, list] of Object.entries(fw.competencies.task_type_map)) for (const v of list) if (!comps.has(v)) err("competencies.task_type_map", `${k}: unknown ${v}`);
 
+// The Continuous Knowledge Lifecycle (lifecycle.json): stages, classes, relevance rules and exam data refer only to declared things.
+{
+  const L = fw.lifecycle;
+  if (!L) err("mkos/ontology", "missing lifecycle.json");
+  else {
+    uniq(L.stages, "key", "lifecycle.stages"); uniq(L.concept_classes, "key", "lifecycle.concept_classes");
+    if (L.concept_classes.length !== 11) err("lifecycle.concept_classes", `the spec maps to 11 classes, found ${L.concept_classes.length}`);
+    for (const c of L.concept_classes) { for (const t of c.concept_types || []) if (!ctypes.has(t)) err("lifecycle.concept_classes", `${c.key}: unknown concept type ${t}`);
+      for (const r of c.as_source_of || []) if (!relKeys.has(r)) err("lifecycle.concept_classes", `${c.key}: undeclared relationship ${r}`);
+      for (const p of c.name_patterns || []) { try { new RegExp(p, "i"); } catch (e) { err("lifecycle.concept_classes", `${c.key}: bad pattern ${p}`); } } }
+    const typed = new Set(L.concept_classes.flatMap((c) => c.concept_types || []));
+    for (const t of ctypes) if (!typed.has(t) && !["guideline", "recommendation", "evidence_object"].includes(t)) warn("lifecycle.concept_classes", `concept type ${t} has no class by type`);
+    const R = L.relevance;
+    for (const r of [...Object.keys(R.hops), ...R.attachments.map((a) => a.rel), R.via_recommendation.rel, L.objectives.anchor_relation, L.objectives.projection_relation, ...L.non_propagating_relations]) if (!relKeys.has(r)) err("lifecycle.relevance", `undeclared relationship ${r}`);
+    if (Object.keys(R.hops).length > 15) err("lifecycle.relevance.hops", "at most 15 hop relations (D1 bound-parameter budget)");
+    for (const w of [...Object.values(R.hops), ...R.attachments.map((a) => a.factor), R.via_recommendation.factor, R.min_score]) if (!(w > 0 && w <= 1)) err("lifecycle.relevance", `weight ${w} outside (0, 1]`);
+    const bv = R.bands.map((b) => b.value); if (JSON.stringify(bv) !== JSON.stringify([0, 0.1, 0.25, 0.5, 0.7, 0.85, 0.95, 1])) err("lifecycle.relevance.bands", "bands must be the spec's 0, 0.10, 0.25, 0.50, 0.70, 0.85, 0.95, 1.00");
+    for (const t of R.object_types) if (!O.object_types.some((x) => x.type === t) && t !== "SourceSection") err("lifecycle.relevance.object_types", `unknown type ${t}`);
+  }
+  const keys = new Set(fw.source_classes.classes.map((c) => c.key));
+  for (const r of (fw.source_classes.classification_rules || {}).rules || []) {
+    if (!keys.has(r.class)) err("source_classes.classification_rules", `unknown class ${r.class}`);
+    for (const k of r.refines) if (!keys.has(k)) err("source_classes.classification_rules", `${r.class} refines unknown class ${k}`);
+    for (const p of [...(r.title_patterns || []), ...(r.title_patterns_cs || []), ...(r.path_patterns || [])]) { try { new RegExp(p); } catch (e) { err("source_classes.classification_rules", `${r.class}: bad pattern ${p}`); } }
+  }
+  const ek = new Set(); for (const f of fw.blueprints.families) if (f.exam_key) { if (ek.has(f.exam_key)) err("blueprints.families", `duplicate exam_key ${f.exam_key}`); ek.add(f.exam_key); }
+  for (const f of fw.blueprints.families) if (f.counterpart && !ek.has(f.counterpart.exam_key)) err("blueprints.families", `${f.id}: counterpart ${f.counterpart.exam_key} is no exam_key`);
+}
+
 // Self-test: a minimal object of each envelope-based schema validates; a broken one does not.
 const now = new Date().toISOString(), prov = [{ source_id: "src.selftest", method: "derived", at: now }];
 const base = { version: "1.0.0", status: "current", governance_status: "validated", created: now, updated: now, provenance: prov };

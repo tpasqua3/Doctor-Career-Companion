@@ -25,6 +25,7 @@ import { classifyStep } from './classify.js';
 import { reconcileStep, reconcileDue } from './reconcile.js';
 import { importOwnerAssets } from './assets.js';
 import { restoreStep } from './restore.js';
+import { lifecycleStep } from './lifecycle.js';
 
 export class BudgetSpent extends Error { constructor() { super('MKOS query budget spent for this run'); this.budget = true; } }
 // Only Cloudflare's own per-invocation limits count as a platform cap (a Google rate limit is an ordinary, retried error).
@@ -48,7 +49,10 @@ export function metered(env, max) {
   return { env: { ...env, DB }, meter: m, tick };
 }
 
-const FIND = { legacy: "title contains 'guidelines_registry' and title contains 'CURRENT'", cert: "title contains 'CERT_blueprint_registry' and title contains 'CURRENT'", lka: "title contains 'LKA_blueprint_registry' and title contains 'CURRENT'" };
+// The registries the bootstrap imports: the legacy guideline registry, then every blueprint family whose registry file the blueprint
+// data names (blueprints.json registry_find), under its exam key (ABIM: cert, lka).
+const BP_FAMS = FRAMEWORK.frameworks.blueprints.families.filter((f) => f.registry_find && f.exam_key);
+const FIND = { legacy: "title contains 'guidelines_registry' and title contains 'CURRENT'", ...Object.fromEntries(BP_FAMS.map((f) => [f.exam_key, f.registry_find])) };
 
 // Bootstrap, in dependency order: framework objects -> legacy registry -> blueprints -> curriculum. Each step resumable via its prog.
 async function bootstrap(env, deps, B) {
@@ -56,7 +60,7 @@ async function bootstrap(env, deps, B) {
   const save = () => setSetting(env, 'bootstrap', JSON.stringify(st));
   try {
     if (!st.framework) { st.framework_prog = st.framework_prog || { at: 0 }; try { await seedFramework(env, { prog: st.framework_prog }); st.framework = nowIso(); } finally { await save(); } }
-    for (const [key, kind] of [['legacy', 'legacy'], ['cert', 'cert'], ['lka', 'lka']]) {
+    for (const [key, kind] of [['legacy', 'legacy'], ...BP_FAMS.map((f) => [f.exam_key, f.exam_key])]) {
       if (st[key] && st[key].done && !(st[key].missing && Date.now() - Date.parse(st[key].done) > 864e5)) continue;   // a missing file is looked for again daily
       if (st[key] && st[key].retry_after && Date.now() < st[key].retry_after) continue;
       if (!st[key] || st[key].missing) st[key] = { prog: { at: 0 } };
@@ -284,6 +288,10 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
       if (job.kind === 'extract' && ++extracts >= 4) break;
       if (!finished && job.kind === 'extract') await env.DB.prepare('UPDATE mk_jobs SET not_before = ? WHERE id = ?').bind(Date.now() + 60e3, job.id).run();
     }
+    // The Continuous Knowledge Lifecycle (lifecycle.js): carry every source through its stages with what is left of this run's budget
+    // (rules only; at most lifecycle.json orchestrator.budget_share_max of the run).
+    if (booted && (await getSetting(env, 'lifecycle')) !== 'off') { const lc = await lifecycleStep(env, deps, { meter });
+      report.steps.push(`lifecycle +${lc.entered} entered, ${lc.advanced} stages, ${lc.classes} classified, ${lc.objectives} objectives, ${lc.relevance} relevance rows`); }
   } catch (e) {
     if (e.budget) report.steps.push('budget spent');
     else if (PLATFORM.test(String(e.message || e))) { platformHit = true; report.steps.push('platform limit: ' + e.message); }

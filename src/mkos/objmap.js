@@ -8,11 +8,13 @@
 //   Claim / teaching point / objective / pearl  <- the recommendation it derives   │
 //   Educational object / source section  <- the concepts it covers                 │
 //   Objective        <- the concepts it teaches or assesses                        │
-//   Concept          <- a mapped concept it treats, evaluates or is associated with┘
+//   Concept          <- a mapped concept it treats, evaluates, complicates or is associated with┘
 //   Unmapped concepts and source sections  <- the objective whose name matches closely (trigram similarity), when nothing else maps them
 //
 // A concept that maps to more than FANOUT objectives (a broad concept such as "hypertension" across many objectives) is not used as a
-// bridge, so a narrow recommendation is never spread across a whole discipline.
+// bridge, so a narrow recommendation is never spread across a whole discipline. (The weighted, exam-independent relevance graph of the
+// Continuous Knowledge Lifecycle is relevance.js; these edges stay the curriculum's own mapping.) Canonical objectives (obj.c.*) are
+// projections of concepts, not knowledge objects of their own, so the mapping status leaves them out.
 import { J, nowIso, getSetting, setSetting } from './db.js';
 
 const FANOUT = 6, CONC_SIM = 0.82, SECT_SIM = 0.8;
@@ -27,7 +29,7 @@ const TAIL = `) x WHERE x.s IS NOT NULL AND x.t IS NOT NULL AND x.s != x.t AND N
 
 // The concept-path passes, in order (each builds on the ones before it).
 const PASSES = [
-  ['concept_neighbor', 55, `SELECT n.src AS s, b.t FROM mk_edges n JOIN (${BRIDGE}) b ON b.c = n.dst WHERE n.status = 'current' AND n.rel IN ('treats','evaluates','associated_with','contributes_to','complication_of','causes','diagnoses')
+  ['concept_neighbor', 55, `SELECT n.src AS s, b.t FROM mk_edges n JOIN (${BRIDGE}) b ON b.c = n.dst WHERE n.status = 'current' AND n.rel IN ('treats','evaluates','associated_with','contributes_to','complicates','causes','diagnoses')
      AND n.src LIKE 'c.%' AND NOT EXISTS (SELECT 1 FROM mk_edges z WHERE z.src = n.src AND z.rel = 'mapped_to_blueprint')`],
   ['recommendation_concept', 80, `SELECT r.dst AS s, b.t FROM mk_edges r JOIN (${BRIDGE}) b ON b.c = r.src WHERE r.rel = 'recommended_by' AND r.status = 'current' AND r.dst LIKE 'rec.%'`],
   ['objective_concept', 80, `SELECT r.src AS s, b.t FROM mk_edges r JOIN (${BRIDGE}) b ON b.c = r.dst WHERE r.rel IN ('teaches','assesses') AND r.status = 'current' AND r.src LIKE 'obj.%'`],
@@ -74,6 +76,6 @@ export async function mapObjectives(env, { slice = 400 } = {}) {
 /* objective_mapping_status: how much of the knowledge base maps to a board objective, by type. */
 export async function mappingStatus(env) {
   const by = (await env.DB.prepare(`SELECT o.type, COUNT(*) AS total, SUM(CASE WHEN EXISTS (SELECT 1 FROM mk_edges e WHERE e.src = o.id AND e.rel = 'mapped_to_blueprint' AND e.status = 'current') THEN 1 ELSE 0 END) AS mapped
-    FROM mk_objects o WHERE o.status IN ('current','modified') AND o.type IN ('Recommendation','Claim','Objective','EducationalObject','Concept','SourceSection') GROUP BY o.type`).all()).results;
+    FROM mk_objects o WHERE o.status IN ('current','modified') AND o.type IN ('Recommendation','Claim','Objective','EducationalObject','Concept','SourceSection') AND o.id NOT LIKE 'obj.c.%' GROUP BY o.type`).all()).results;
   return { by_type: by.map((r) => ({ ...r, pct: r.total ? Math.round(1000 * r.mapped / r.total) / 10 : 0 })), progress: J(await getSetting(env, 'objmap_prog'), null) };
 }

@@ -34,21 +34,35 @@ export function guessType(name) {
   return 'disease';
 }
 
-/* Import a blueprint registry (the owner's ABIM_IM_<EXAM>_blueprint_registry JSON). exam: 'cert' | 'lka'. Idempotent; a new edition
-   supersedes the previous edition's Blueprint object and its topics keep their concept links. */
+/* The exam family a registry belongs to, from the blueprint registry data (blueprints.json families, or the registry's own
+   blueprint_family / board_name / board_type for an exam not listed there), so a future exam needs only its blueprint.
+   exam: an exam key ('cert', 'lka'), a family id, or null (then the registry names it). */
+export function examFamily(exam, reg = {}) {
+  const fams = F.blueprints.families;
+  const f = fams.find((x) => x.exam_key && x.exam_key === exam) || fams.find((x) => x.id === exam) || (reg.blueprint_family && fams.find((x) => x.id === reg.blueprint_family));
+  if (f) return { ...f, exam_key: f.exam_key || f.id, declared: true };
+  const id = String(reg.blueprint_family || exam || '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  return { id, exam_key: String(reg.exam_key || id).toLowerCase().replace(/[^a-z0-9_]/g, '_'), board_name: reg.board_name || id, board_type: reg.board_type || '', blueprint_name: reg.board_name ? reg.board_name + ' blueprint' : null,
+    curriculum_folder: reg.curriculum_folder || null, specialty: reg.specialty || null, declared: false };
+}
+
+/* Import a blueprint registry (the owner's ABIM_IM_<EXAM>_blueprint_registry JSON, or any board's registry). exam: 'cert' | 'lka' | a
+   family id (examFamily). Idempotent; a new edition supersedes the previous edition's Blueprint object and its topics keep their concept
+   links. Exam data stays in the projection (Blueprint, BlueprintTopic, the blueprint tables): concept bodies get no new board fields. */
 export async function importBlueprint(env, reg, exam, { actor = 'blueprint_import', registryFileId = '', prog = { at: 0 } } = {}) {
-  const from = prog.at || 0;
-  const ev = prog.ev || (prog.ev = await event(env, 'blueprint_changed', 'bp.abim_im_' + exam, { edition: reg.blueprint_edition, file: registryFileId }));
-  const srcId = reg.source_document?.drive_file_id ? 'src.' + reg.source_document.drive_file_id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40) : 'src.blueprint_registry_' + exam;
-  const bpId = 'bp.abim_im_' + exam + '.' + slug(reg.blueprint_edition || 'edition', 20);
+  const from = prog.at || 0, fam = examFamily(exam, reg), key = fam.exam_key, base = 'bp.' + fam.id;
+  const ev = prog.ev || (prog.ev = await event(env, 'blueprint_changed', base, { edition: reg.blueprint_edition, file: registryFileId }));
+  const srcId = reg.source_document?.drive_file_id ? 'src.' + reg.source_document.drive_file_id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40) : 'src.blueprint_registry_' + key;
+  const bpId = base + '.' + slug(reg.blueprint_edition || 'edition', 20);
   const fields = reg.topic_fields;
   const ix = (k) => fields.indexOf(k);
-  const P = prov(srcId, 'blueprint_import', `${reg.exam || exam} blueprint registry v${reg.registry_version} (${reg.blueprint_edition})`);
+  const P = prov(srcId, 'blueprint_import', `${reg.exam || key} blueprint registry v${reg.registry_version} (${reg.blueprint_edition})`);
   if (!from) {
-  const prevBp = (await env.DB.prepare("SELECT id FROM mk_objects WHERE type = 'Blueprint' AND id LIKE ? AND id != ? AND status = 'current'").bind('bp.abim_im_' + exam + '.%', bpId).all()).results;
-  await putObject(env, { id: bpId, type: 'Blueprint', name: `ABIM Internal Medicine ${exam === 'lka' ? 'LKA / MOC' : 'Certification'} blueprint (${reg.blueprint_edition})`, status: 'current', governance_status: 'approved',
-    exam: reg.exam || exam, exam_code: reg.exam_code || exam, edition: reg.blueprint_edition || '', source_id: srcId, task_types: reg.task_types || [],
-    categories: reg.categories.map((c) => ({ id: c.id, name: c.name, exam_pct: c.exam_pct, subcategories: c.subcategories.length })), data: { meta: Object.fromEntries(Object.entries(reg).filter(([k]) => k !== 'categories')) }, provenance: [P] }, { actor, event_id: ev, summary: 'blueprint ' + reg.blueprint_edition });
+  const prevBp = (await env.DB.prepare("SELECT id FROM mk_objects WHERE type = 'Blueprint' AND id LIKE ? AND id != ? AND status = 'current'").bind(base + '.%', bpId).all()).results;
+  await putObject(env, { id: bpId, type: 'Blueprint', name: `${fam.blueprint_name || (fam.board_name || fam.id) + ' blueprint'} (${reg.blueprint_edition})`, status: 'current', governance_status: 'approved',
+    exam: reg.exam || key, exam_code: reg.exam_code || key, edition: reg.blueprint_edition || '', source_id: srcId, task_types: reg.task_types || [],
+    categories: reg.categories.map((c) => ({ id: c.id, name: c.name, exam_pct: c.exam_pct, subcategories: c.subcategories.length })),
+    data: { meta: Object.fromEntries(Object.entries(reg).filter(([k]) => k !== 'categories')), ...(fam.declared ? {} : { family_def: { id: fam.id, exam_key: key, board_name: fam.board_name, board_type: fam.board_type, curriculum_folder: fam.curriculum_folder, specialty: fam.specialty } }) }, provenance: [P] }, { actor, event_id: ev, summary: 'blueprint ' + reg.blueprint_edition });
   for (const p of prevBp) { await setStatus(env, p.id, 'superseded', { actor, replaced_by: bpId, event_id: ev, reason: 'newer blueprint edition' }); }
   }
   const out = prog.out || (prog.out = { topics: 0, concepts_new: 0, concepts_linked: 0, domains: 0 });
@@ -56,15 +70,15 @@ export async function importBlueprint(env, reg, exam, { actor = 'blueprint_impor
   const work = []; for (const c of reg.categories) for (const sc of c.subcategories) sc.topics.forEach((t, k) => work.push({ c, sc, t, first: k === 0 }));
   for (let i = from; i < work.length; i++) {
     const { c, sc, t, first } = work[i], edges = [];
-    const spec = SPEC_BY_ABIM[c.id] || null, domId = 'dom.' + c.id.toLowerCase() + '.' + slug(sc.name, 50);
+    const spec = SPEC_BY_ABIM[c.id] || c.specialty || fam.specialty || null, domId = 'dom.' + c.id.toLowerCase() + '.' + slug(sc.name, 50);
     if (first) {
       const oldDom = (await getObject(env, domId)) || {};
-      const dr = await putObject(env, { id: domId, type: 'Domain', name: sc.name, parent: spec, abim_code: c.id, folder_aliases: [], kind: 'abim_subcategory', exam_pct: { ...(oldDom.exam_pct || {}), [exam]: sc.exam_pct_label || null }, status: 'current', governance_status: 'approved', provenance: oldDom.provenance || [P] }, { actor, event_id: ev, summary: 'domain from blueprint', audited: false });
+      const dr = await putObject(env, { id: domId, type: 'Domain', name: sc.name, parent: spec, abim_code: c.id, folder_aliases: [], kind: 'abim_subcategory', exam_pct: { ...(oldDom.exam_pct || {}), [key]: sc.exam_pct_label || null }, status: 'current', governance_status: 'approved', provenance: oldDom.provenance || [P] }, { actor, event_id: ev, summary: 'domain from blueprint', audited: false });
       if (dr.created) out.domains++;
       if (spec) edges.push({ src: domId, rel: 'in_specialty', dst: spec, conf: 100, prov: P });
     }
     {
-        const code = t[ix('id')], name = t[ix('topic')], tid = 'bpt.' + exam + '.' + code.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const code = t[ix('id')], name = t[ix('topic')], tid = 'bpt.' + key + '.' + code.toLowerCase().replace(/[^a-z0-9]/g, '_');
         // One concept per topic, shared by both exams (the cert registry names its LKA twin in lka_ref).
         let cId = null;
         const r = await resolveName(env, name, { types: ['Concept'] });
@@ -77,11 +91,12 @@ export async function importBlueprint(env, reg, exam, { actor = 'blueprint_impor
         const old = (await getObject(env, cId)) || {};
         const imp = ix('imp') >= 0 ? t[ix('imp')] : ix('lka_imp') >= 0 ? t[ix('lka_imp')] : '';
         const est = t[ix('est_pct')];
+        // Medicine is primary: the concept gets only its ontology links here. Exam weights, tiers and task ratings live on the
+        // BlueprintTopic and in the blueprint tables (the projection); an existing concept's old board block is left as it is.
         await putObject(env, { ...old, id: cId, type: 'Concept', name: old.name || name, canonical_name: old.canonical_name || name, concept_type: old.concept_type || guessType(name),
           aliases: old.aliases || [], specialty: [...new Set([...(old.specialty || []), ...(spec ? [spec] : [])])], domains: [...new Set([...(old.domains || []), domId])],
           blueprint_topics: [...new Set([...(old.blueprint_topics || []), tid])], status: old.status || 'current', governance_status: old.governance_status || 'pending_validation', facets: old.facets || {},
-          board: { ...(old.board || {}), [exam === 'lka' ? 'lka_weight' : 'abim_weight']: est, ...(exam === 'lka' ? { lka_tier: t[ix('tier')], task_importance: imp, low_frequency: !!t[ix('lf')] } : { task_importance: old.board?.task_importance || imp }) },
-          provenance: old.provenance?.length ? old.provenance : [P] }, { actor, event_id: ev, summary: 'board mapping ' + exam.toUpperCase() + ' ' + code, audited: false });
+          provenance: old.provenance?.length ? old.provenance : [P] }, { actor, event_id: ev, summary: 'board mapping ' + key.toUpperCase() + ' ' + code, audited: false });
         await putObject(env, { id: tid, type: 'BlueprintTopic', name, blueprint: bpId, code, category: c.name, subcategory: sc.name, importance: imp || '', low_frequency: ix('lf') >= 0 ? !!t[ix('lf')] : false,
           provisional: ix('prov') >= 0 ? !!t[ix('prov')] : false, tier: ix('tier') >= 0 ? t[ix('tier')] : '', est_pct: typeof est === 'number' ? est : 0, priority_score: ix('score') >= 0 ? t[ix('score')] : 0,
           concepts: [cId], domain: domId, specialty: spec ? [spec] : [], status: 'current', governance_status: 'approved', provenance: [P], data: ix('lka_ref') >= 0 ? { lka_ref: t[ix('lka_ref')] } : {} },

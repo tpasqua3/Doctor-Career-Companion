@@ -37,6 +37,13 @@ intelligence, confidence, blueprint, pronunciation, curriculum and competency la
   (`_central`, see `homeOf()` in `src/worker.js`). A new setting persists by default; never write credentials to Drive.
 - Knowledge extracted from the library never goes into this repository (it is public; MKSAP and textbooks are licensed).
 
+## The MKOS Constitution (owner, 10/24/2026)
+`mkos/directives/mkos_constitution.md` binds all MKOS work. MKOS models medicine; exams, lessons and curricula are projections of
+it. Knowledge objects are canonical and owned by no educational product. No specialty or source is primary. Nothing is mapped to
+only one objective, and exam relevance is computed from the objective graph, never written into concepts. No knowledge asset may stop
+at ingestion: every source passes through the Continuous Knowledge Lifecycle (`src/mkos/lifecycle.js`, `relevance.js`,
+`mkos/ontology/lifecycle.json`, all rules, no AI). A future exam needs only its blueprint (`blueprints.json` family data).
+
 ## USAP Account-Level Data Framework (ADF, SR-42)
 `src/usap_adf_v1.js` is a copy of the Brain's `domain-sdk/usap_adf_v1.js`: replace it, never edit it here. `src/adf.js` wires it into the
 per-account folders only (never MKOS central storage or the library): once per account, from the five-minute timer when the copy job

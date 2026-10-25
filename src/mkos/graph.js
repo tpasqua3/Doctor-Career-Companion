@@ -6,6 +6,9 @@ import { J, nowIso } from './db.js';
 const O = FRAMEWORK.frameworks.ontology;
 export const RELS = Object.fromEntries([...O.relationships, ...O.structural_relationships].map((r) => [r.key, r]));
 export const inverseOf = (rel) => RELS[rel]?.inverse || rel;
+// Relationships impact reach never follows (lifecycle.json non_propagating_relations): a class node such as "disease" joins thousands
+// of concepts, so following it would make every change touch everything.
+export const NON_PROPAGATING = (FRAMEWORK.frameworks.lifecycle && FRAMEWORK.frameworks.lifecycle.non_propagating_relations) || [];
 
 // Add or refresh edges. edges: [{src, rel, dst, conf, prov}] where prov is one provenance step.
 export async function addEdges(env, edges) {
@@ -38,7 +41,7 @@ export async function reach(env, start, { depth = 2, rels = null, cap = 2000, se
     const next = [];
     for (let i = 0; i < frontier.length; i += 40) {     // 2 x 40 ids + rels stays under D1's 100 bound parameters
       const part = frontier.slice(i, i + 40), ph = part.map(() => '?').join(',');
-      const relq = rels ? ` AND rel IN (${rels.slice(0, 15).map(() => '?').join(',')})` : '';
+      const relq = rels ? ` AND rel IN (${rels.slice(0, 15).map(() => '?').join(',')})` : NON_PROPAGATING.length ? ` AND rel NOT IN (${NON_PROPAGATING.map((r) => `'${r.replace(/[^a-z_]/g, '')}'`).join(',')})` : '';
       const st = seedAll && d === 1 ? '' : "status = 'current' AND ";
       const { results } = await env.DB.prepare(`SELECT src, dst FROM mk_edges WHERE ${st}(src IN (${ph}) OR dst IN (${ph}))${relq}`).bind(...part, ...part, ...(rels || []).slice(0, 15)).all();
       for (const r of results) for (const x of [r.src, r.dst]) if (!seen.has(x)) { seen.set(x, d); next.push(x); }

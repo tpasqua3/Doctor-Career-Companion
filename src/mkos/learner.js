@@ -5,6 +5,8 @@
 import { J, nowIso, fwGet, overrides } from './db.js';
 import { getObjects } from './kb.js';
 import { nodeForTopic } from './education.js';
+import { FRAMEWORK } from './framework.js';
+import { conceptExamWeights } from './relevance.js';
 
 const DAY = 864e5, clamp = (x) => Math.max(0, Math.min(100, Math.round(x * 10) / 10));
 const MODEL = 'learner-1';
@@ -92,13 +94,18 @@ export async function deriveFromRecord(env, uid, docs, { actor = 'learner' } = {
   // blueprint (Blueprint Governance), falling back to the topic's own share of the exam.
   const bps = await getObjects(env, bpts);
   const sel = await env.DB.prepare('SELECT selected_blueprint_id AS b FROM mk_learner_blueprint WHERE learner_id = ?').bind(uid).first().catch(() => null);
-  const bpId = (sel && sel.b) || ((await env.DB.prepare("SELECT blueprint_id AS b FROM mk_blueprint_registries WHERE blueprint_family = 'abim_im_cert' AND current_status = 'current' LIMIT 1").first().catch(() => null)) || {}).b;
+  const bpId = (sel && sel.b) || ((await env.DB.prepare("SELECT blueprint_id AS b FROM mk_blueprint_registries WHERE blueprint_family = ? AND current_status = 'current' LIMIT 1").bind(FRAMEWORK.frameworks.blueprints.default_family).first().catch(() => null)) || {}).b;
   const bpMap = {};
   if (bpId) { const ids = [...new Set(rows.map((r) => r.object_id))]; for (let i = 0; i < ids.length; i += 90) { const part = ids.slice(i, i + 90);
     for (const r of (await env.DB.prepare(`SELECT concept_id AS id, priority_score AS p FROM mk_blueprint_concept_mappings WHERE blueprint_id = ? AND concept_id IN (${part.map(() => '?').join(',')})`).bind(bpId, ...part).all()).results) bpMap[r.id] = r.p;
     for (const r of (await env.DB.prepare(`SELECT objective_id AS id, priority_score AS p FROM mk_blueprint_objectives WHERE blueprint_id = ? AND objective_id IN (${part.map(() => '?').join(',')})`).bind(bpId, ...part).all()).results) bpMap[r.id] = r.p; } }
+  // A concept's exam share comes from the exam projection (the BlueprintTopics naming it: the selected blueprint first, then any current
+  // one); concepts written before the projection kept it in their own board fields, which remain the fallback.
+  const conceptRows = rows.filter((r) => r.level === 'concept' && bpMap[r.object_id] == null).map((r) => r.object_id);
+  const proj = conceptRows.length ? { ...(await conceptExamWeights(env, conceptRows, null).catch(() => ({}))), ...(bpId ? await conceptExamWeights(env, conceptRows, bpId).catch(() => ({})) : {}) } : {};
   for (const r of rows) {
-    const rel = r.level === 'blueprint_topic' ? (bps[r.object_id]?.est_pct || 0) : r.level === 'concept' ? (concepts[r.object_id]?.board?.lka_weight || concepts[r.object_id]?.board?.abim_weight || 0) : 0;
+    const legacy = (c) => c?.board?.lka_weight || c?.board?.abim_weight || 0;
+    const rel = r.level === 'blueprint_topic' ? (bps[r.object_id]?.est_pct || 0) : r.level === 'concept' ? (proj[r.object_id]?.est_pct || legacy(concepts[r.object_id])) : 0;
     r.board_relevance = bpMap[r.object_id] != null ? clamp(bpMap[r.object_id]) : clamp(Math.min(100, rel * 40));
     r.priority = clamp(P.w.knowledge_deficit * (100 - r.mastery) + P.w.retention_risk * (r.retention?.forgetting_risk || (100 - r.recency)) + P.w.board_relevance * r.board_relevance + P.w.competency_importance * 50 + P.w.low_confidence * (100 - r.confidence));
   }

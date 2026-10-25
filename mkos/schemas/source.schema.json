@@ -119,6 +119,95 @@
     },
     "ingest_note": {
       "type": "string"
+    },
+    "source_metadata": {
+      "type": "object",
+      "description": "The source's Metadata Object (lifecycle stage 1), a typed sub-object of the Source. Derived by rules from the source, its recommendations and the evidence they name, so it is volatile like scores and classification: written in place without a content version (kb.js VOLATILE).",
+      "properties": {
+        "source_organization": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "publication_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Date of this edition (published online, issue date or year)."
+        },
+        "review_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Date the issuing body last reviewed or reaffirmed it, when stated."
+        },
+        "specialty_domain": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_class": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "superseded_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidence_strength_system": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The grading system used by most of the source's recommendations (ACC_AHA_COR, KDIGO, GRADE...)."
+        },
+        "evidence_strength_systems": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "referenced_sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "x-ref": "EvidenceObject",
+          "description": "Evidence objects (trials) named in the source's recommendations; also cites edges."
+        },
+        "v": {
+          "type": "string"
+        },
+        "ov": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "type": "string"
+        }
+      }
     }
   },
   "required": [

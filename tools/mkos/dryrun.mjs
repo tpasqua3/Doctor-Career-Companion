@@ -17,6 +17,7 @@ import { status, graphValidation } from '../../src/mkos/governance.js';
 import { validateCutover, appRegistryMap } from '../../src/mkos/cutover.js';
 import { curriculumPlan, conceptContext, routeRequest } from '../../src/mkos/adaptive.js';
 import { query } from '../../src/mkos/kb.js';
+import { lifecycleStatus } from '../../src/mkos/lifecycle.js';
 
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : d; };
 const W = arg('work', '/home/claude/mkos_work'), TICKS = Number(arg('ticks', 400));
@@ -68,7 +69,9 @@ for (let i = 0; i < TICKS; i++) {
   const open = (await env.DB.prepare("SELECT COUNT(*) AS n FROM mk_jobs WHERE state IN ('queued','running')").first()).n;
   const scan = await env.DB.prepare("SELECT v FROM mk_settings WHERE k = 'scan_last_complete'").first();
   if (i % 25 === 0) console.log('tick', i, 'used', last.used, 'open jobs', open, last.steps.slice(-3).join(' | '));
-  if (scan && !open && i > 5) { console.log('settled after', i + 1, 'ticks'); break; }
+  const lcOpen = (await env.DB.prepare("SELECT COUNT(*) AS n FROM mk_lifecycle WHERE status IN ('waiting','in_progress')").first()).n;
+  const sweep = JSON.parse((await env.DB.prepare("SELECT v FROM mk_settings WHERE k = 'lc_rel'").first() || { v: '{}' }).v || '{}');
+  if (scan && !open && !lcOpen && sweep.phase === 'idle' && i > 5) { console.log('settled after', i + 1, 'ticks'); break; }
 }
 console.log('time', ((RealDate.now() - t0) / 1000).toFixed(1) + 's', 'simulated days', ((FAKE - t0) / 864e5).toFixed(1));
 const st = await status(env);
@@ -88,4 +91,5 @@ const plan = await curriculumPlan(env, OWNER, { limit: 4 }); console.log('plan',
 const route = await routeRequest(env, OWNER, 'Essential hypertension'); console.log('route', route.decision, route.confidence, route.reasoning);
 const cnode = await env.DB.prepare("SELECT COUNT(*) AS n, SUM(CASE WHEN json_array_length(json_extract(body,'$.concepts'))>0 THEN 1 ELSE 0 END) AS m FROM mk_objects WHERE type='CurriculumNode' AND id LIKE 'cn.t.%'").first(); console.log('curriculum topics mapped to concepts', cnode);
 const lr = await env.DB.prepare('SELECT level, COUNT(*) AS n FROM mk_learner GROUP BY level').all(); console.log('learner states', JSON.stringify(lr.results));
+const lc = await lifecycleStatus(env); console.log('lifecycle', JSON.stringify({ sources: lc.sources, by_status: lc.by_status, classes: lc.concept_classes, objectives: lc.canonical_objectives, projection_edges: lc.projection_edges, relevance: lc.relevance }));
 console.log('uploads', uploads.length, uploads.slice(0, 6));

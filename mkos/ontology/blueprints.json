@@ -2,10 +2,10 @@
   "id": "framework.blueprints",
   "type": "Framework",
   "name": "Board blueprint governance",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "current",
   "created_date": "2026-10-17",
-  "updated_date": "2026-10-17",
+  "updated_date": "2026-10-24",
   "supersedes": null,
   "replaced_by": null,
   "source_attribution": [
@@ -17,6 +17,11 @@
       "version": "1.0.0",
       "date": "2026-10-17",
       "summary": "Initial blueprint governance: families, discovery, versioning, weighting, scoring, events."
+    },
+    {
+      "version": "1.1.0",
+      "date": "2026-10-24",
+      "summary": "Exam data comes from the blueprint registry data: exam_key, blueprint name, curriculum folder and counterpart per family; any registry may declare its own family (blueprint_family, board_name, board_type) without a code change."
     }
   ],
   "principle": [
@@ -50,7 +55,17 @@
       ],
       "requires": [
         "abim|internal medicine"
-      ]
+      ],
+      "exam_key": "cert",
+      "blueprint_name": "ABIM Internal Medicine Certification blueprint",
+      "registry_find": "title contains 'CERT_blueprint_registry' and title contains 'CURRENT'",
+      "curriculum_folder": "ABIM CERT",
+      "curriculum_folder_match": "^abim\\s*cert(ification)?$",
+      "counterpart": {
+        "exam_key": "lka",
+        "ref_field": "lka_ref"
+      },
+      "legacy_concept_weight_field": "abim_weight"
     },
     {
       "id": "abim_im_lka",
@@ -66,7 +81,13 @@
       ],
       "requires": [
         "abim|internal medicine"
-      ]
+      ],
+      "exam_key": "lka",
+      "blueprint_name": "ABIM Internal Medicine LKA / MOC blueprint",
+      "registry_find": "title contains 'LKA_blueprint_registry' and title contains 'CURRENT'",
+      "curriculum_folder": "LKA",
+      "curriculum_folder_match": "^lka$",
+      "legacy_concept_weight_field": "lka_weight"
     },
     {
       "id": "abim_cardiology",
@@ -272,5 +293,16 @@
       "LessonWeightsUpdated"
     ]
   },
-  "board_review_mode": "MKOS Curriculum + Blueprint Filtering + Blueprint Weighting + Board Asset Prioritization + Learner Personalization (no separate system)"
+  "board_review_mode": "MKOS Curriculum + Blueprint Filtering + Blueprint Weighting + Board Asset Prioritization + Learner Personalization (no separate system)",
+  "registry_declared_family": {
+    "note": "A blueprint registry for an exam not listed in families names its own family: blueprint_family (id), board_name, board_type, optional exam_key, curriculum_folder and per-category specialty. Its ids are bp.<family>.<edition> and bpt.<exam_key>.<code> (exam_key defaults to the family id).",
+    "fields": [
+      "blueprint_family",
+      "board_name",
+      "board_type",
+      "exam_key",
+      "curriculum_folder",
+      "specialty"
+    ]
+  }
 }

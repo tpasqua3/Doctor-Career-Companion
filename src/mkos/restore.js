@@ -2,6 +2,7 @@
 // (mirror.js). A restore reads manifest.json and then each listed file, in dependency order, and upserts what it holds:
 //   registry_data -> mk_objects (and the alias index)    history -> mk_versions    graph -> mk_edges
 //   assets -> EducationalAsset records + mk_asset_store  registries/blueprints -> the blueprint execution tables    governance/reviews -> mk_reviews
+//   registries/lifecycle -> mk_lifecycle (the relevance graph, mk_relevance, is derived and rebuilt by the lifecycle sweep)
 //   config -> the app's settings and mk_settings (only where missing; credentials are never in Drive)
 //   central -> the central registry records (docs held by '_central': pronunciation registry, change log, ABIM blueprint document)
 // It never replaces a newer row with an older one (objects keep whichever 'updated' is later; versions, edges, content and table rows are
@@ -16,7 +17,7 @@ import { fileHash, configDoc, CONFIG_MOVING, CENTRAL } from './mirror.js';
 export const APP_TABLES = ['CREATE TABLE IF NOT EXISTS docs (user_id TEXT NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (user_id, path))',
   'CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT NOT NULL)'];
 
-const ORDER = ['config', 'central/', 'registry_data/', 'history/', 'graph/', 'assets/', 'registries/blueprints', 'governance/reviews'];
+const ORDER = ['config', 'central/', 'registry_data/', 'history/', 'graph/', 'assets/', 'registries/blueprints', 'registries/lifecycle', 'governance/reviews'];
 const rank = (k) => { const i = ORDER.findIndex((p) => k === p || k.startsWith(p)); return i < 0 ? 99 : i; };
 
 async function readManifest(deps, root) {
@@ -98,6 +99,15 @@ export async function restoreStep(env, deps, root, prog, { mode = 'restore', row
       }
       prog.at++; prog.row = 0; rows += 200; continue;
     }
+    if (k === 'registries/lifecycle') {
+      // Lifecycle records: inserted, or replacing an older record (never a newer one). The relevance graph is derived: the lifecycle
+      // sweep rebuilds it from the restored objects and edges.
+      const recs = (doc && doc.records) || [];
+      await insertAll(env, (r) => r && r.source_id ? env.DB.prepare(`INSERT INTO mk_lifecycle (source_id, stage, stages_json, status, source_v, cycle, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)
+        ON CONFLICT (source_id) DO UPDATE SET stage = excluded.stage, stages_json = excluded.stages_json, status = excluded.status, source_v = excluded.source_v, cycle = excluded.cycle, updated_at = excluded.updated_at
+        WHERE excluded.updated_at > mk_lifecycle.updated_at`).bind(r.source_id, r.stage, typeof r.stages_json === 'string' ? r.stages_json : JSON.stringify(r.stages_json || {}), r.status, r.source_v ?? null, r.cycle || 1, r.created_at || nowIso(), r.updated_at || nowIso()) : null, recs);
+      prog.counts.lifecycle = (prog.counts.lifecycle || 0) + recs.length; prog.at++; prog.row = 0; rows += Math.max(20, recs.length); continue;
+    }
     const slice = (list || []).slice(prog.row, prog.row + (rowsPerStep - rows));
     if (k.startsWith('registry_data/')) await upsertObjects(env, slice);
     else if (k.startsWith('history/')) await insertAll(env, (v) => v && v.id ? env.DB.prepare('INSERT OR IGNORE INTO mk_versions (id, version, hash, body, at, event_id, actor) VALUES (?,?,?,?,?,?,?)').bind(v.id, v.version, v.hash || '', JSON.stringify(v.body), v.at, v.event_id || null, v.actor || 'restore') : null, slice);
@@ -144,7 +154,7 @@ export async function drillStep(env, drill, deps, root, prog) {
     ['relationships', 'SELECT COUNT(*) AS n FROM mk_edges'], ['relationship checksum', 'SELECT SUM(LENGTH(src) * 7 + LENGTH(rel) * 3 + LENGTH(dst) + CAST(conf AS INTEGER)) AS n FROM mk_edges'],
     ['asset content', "SELECT COUNT(DISTINCT asset_id) AS n FROM mk_asset_store WHERE asset_id LIKE 'ea.s.%'"], ['blueprint registries', 'SELECT COUNT(*) AS n FROM mk_blueprint_registries'],
     ['blueprint domains', 'SELECT COUNT(*) AS n FROM mk_blueprint_domains'], ['blueprint objectives', 'SELECT COUNT(*) AS n FROM mk_blueprint_objectives'], ['blueprint concept mappings', 'SELECT COUNT(*) AS n FROM mk_blueprint_concept_mappings'],
-    ['reviews', 'SELECT COUNT(*) AS n FROM mk_reviews'], ['aliases', 'SELECT COUNT(*) AS n FROM mk_aliases']];
+    ['reviews', 'SELECT COUNT(*) AS n FROM mk_reviews'], ['lifecycle records', 'SELECT COUNT(*) AS n FROM mk_lifecycle'], ['aliases', 'SELECT COUNT(*) AS n FROM mk_aliases']];
   checks.splice(checks.length - 1, 0, ['central records', `SELECT COUNT(*) AS n FROM docs WHERE user_id = '${CENTRAL}'`], ['central records checksum', `SELECT SUM(LENGTH(body)) AS n FROM docs WHERE user_id = '${CENTRAL}'`]);
   const counts = []; for (const [name, sql] of checks) { const a = await one(env.DB, sql), b = await one(drill, sql); counts.push({ name, production: a ?? 0, rebuilt: b ?? 0, match: (a ?? 0) === (b ?? 0) }); }
   // Configuration: every setting that does not move while the engine runs must come back with the same value.

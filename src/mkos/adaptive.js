@@ -1,5 +1,6 @@
 // Adaptive Learning Layer (ADAPTIVE CURRICULUM MODEL) and the Routing Layer (ROUTING MODEL + DETERMINISTIC-FIRST RULE).
 // Both read structure; neither calls an AI. AI is the last route and receives a governed context package, never authority.
+import { boardFromProjection } from './relevance.js';
 import { FRAMEWORK } from './framework.js';
 import { J, nowIso, fwGet, overrides } from './db.js';
 import { getObject, getObjects, query, norm } from './kb.js';
@@ -50,7 +51,7 @@ export async function conceptContext(env, conceptId, { include_history = false, 
   const stop = [];
   for (const r of recs) { const s = srcs[r.source_id]; if (!s) stop.push({ condition: 'missing_provenance', object: r.id }); else if (s.status === 'superseded' && r.status === 'current') stop.push({ condition: 'superseded_guideline_usage', object: r.id }); }
   return {
-    concept: { id: c.id, name: c.name, type: c.concept_type, aliases: c.aliases || [], board: c.board || {}, facets: c.facets || {}, confidence: c.confidence },
+    concept: { id: c.id, name: c.name, type: c.concept_type, aliases: c.aliases || [], board: c.board || (await boardFromProjection(env, c.id).catch(() => ({}))), facets: c.facets || {}, confidence: c.confidence },
     recommendations: recs.slice(0, limit).map((r) => ({ id: r.id, statement: r.statement, strength: r.strength, strength_original: r.strength_original, evidence_level: r.evidence_level, loe_original: r.loe_original,
       status: r.status, governance: r.governance_status, trust: r.scores?.trust_score, confidence: r.confidence?.confidence_score, section: r.section, page: r.page, cite: cite(srcs[r.source_id]) })),
     related: nb.filter((n) => objs[n.id] && objs[n.id].type === 'Concept').slice(0, 40).map((n) => ({ id: n.id, rel: n.rel, name: objs[n.id].name })),
