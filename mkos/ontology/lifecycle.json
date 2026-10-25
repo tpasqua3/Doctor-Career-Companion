@@ -120,7 +120,8 @@
     "via_recommendation": { "rel": "derived_from", "factor": 0.9, "why": "a claim, objective or teaching point derived from a recommendation about the concept" },
     "object_types": ["Concept", "Recommendation", "Claim", "EvidenceObject", "EducationalObject", "Objective", "SourceSection"],
     "excluded_governance": ["stopped", "rejected"],
-    "sweep_hours": 24
+    "sweep_hours": 720,
+    "sweep_note": "A full relevance refresh rewrites every row (about a million in production), so it runs monthly to stay well inside D1's included writes; sources entering or changing in the lifecycle get their rows straight away, and objects added later are caught by the between-sweep catch-up."
   },
   "exam_projection": {
     "rule": "exam relevance(object, blueprint) = max over the object's objectives of (relevance score x topic weight), topic weight = blueprint objective priority_score / 100, over the blueprint topics that project onto that objective",
