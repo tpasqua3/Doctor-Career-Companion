@@ -161,7 +161,7 @@ async function runJob(env, deps, job, meter = null) {
       const r = await generateCandidates(env, deps, terms); await b.spend();
       p.batches = (p.batches || 0) + 1; p.generated = (p.generated || 0) + (r.generated || 0); await save('running'); return false;
     }
-    if (job.kind === 'learner') { const docs = await deps.userDocs(job.subject, ['med/state', 'med/bank_', 'med/cards_']); await deriveFromRecord(env, job.subject, docs); await save('done'); return true; }
+    if (job.kind === 'learner') { const docs = await deps.userDocs(job.subject, ['med/state', 'med/bank_', 'med/cards_']); const r = await deriveFromRecord(env, job.subject, docs); if (r && r.mastered && r.mastered.length && deps.objectivesMastered) await deps.objectivesMastered(job.subject, r.mastered).catch(() => 0); await save('done'); return true; }
     if (job.kind === 'assets') {
       const docs = await deps.userDocs(job.subject, p.paths && p.paths.length ? p.paths : ['med/les_', 'med/bank_', 'med/cards_']);
       p.prog = p.prog || { at: 0 };

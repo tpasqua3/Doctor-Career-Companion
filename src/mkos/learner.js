@@ -109,6 +109,13 @@ export async function deriveFromRecord(env, uid, docs, { actor = 'learner' } = {
     r.board_relevance = bpMap[r.object_id] != null ? clamp(bpMap[r.object_id]) : clamp(Math.min(100, rel * 40));
     r.priority = clamp(P.w.knowledge_deficit * (100 - r.mastery) + P.w.retention_risk * (r.retention?.forgetting_risk || (100 - r.recency)) + P.w.board_relevance * r.board_relevance + P.w.competency_importance * 50 + P.w.low_confidence * (100 - r.confidence));
   }
+  // Blueprint objectives entering the Mastery state now, from a state recorded earlier (a first derivation reports nothing):
+  // returned as `mastered` for the ObjectiveCompleted activity event (src/activity.js). Read before the write; never fails it.
+  let mastered = [];
+  try {
+    const prev = {}; for (const r of (await env.DB.prepare("SELECT object_id AS id, json_extract(body, '$.knowledge_state') AS k FROM mk_learner WHERE user_id = ? AND level = 'blueprint_topic'").bind(uid).all()).results || []) prev[r.id] = r.k;
+    mastered = rows.filter((r) => r.level === 'blueprint_topic' && r.knowledge_state === 'Mastery' && prev[r.object_id] && prev[r.object_id] !== 'Mastery').map((r) => r.object_id);
+  } catch { mastered = []; }
   await writeStates(env, uid, rows);
   // Incorrect + Confident -> misconception records (Misconception Detection, Reasoning Review, Targeted Remediation).
   let mis = 0;
@@ -122,7 +129,7 @@ export async function deriveFromRecord(env, uid, docs, { actor = 'learner' } = {
     mis++;
   }
   await env.DB.prepare('INSERT INTO mk_learner_events (user_id, at, kind, object_ids, detail) VALUES (?, ?, ?, ?, ?)').bind(uid, now, 'derived_from_record', '[]', JSON.stringify({ topics: Object.keys(sig).length, states: rows.length, misconceptions: mis, by: actor })).run();
-  return { topics: Object.keys(sig).length, states: rows.length, misconceptions: mis };
+  return { topics: Object.keys(sig).length, states: rows.length, misconceptions: mis, mastered };
 }
 
 export async function learnerSummary(env, uid, { level = null, limit = 50 } = {}) {

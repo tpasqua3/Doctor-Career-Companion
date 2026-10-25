@@ -27,6 +27,7 @@ import { ttsList as mkosSays } from './mkos/pronounce.js';
    TIERS, JOBS, AI_ORDER) is locked (SR-03): usap.timeAI only times each provider call (owner go-ahead 2026-10-24) and never reorders
    or skips one, and the hooks that would touch AI routing or MKOS migration are refused by the kit. */
 import { createUsapNode } from './usap_node_kit_v1.js';
+import { watched as actWatched, detect as actDetect, emitActivity, objective as actObjective } from './activity.js';
 /* USAP Account-Level Data Framework (SR-42): src/adf.js wires the Brain's shared module src/usap_adf_v1.js (a copy: replace it, never
    edit it here) into the account folders only. See the note above syncUser. */
 import { driveAdapter, adfOnce, adfConformance, adfExport } from './adf.js';
@@ -1478,9 +1479,11 @@ async function api(request, env, url, ctx) {
     if (request.method === 'DELETE' && (path === 'med/says' || path === 'med/saylog')) return fail(400, 'The pronunciation list is not deleted as a whole.');
     if (request.method === 'DELETE') { await env.DB.prepare('DELETE FROM docs WHERE user_id = ? AND path = ?').bind(await homeOf(env, user.id, path), path).run(); syncSoon(env, ctx, user.id); return json({ ok: true }); }
     if (path === 'med/sayop') { const r = await applySayOps(env, user.id, body && body.ops); syncSoon(env, ctx, user.id); persistSoon(env, ctx); return json(r); }
-    const text = JSON.stringify(await guardSays(env, user.id, path, body)); if (text.length > MAX_DOC) return fail(413, 'That is too large to save.');
-    await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(await homeOf(env, user.id, path), path, text, new Date().toISOString()).run();
+    const saved = await guardSays(env, user.id, path, body), text = JSON.stringify(saved); if (text.length > MAX_DOC) return fail(413, 'That is too large to save.');
+    const home = await homeOf(env, user.id, path), before = await actBefore(env, home, path);
+    await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(home, path, text, new Date().toISOString()).run();
     syncSoon(env, ctx, user.id); if (centralPath(path)) persistSoon(env, ctx);
+    actAfter(env, ctx, user, path, before, saved);
     return json({ ok: true });
   }
   if (route === 'POST /api/ai') {
@@ -1561,6 +1564,7 @@ function mkDeps(env) {
     patch: async (id, { name, addParents, removeParents }) => gsend(env, 'PATCH', 'files/' + id + '?' + form({ ...(addParents ? { addParents } : {}), ...(removeParents ? { removeParents } : {}) }), name ? { name } : {}),
     folders: { registry: str(env.MKOS_REGISTRY_FOLDER, 200), oldVersions: str(env.MKOS_REGISTRY_OLD_FOLDER, 200), mkos: str(env.MKOS_DRIVE_FOLDER, 200) },
     userDocs: docsOf,
+    objectivesMastered: (uid, ids) => actObjectives(env, uid, ids),   // Routine Rewards activity events (src/activity.js)
     ownerUpdated: async paths => { const o = await ownerId(env); if (!o) return ''; const r = await env.DB.prepare(`SELECT MAX(updated) AS t FROM docs WHERE user_id IN (?, ?) AND path IN (${paths.map(() => '?').join(',')})`).bind(o, CENTRAL, ...paths).first(); return (r && r.t) || ''; },
     ownerSay: async ops => { const o = await ownerId(env); if (!o) throw new Error('No owner account.'); const r = await applySayOps(env, o, ops); syncSoon(env, null, o); return r; },
     ownerDocs: async prefixes => docsOf(await ownerId(env), prefixes),
@@ -1639,6 +1643,34 @@ async function mkPersist(env) { await init(env); await driveState(env); if (!DRI
 /* ---------- MCP connector at /mcp/<token> ----------
    A small Model Context Protocol server (JSON over HTTP POST). The token in the address is the only credential,
    so it is long, random, stored only as a hash, and can be replaced or switched off from the account page. */
+/* Activity events for Routine Rewards (src/activity.js): a save that completes a lesson, a question set or a study sitting sends one
+   event through the USAP node kit. The stored copy is read first only for the documents that can hold a completion; the event goes
+   out after the response (ctx.waitUntil) and nothing here can fail or hold up the save. */
+async function actBefore(env, home, path) {
+  if (!actWatched(path)) return undefined;
+  try { const r = await env.DB.prepare('SELECT body FROM docs WHERE user_id = ? AND path = ?').bind(home, path).first(); return r ? JSON.parse(r.body) : null; } catch { return undefined; }
+}
+function actAfter(env, ctx, who, path, before, after) {
+  if (before === undefined) return;
+  let found = []; try { found = actDetect(path, before, after); } catch { }
+  if (!found.length) return;
+  const p = (async () => {
+    const u = who.email ? who : await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(who.id).first();
+    if (u && await emitActivity(usap, u, found)) await usap.flush(env);
+  })().catch(() => { });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
+}
+/* MKOS's learner model put these blueprint objectives in the Mastery state for the first time (deriveFromRecord): one
+   ObjectiveCompleted each. Runs inside the MKOS timer job; the scheduled run flushes the kit afterwards. */
+async function actObjectives(env, uid, ids) {
+  try {
+    if (!ids || !ids.length) return 0;
+    const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u || !u.email) return 0;
+    const list = ids.slice(0, 50), names = {};
+    try { for (const r of (await env.DB.prepare(`SELECT id, name FROM mk_objects WHERE id IN (${list.map(() => '?').join(',')})`).bind(...list).all()).results || []) names[r.id] = r.name; } catch { }
+    return await emitActivity(usap, u, list.map(id => actObjective(id, names[id])));
+  } catch { return 0; }
+}
 const MCP_TOOLS = [
   ...MKOS_TOOLS,
   { name: 'load_progress', description: "Load this physician's saved study and career record: the documents changed since `since` (milliseconds since 1970; 0 for everything), the list of every document path, and the server time to pass as `since` next time. `area` defaults to \"med\". `only` (a list of document names such as [\"says\", \"saylog\"]) returns just those documents, whenever they changed.",
@@ -1721,9 +1753,11 @@ async function mcpServer(request, env, token, ctx) {
     if (name === 'save_doc') {
       if (!a.body || typeof a.body !== 'object' || Array.isArray(a.body)) return bad('The document must be an object.');
       if (path === 'med/sayop') { const r = await applySayOps(env, uid, a.body.ops); syncSoon(env, ctx, uid); persistSoon(env, ctx); return out(r); }
-      const body = JSON.stringify(await guardSays(env, uid, path, a.body)); if (body.length > MAX_DOC) return bad('That document is too large to save.');
-      await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(await homeOf(env, uid, path), path, body, new Date().toISOString()).run();
+      const saved = await guardSays(env, uid, path, a.body), body = JSON.stringify(saved); if (body.length > MAX_DOC) return bad('That document is too large to save.');
+      const home = await homeOf(env, uid, path), before = await actBefore(env, home, path);
+      await env.DB.prepare('INSERT INTO docs (user_id, path, body, updated) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, path) DO UPDATE SET body = excluded.body, updated = excluded.updated').bind(home, path, body, new Date().toISOString()).run();
       syncSoon(env, ctx, uid); if (centralPath(path)) persistSoon(env, ctx);
+      actAfter(env, ctx, { id: uid }, path, before, saved);
       return out({ ok: true });
     }
     if (name === 'delete_doc' && (path === 'med/says' || path === 'med/saylog')) return bad('The pronunciation list is not deleted as a whole.');

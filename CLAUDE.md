@@ -55,6 +55,20 @@ backup) is the standard bundle `{usap_adf:"1", adf_version, app_id:"doctor_compa
 with the app's old bundle unchanged in `app_data`; the page's restore (`adfOpen`) accepts it and older files. Tests:
 `node --test test/adf.test.mjs`.
 
+## Activity events (Routine Rewards)
+`src/activity.js` sends one activity event through the node kit (`usap.emitEvent`, flushed over `USAP_UGF`) when a completion
+reaches the server; USAP routes it to Routine Rewards. Found where the save arrives (`actBefore`/`actAfter` in `src/worker.js`, both
+`PUT /api/doc` and the connector's `save_doc`, by comparing the stored body with the new one), so the page has no code for it:
+- `med/log`: a new sitting of a minute or more → **StudySessionCompleted** (`duration_min`, category `medical_study`).
+- `med/state` `sets`: a new question set → **QuestionSetCompleted** (`quantity` = questions answered, unit `question`).
+- `med/les_<id>`: `done` newly set → **LessonCompleted**.
+- MKOS `deriveFromRecord` (learner job): a `blueprint_topic` state entering Mastery from an earlier recorded state →
+  **ObjectiveCompleted** (`objective_id`), through `deps.objectivesMastered`.
+`user_id` is the subject (`s1_` + sha256 of `lifeos-subject:v1:` + email), computed at emit time and never stored; no email, no
+event. `idempotency_key` = `doctor_companion_app:<account tag>.<record>:<type>` (the tag is a hash of the account id). Metadata only
+`duration_min`, `quantity`, `unit`, `category`, `label` (generic activity names), `objective_id`. Only completions within the last
+3 days are reported (no backfill; restores report nothing). Tests: `node --test test/activity.test.mjs`.
+
 ## AI order of operations
 The app's AI order of operations (`SERVICES`, `TIERS`, `JOBS`, `AI_ORDER` in `src/worker.js`) was deliberately worked out and is changed
 only on a deliberate, specific request from the owner. MKOS calls only free services directly and never changes that hierarchy.
