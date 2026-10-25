@@ -1053,7 +1053,7 @@ const adfTickSafe = env => adfTick(env).catch(e => { console.error('adf', e); re
      ## Heading        starts a new section          - item        a bullet
      **bold**          bold words                    [words](https://address)   a link
    A blank line starts a new paragraph. Everything else is shown exactly as typed; HTML is not interpreted. */
-const PAGE_DATE = 'October 10, 2026';
+const PAGE_DATE = 'October 25, 2026';
 const PAGES = {
   privacy: { title: 'Privacy policy', text: `## What this is
 Doctor Career Companion is a study and career development app for physicians. It is an independent personal project, offered by invitation to colleagues. This page says what the app keeps about you, where it goes, and how to remove it.
@@ -1074,6 +1074,7 @@ The app sets one cookie, which keeps you logged in. It has no advertising and no
 - **Cloudflare.** The site runs on Cloudflare, and your account and study record are stored in its database.
 - **Google Drive.** A copy of your study record, with dated backups, is kept in private Google Drive storage that the app uses. Each account's data is stored in its own folder under a de-identified naming convention: the folder is labelled with a randomly generated account code, and neither the folder nor its files are labelled with your name or email address. Your password and login tokens are never copied there. The study record inside is the same one you see in the app, so it includes anything you typed about yourself. The person who runs the app can access this storage; other users cannot reach it.
 - **Your browser.** The app keeps a copy of your record and a few preferences on your device so it opens quickly and works briefly offline.
+- **Other Life OS apps.** When you finish a study session, a question set or a lesson, or master a board objective, the app reports only the kind of activity, when it happened, its size (minutes or questions), a short generic label and the objective's id to the suite's governance service (USAP, run by the same person), which passes it on to the Routine Rewards app so it can count it toward your routines. Your email is turned into a one-way code for this and is never sent; your answers, scores, notes and study content are never sent. USAP also receives counts and timings about how the app runs, never what you entered.
 
 ## AI services
 Lessons, questions, reviews and chat answers are written by outside AI services. When you ask for one, the text of that request is sent to the service that answers it. A request can include the topic, reference text, a summary of your progress, your question and, in the Ask panel, parts of your own study record. Your password is never sent.
@@ -1083,9 +1084,9 @@ The services in use are Google Gemini, DeepSeek, Cloudflare Workers AI and, when
 ## How Google account data is used
 The app uses a single Google account, set up by the person who runs it, for its Google Drive storage. Users of the app are not asked to sign in with Google, and the app does not access any user's Google account.
 
-With that one connection the app does two things only: it reads the reference library in a single Drive folder to ground lessons, and it creates and updates each account's own folder of study records in a second Drive folder. It does not read, change or delete anything else in the connected Drive.
+That connection asks Google for the Google Drive scope (https://www.googleapis.com/auth/drive), because the reference library and the study-record folders already exist in that account's Drive and were not created by the app. With it the app does two things only: it reads the reference library in a single Drive folder to ground lessons, and it creates and updates each account's own folder of study records in a second Drive folder. It does not read, change or delete anything else in the connected Drive.
 
-The app's use of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements. Data obtained through Google Drive is not sold, not used for advertising, and not used to train general-purpose AI models. Reference text is passed to an AI service only to write the lesson or answer that a user asked for.
+The app's use of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements. Data obtained through Google Drive is not shared with anyone except as described here, not sold, not used for advertising, and not used to train AI models. Reference text is passed to an AI service only to write the lesson or answer that a user asked for.
 
 ## Sharing
 Your information is not sold or shared for marketing. It goes only to the services named above, to run the app, and would be disclosed otherwise only if the law required it.
@@ -1175,7 +1176,7 @@ h1,h2{font-family:"IBM Plex Serif",Georgia,serif;margin:0;line-height:1.2}h1{fon
 .nav{display:flex;gap:16px;flex-wrap:wrap;font-size:.9rem}</style></head><body><div class="wrap">
 <div><h1>${title}</h1><p class="muted">Doctor Career Companion · last updated ${escH(p.date)}</p></div>
 ${pageBody(p.text)}
-<div class="nav"><a href="/account.html">Back to the app</a><a href="/privacy.html">Privacy policy</a><a href="/terms.html">Terms of service</a></div>
+<div class="nav"><a href="/account.html">Back to the app</a><a href="/privacy.html">Privacy policy</a><a href="/terms.html">Terms of service</a><a href="/about">About</a></div>
 </div></body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' } });
 }
 
@@ -1793,8 +1794,8 @@ const app = {
       try { return await mcpServer(request, env, url.pathname.slice(5).replace(/\/+$/, ''), ctx); }
       catch (e) { console.error(e); return json({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Server error' } }, 500); }
     }
-    const page = /^\/(privacy|terms)(?:\.html)?\/?$/.exec(url.pathname);
-    if (page && request.method === 'GET') { try { return await pageResponse(env, page[1]); } catch (e) { console.error(e); return new Response('This page could not be shown just now. Try again.', { status: 500 }); } }
+    const page = /^\/(privacy|policy|terms)(?:\.html)?\/?$/.exec(url.pathname);   // /policy is the privacy policy too (the address set in the Google console)
+    if (page && request.method === 'GET') { try { return await pageResponse(env, page[1] === 'policy' ? 'privacy' : page[1]); } catch (e) { console.error(e); return new Response('This page could not be shown just now. Try again.', { status: 500 }); } }
     if (url.pathname.startsWith('/voice/hf/') || url.pathname.startsWith('/voice/ort/')) {
       try { return await voiceFile(request, env, ctx, url); }
       catch (e) { console.error(e); return fail(500, 'Something went wrong on the server. Try again.'); }
