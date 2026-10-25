@@ -26,6 +26,9 @@ import { ttsList as mkosSays } from './mkos/pronounce.js';
    this file. The AI order of operations (SERVICES, TIERS, JOBS, AI_ORDER) is locked (SR-03): nothing here wraps, reorders or
    observes runAI or the MKOS AI calls, and the hooks that would touch AI routing or MKOS migration are refused by the kit. */
 import { createUsapNode } from './usap_node_kit_v1.js';
+/* USAP Account-Level Data Framework (SR-42): src/adf.js wires the Brain's shared module src/usap_adf_v1.js (a copy: replace it, never
+   edit it here) into the account folders only. See the note above syncUser. */
+import { driveAdapter, adfOnce, adfConformance, adfExport } from './adf.js';
 /* Route templates only: the connector token in /mcp/<token> and any id never leave the app. */
 const usapRoute = url => url.pathname.startsWith('/mcp') ? '/mcp/:token'
   : '/' + url.pathname.split('/').filter(Boolean).slice(0, 3).map(s => /^[a-f0-9]{16,}$/i.test(s) || /^\d+$/.test(s) || s.length > 40 ? ':id' : s).join('/');
@@ -79,6 +82,7 @@ function init(env) {
     /* Which Drive file holds each record, and the version of the record that file holds. */
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS drive_docs (user_id TEXT NOT NULL, path TEXT NOT NULL, file_id TEXT NOT NULL, synced TEXT NOT NULL, PRIMARY KEY (user_id, path))`),
   ]).then(() => env.DB.prepare('ALTER TABLE drive_accounts ADD COLUMN v INTEGER NOT NULL DEFAULT 0').run().catch(() => { }))   // added later; fails harmlessly once it is there
+    .then(() => env.DB.prepare('ALTER TABLE drive_accounts ADD COLUMN adf TEXT').run().catch(() => { }))   // ADF: when the account folder got its standard layout (once)
     .catch(e => { schema = null; throw e; });
   return schema;
 }
@@ -901,7 +905,10 @@ async function driveSlice(env, id, offset) {
    after the reply is sent, and a timer every five minutes copies whatever is still waiting.
    Isolation: every function here takes the account id the server worked out for itself and looks the folder up in that account's
    own drive_accounts row. No request carries a folder or file id for this part of Drive, except a backup to download, and that one
-   is checked to sit in the caller's own backups folder first. */
+   is checked to sit in the caller's own backups folder first.
+   USAP ADF (src/adf.js): once per account, from the timer, the standard subfolders are made inside the account folder (backups/ is
+   reused) and metadata_registry.json registers account.json and the record files where they are. Nothing is moved or renamed and
+   the copy job above is unchanged; drive_accounts.adf records that it was done. */
 const FOLDER = 'application/vnd.google-apps.folder', LEASE = 90000, KEEP_BACKUPS = 14, LAYOUT = 2;
 const folderName = id => 'acct-' + id.slice(0, 12);
 function gfail(r, j) {
@@ -1012,6 +1019,27 @@ async function sweep(env) {
   for (const id of ids) { if (B.n <= 6) break; await syncUser(env, id, B); }
   return 34 - B.n;   // Google requests this run spent
 }
+/* ADF: the app's Drive helpers as the module's adapter (account folders only). */
+const adfDrive = env => driveAdapter({
+  list: async query => ((await (await gfetch(env, 'files', { q: query, pageSize: 100, fields: 'files(id,name)' })).json()).files || []),
+  mkdir: (name, parent) => mkdir(env, name, parent),
+  upload: o => gupload(env, { ...o, full: true }),
+  read: async id => await (await gfetch(env, 'files/' + id, { alt: 'media' })).text(),
+});
+/* ADF: one account folder a run gets its standard layout and registry, once (drive_accounts.adf), under the copy job's lease. */
+async function adfTick(env) {
+  if (!storeOn(env)) return null;
+  const now = Date.now(), DB = env.DB;
+  return adfOnce({
+    next: async () => { const r = await DB.prepare('SELECT user_id, folder, profile FROM drive_accounts WHERE folder IS NOT NULL AND profile IS NOT NULL AND records IS NOT NULL AND backups IS NOT NULL AND v >= ? AND adf IS NULL AND lease < ? LIMIT 1').bind(LAYOUT, now - LEASE).first();
+      return r ? { uid: r.user_id, folderId: r.folder, name: folderName(r.user_id), profileId: r.profile } : null; },
+    take: async uid => !!await DB.prepare('UPDATE drive_accounts SET lease = ? WHERE user_id = ? AND lease < ? RETURNING user_id').bind(now, uid, now - LEASE).first(),
+    records: async uid => (await DB.prepare('SELECT path, file_id FROM drive_docs WHERE user_id = ?').bind(uid).all()).results,
+    done: uid => DB.prepare('UPDATE drive_accounts SET adf = ? WHERE user_id = ?').bind(new Date().toISOString(), uid).run(),
+    release: uid => DB.prepare('UPDATE drive_accounts SET lease = 0 WHERE user_id = ?').bind(uid).run(),
+  }, adfDrive(env));
+}
+const adfTickSafe = env => adfTick(env).catch(e => { console.error('adf', e); return null; });
 
 /* ---------- The privacy policy and terms of service ----------
    Both pages are plain text that the owner can rewrite on the account page. The words below are the starting versions; an edited
@@ -1471,7 +1499,8 @@ async function api(request, env, url, ctx) {
   if (route === 'GET /api/backup') {
     const { results } = await env.DB.prepare('SELECT path, body, updated FROM docs WHERE user_id = ?').bind(user.id).all();
     const docs = {}; for (const r of results) { try { docs[r.path] = JSON.parse(r.body); } catch { } }
-    return new Response(JSON.stringify({ app: 'doctor-career-companion', account: user.email, saved: new Date().toISOString(), docs }, null, 1), { headers: {
+    /* USAP ADF standard export: the app's own bundle (unchanged) is app_data; the restore on the page accepts this and older files. */
+    return new Response(JSON.stringify(adfExport(folderName(user.id), { app: 'doctor-career-companion', account: user.email, saved: new Date().toISOString(), docs }), null, 1), { headers: {
       'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Content-Disposition': `attachment; filename="doctor-career-companion-backup-${new Date().toISOString().slice(0, 10)}.json"` } });
   }
   if (route === 'DELETE /api/account') {
@@ -1703,6 +1732,8 @@ const app = {
   async scheduled(event, env, ctx) {
     const drive = (async () => {
       const spent = await sweep(env).catch(e => { console.error(e); return 34; });
+      /* USAP ADF: when the copy job was light, one account folder still waiting gets its standard layout (once per account). */
+      if (spent <= 6) await adfTickSafe(env);
       /* MKOS runs when the sweep had little to copy, and in every third run regardless, so it is never starved. */
       const third = Math.floor(new Date(event.scheduledTime || Date.now()).getUTCMinutes() / 5) % 3 === 0;
       if (env.MKOS !== 'off' && (spent <= 6 || (third && spent <= 20))) await mkTickSafe(env);
@@ -1771,6 +1802,14 @@ async function usapStatus(env, event) {
   if (routed && routed.n) M('retrieval_satisfied_rate', (routed.r || 0) / routed.n, {});
   // The database's size, as D1 reports it after a statement.
   try { const r = await env.DB.prepare('SELECT 1').run(); M('d1_size_bytes', r && r.meta && r.meta.size_after, { database: 'doctor-career-companion' }); } catch { }
+  // ADF conformance, once a day (the first run of 00:00 UTC): checked on the most recently synced account folder that has its layout.
+  if (new Date(event && event.scheduledTime || Date.now()).getUTCHours() === 0 && storeOn(env)) {
+    try {
+      const row = await one('SELECT user_id, folder FROM drive_accounts WHERE adf IS NOT NULL AND folder IS NOT NULL ORDER BY synced DESC LIMIT 1');
+      const central = [KNOW(env), str(env.MKOS_DRIVE_FOLDER, 200)].filter(Boolean);
+      await adfConformance(adfDrive(env), { folderId: row && row.folder, name: row ? folderName(row.user_id) : '', separate: !!ACCTS(env) && !central.includes(ACCTS(env)), emit: M });
+    } catch (e) { console.error('adf check', e); }
+  }
 }
 
 /* ---------- Self-healing (USAP remediation, H7) ----------

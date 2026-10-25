@@ -378,7 +378,7 @@ async function readBlueprintFile(f){const pdf=/pdf/i.test(f.type)||/\.pdf$/i.tes
     const doc=await window.pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise,pages=[];
     for(let i=1;i<=Math.min(doc.numPages,150);i++){const c=await (await doc.getPage(i)).getTextContent();pages.push(c.items.map(x=>({s:x.str,x:x.transform[4],y:x.transform[5],w:x.width})));text+=c.items.map(x=>x.str).join(' ')+'\n'}
     cats=parseBlueprintPages(pages);if(cats.length<5)cats=parseOutlinePages(pages)}
-  else{text=await f.text();let j=null;try{j=JSON.parse(text)}catch(e){}
+  else{text=await f.text();let j=null;try{j=adfOpen(JSON.parse(text))}catch(e){}
     if(j){const b=bpOK(j)?j:j.docs&&(bpOK(j.docs.blueprint)?j.docs.blueprint:bpOK(j.docs[AREA+'/blueprint'])?j.docs[AREA+'/blueprint']:null);if(!b)throw{code:'upstream_error',message:'That file does not hold a blueprint outline.'};
       return {title:String(b.title||f.name).slice(0,120),cats:bpClean(b.cats),moc:b.moc?1:0}}
     cats=parseBlueprint(text)}
@@ -1943,10 +1943,14 @@ async function prefetch(){const ss=S.session;if(!ss||ss.loading||ss.next||ss.i+1
 function advance(){const ss=S.session;if(!ss||!ss.next)return;ss.i++;const L=ss.next;ss.next=null;openLesson(L);if(st.prefs.auto)playSession();prefetch()}
 function finishSession(completed){const ss=S.session;S.session=null;if(completed){day().done=1;saveState();toast('Checked in. Session complete.')}if(!P.on)render()}
 function gapTopic(id){const g=st.gaps.find(x=>x.id===id);return g&&TOP[g.tid]?[g,TOP[g.tid]]:[null,null]}
-async function buildBackup(){saveNow();const data=JSON.stringify({app:'doctor-career-companion',saved:new Date().toISOString(),docs},null,1),name='doctor-career-companion-'+dayStr()+'.json',ok=()=>{st.prefs.lastBackup=Date.now();saveState();render();toast('Backup saved.')};
+/* USAP Account-Level Data Framework (SR-42) export format, written here because the page cannot load the server's module
+   (src/usap_adf_v1.js): the app's own backup travels unchanged in app_data; adfOpen unwraps it, and an older file passes through. */
+function adfWrap(old){return {usap_adf:'1',adf_version:'1.0.0',app_id:'doctor_companion_app',exported_at:new Date().toISOString(),user_state:{userId:'',preferences:{},history:{},mastery:{},analytics:{},lastActive:''},userProfile:{},preferences:{},events:[],analytics:{},userContent:{},customizations:{},assets:[],app_data:old}}
+function adfOpen(j){if(j&&j.usap_adf==='1'){if(j.app_id&&j.app_id!=='doctor_companion_app')return null;return j.app_data}return j}
+async function buildBackup(){saveNow();const data=JSON.stringify(adfWrap({app:'doctor-career-companion',saved:new Date().toISOString(),docs}),null,1),name='doctor-career-companion-'+dayStr()+'.json',ok=()=>{st.prefs.lastBackup=Date.now();saveState();render();toast('Backup saved.')};
   if(DL){try{await DL.save({filename:name,data});ok()}catch(e){if(e&&e.code!=='cancelled'&&e.code!=='declined')toast('The backup could not be saved ('+((e&&e.code)||'error')+').',6000)}return}
   try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);ok()}catch(e){toast('The backup could not be saved here.',6000)}}
-function readBackup(text){let j;try{j=JSON.parse(text)}catch(e){return {err:'That file is not a backup: it could not be read as JSON.'}}
+function readBackup(text){let j;try{j=adfOpen(JSON.parse(text))}catch(e){return {err:'That file is not a backup: it could not be read as JSON.'}}
   const src=j&&typeof j.docs==='object'&&j.docs?j.docs:null;if(!src||(j.app&&j.app!=='doctor-career-companion'))return {err:'That file is not a Doctor Career Companion backup.'};
   const out={};Object.entries(src).forEach(([k,v])=>{const n=k.startsWith(AREA+'/')?k.slice(AREA.length+1):k;if(/^[A-Za-z0-9_\-.~:@+]{1,120}$/.test(n)&&v&&typeof v==='object'&&!Array.isArray(v))out[n]=v});
   const n=Object.keys(out).length;return n?{n,saved:j.saved||'',state:!!(out.state&&out.state.v),docs:out}:{err:'That backup is empty.'}}

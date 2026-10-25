@@ -37,6 +37,17 @@ intelligence, confidence, blueprint, pronunciation, curriculum and competency la
   (`_central`, see `homeOf()` in `src/worker.js`). A new setting persists by default; never write credentials to Drive.
 - Knowledge extracted from the library never goes into this repository (it is public; MKSAP and textbooks are licensed).
 
+## USAP Account-Level Data Framework (ADF, SR-42)
+`src/usap_adf_v1.js` is a copy of the Brain's `domain-sdk/usap_adf_v1.js`: replace it, never edit it here. `src/adf.js` wires it into the
+per-account folders only (never MKOS central storage or the library): once per account, from the five-minute timer when the copy job
+was light, each existing `acct-<id>` folder gets the standard subfolders (its `backups/` reused) and a `metadata_registry.json`
+registering `account.json` (profile) and the record files (app_specific) where they are; nothing is moved, renamed or deleted, and
+`syncUser` writes `records/`, `backups/` and `account.json` as before. The once-per-account flag is `drive_accounts.adf`. The
+`adf_conformance` metric is sent once a day (00:00 UTC run of `usapStatus`). Export (`GET /api/backup` and the page's Download a
+backup) is the standard bundle `{usap_adf:"1", adf_version, app_id:"doctor_companion_app", exported_at, user_state, …, app_data}`
+with the app's old bundle unchanged in `app_data`; the page's restore (`adfOpen`) accepts it and older files. Tests:
+`node --test test/adf.test.mjs`.
+
 ## AI order of operations
 The app's AI order of operations (`SERVICES`, `TIERS`, `JOBS`, `AI_ORDER` in `src/worker.js`) was deliberately worked out and is changed
 only on a deliberate, specific request from the owner. MKOS calls only free services directly and never changes that hierarchy.
