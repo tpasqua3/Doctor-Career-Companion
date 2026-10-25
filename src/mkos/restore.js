@@ -3,6 +3,7 @@
 //   registry_data -> mk_objects (and the alias index)    history -> mk_versions    graph -> mk_edges
 //   assets -> EducationalAsset records + mk_asset_store  registries/blueprints -> the blueprint execution tables    governance/reviews -> mk_reviews
 //   registries/lifecycle -> mk_lifecycle (the relevance graph, mk_relevance, is derived and rebuilt by the lifecycle sweep)
+//   registries/ite_mapping -> mk_ite_map (the central ITE mapping library; the per-account watch list and audit summary are derived)
 //   config -> the app's settings and mk_settings (only where missing; credentials are never in Drive)
 //   central -> the central registry records (docs held by '_central': pronunciation registry, change log, ABIM blueprint document)
 // It never replaces a newer row with an older one (objects keep whichever 'updated' is later; versions, edges, content and table rows are
@@ -12,12 +13,13 @@ import { J, nowIso, audit, TABLES, setSetting } from './db.js';
 import { contentHash, indexAliases, norm } from './kb.js';
 import { queue } from './ingest.js';
 import { fileHash, configDoc, CONFIG_MOVING, CENTRAL } from './mirror.js';
+import { restoreMappingStmt } from './ite.js';
 
 // The app's own tables that canonical storage also restores (the configuration and central records live in them).
 export const APP_TABLES = ['CREATE TABLE IF NOT EXISTS docs (user_id TEXT NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (user_id, path))',
   'CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT NOT NULL)'];
 
-const ORDER = ['config', 'central/', 'registry_data/', 'history/', 'graph/', 'assets/', 'registries/blueprints', 'registries/lifecycle', 'registries/enhancements', 'governance/reviews'];
+const ORDER = ['config', 'central/', 'registry_data/', 'history/', 'graph/', 'assets/', 'registries/blueprints', 'registries/lifecycle', 'registries/enhancements', 'registries/ite_mapping', 'governance/reviews'];
 const rank = (k) => { const i = ORDER.findIndex((p) => k === p || k.startsWith(p)); return i < 0 ? 99 : i; };
 
 async function readManifest(deps, root) {
@@ -115,6 +117,12 @@ export async function restoreStep(env, deps, root, prog, { mode = 'restore', row
         .bind(r.asset_id, r.object_id, r.kind, r.asset_version, typeof r.payload_json === 'string' ? r.payload_json : JSON.stringify(r.payload_json || {}), Number(r.score) || 0, r.at) : null, recs);
       prog.counts.enhancements = (prog.counts.enhancements || 0) + recs.length; prog.at++; prog.row = 0; rows += Math.max(20, recs.length); continue;
     }
+    if (k === 'registries/ite_mapping') {
+      // The central ITE mapping library: inserted, or replacing an older row (never a newer one).
+      const recs = (doc && doc.records) || [];
+      await insertAll(env, (r) => restoreMappingStmt(env, r), recs);
+      prog.counts.ite_mapping = (prog.counts.ite_mapping || 0) + recs.length; prog.at++; prog.row = 0; rows += Math.max(20, recs.length); continue;
+    }
     const slice = (list || []).slice(prog.row, prog.row + (rowsPerStep - rows));
     if (k.startsWith('registry_data/')) await upsertObjects(env, slice);
     else if (k.startsWith('history/')) await insertAll(env, (v) => v && v.id ? env.DB.prepare('INSERT OR IGNORE INTO mk_versions (id, version, hash, body, at, event_id, actor) VALUES (?,?,?,?,?,?,?)').bind(v.id, v.version, v.hash || '', JSON.stringify(v.body), v.at, v.event_id || null, v.actor || 'restore') : null, slice);
@@ -164,7 +172,7 @@ export async function drillStep(env, drill, deps, root, prog) {
     ['relationships', 'SELECT COUNT(*) AS n FROM mk_edges'], ['relationship checksum', 'SELECT SUM(LENGTH(src) * 7 + LENGTH(rel) * 3 + LENGTH(dst) + CAST(conf AS INTEGER)) AS n FROM mk_edges'],
     ['asset content', "SELECT COUNT(DISTINCT asset_id) AS n FROM mk_asset_store WHERE asset_id LIKE 'ea.s.%'"], ['blueprint registries', 'SELECT COUNT(*) AS n FROM mk_blueprint_registries'],
     ['blueprint domains', 'SELECT COUNT(*) AS n FROM mk_blueprint_domains'], ['blueprint objectives', 'SELECT COUNT(*) AS n FROM mk_blueprint_objectives'], ['blueprint concept mappings', 'SELECT COUNT(*) AS n FROM mk_blueprint_concept_mappings'],
-    ['reviews', 'SELECT COUNT(*) AS n FROM mk_reviews'], ['lifecycle records', 'SELECT COUNT(*) AS n FROM mk_lifecycle'], ['lesson enhancements', 'SELECT COUNT(*) AS n FROM mk_enhancements'], ['aliases', 'SELECT COUNT(*) AS n FROM mk_aliases']];
+    ['reviews', 'SELECT COUNT(*) AS n FROM mk_reviews'], ['lifecycle records', 'SELECT COUNT(*) AS n FROM mk_lifecycle'], ['lesson enhancements', 'SELECT COUNT(*) AS n FROM mk_enhancements'], ['ITE mappings', 'SELECT COUNT(*) AS n FROM mk_ite_map'], ['ITE mapping confirmations', 'SELECT COALESCE(SUM(confirmations), 0) AS n FROM mk_ite_map'], ['aliases', 'SELECT COUNT(*) AS n FROM mk_aliases']];
   checks.splice(checks.length - 1, 0, ['central records', `SELECT COUNT(*) AS n FROM docs WHERE user_id = '${CENTRAL}'`], ['central records checksum', `SELECT SUM(LENGTH(body)) AS n FROM docs WHERE user_id = '${CENTRAL}'`]);
   const counts = []; for (const [name, sql] of checks) { const a = await one(env.DB, sql), b = await one(drill, sql); counts.push({ name, production: a ?? 0, rebuilt: b ?? 0, match: (a ?? 0) === (b ?? 0) }); }
   // Configuration: every setting that does not move while the engine runs must come back with the same value.

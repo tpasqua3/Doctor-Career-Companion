@@ -10,6 +10,7 @@ import { getObject, getObjects, putObject, setStatus, slug } from './kb.js';
 import { topicContext, checkCitations } from './bridge.js';
 import { nodeForTopic } from './education.js';
 import { enrichLesson } from './enrich.js';
+import { markObjectives } from './ite_marks.js';
 
 const U = (uid) => 'u' + String(uid).replace(/[^a-z0-9]/gi, '').slice(0, 10).toLowerCase();
 const enc = new TextEncoder();
@@ -295,6 +296,7 @@ export async function putAssets(env, u, a) {
       const bt = await getObject(env, objective);
       if (bt && bt.blueprint) await env.DB.prepare('INSERT OR REPLACE INTO mk_blueprint_asset_mappings (blueprint_id, asset_id, asset_type, blueprint_weight, priority_score, confidence_score) VALUES (?, ?, ?, ?, ?, ?)')
         .bind(bt.blueprint, id, 'objective_lesson', Number(bt.est_pct) || null, Number(bt.priority_score) || null, o.asset_confidence.overall).run();
+      await markObjectives(env, [objective], 'lesson_stored');   // ITE pipeline trace (ite.js): accounts waiting on this objective
     }
     if (!personal) await served(env, u.id, kind, [id]);
     out.push({ id, version: r.version, review_status, changed: r.changed, older_citations: cc.older || 0, confidence: o.asset_confidence.overall, tier: o.asset_confidence.tier });

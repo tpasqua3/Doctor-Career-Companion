@@ -14,6 +14,8 @@
 //   registries/sources_registry.json, blueprints.json           readable sources registry; blueprint execution tables and mappings
 //   registries/lifecycle.json                                   every source's Continuous Knowledge Lifecycle record (stages, history)
 //   registries/enhancements.json                                every lesson enhancement (enrich.js) with the asset version it made
+//   registries/ite_mapping.json                                 the central ITE -> blueprint objective mapping library (ite.js): wording,
+//                                                               objectives, confirmations; no user identity
 //   registries/guidelines_registry_vN_MKOS_STAGED.json          the compatibility registry (cutover step 2)
 //   governance/events_YYYY-MM.json, audit_YYYY-MM.json, reviews.json, reconciliation.json
 //   config/configuration.json                                   configuration: the AI order of operations (built-in and the owner's
@@ -36,6 +38,7 @@ import { FRAMEWORK, FRAMEWORK_HASH } from './framework.js';
 import { J, nowIso, getSetting, setSetting, mkInit } from './db.js';
 import { contentHash } from './kb.js';
 import { buildCompatRegistry } from './cutover.js';
+import { mappingRows } from './ite.js';
 
 const README = `MKOS: the Medical Knowledge Operating System behind the Doctor Career Companion app.
 
@@ -53,7 +56,8 @@ history/         every version of every object (version history).
 graph/           the knowledge graph: typed relationships between all of the above.
 assets/          the shared library of educational assets (lessons, questions, flashcards) with their content.
 registries/      the readable sources registry, the board blueprint tables, the staged compatibility registry, and each source's
-                 knowledge lifecycle record (lifecycle.json), and the enhancements added to lessons (enhancements.json).
+                 knowledge lifecycle record (lifecycle.json), the enhancements added to lessons (enhancements.json), and the
+                 shared library mapping in-training exam wording to blueprint objectives (ite_mapping.json; no personal data).
 governance/      change events, audit records, reviews and the daily reconciliation report.
 snapshot/        one bundled file holding the knowledge base, as a restore point.
 ontology/        the ontology, frameworks and schemas the knowledge base follows.
@@ -74,7 +78,7 @@ const BUCKET = "CASE WHEN lower(substr(src, -1)) GLOB '[a-z0-9]' THEN lower(subs
 // mk_settings and the app's settings table is configuration and persists by default, so a setting added later is covered without a
 // change here. Credentials are never written to Drive.
 // lc_*: the lifecycle orchestrator's cursors and pass state (lifecycle.js), run state like the scan cursor.
-const STATE_KEYS = /^(tick|tick_lease|scan|scan_last_complete|ai_budget|drill_prog|drill_report|learner_watch|mirror_errors|reconcile_day|reconcile_report|snapshot_day|pron_gen_day|pron_sync|pron_sync_t|persist_lease|restore_prog|lc_[a-z_]+)$/;
+const STATE_KEYS = /^(tick|tick_lease|scan|scan_last_complete|ai_budget|drill_prog|drill_report|learner_watch|mirror_errors|reconcile_day|reconcile_report|snapshot_day|pron_gen_day|pron_sync|pron_sync_t|persist_lease|restore_prog|lc_[a-z_]+|ite_[a-z_]+)$/;
 const CREDENTIAL = /^google_|token|secret|refresh|password|credential|api_?key/i;
 // Settings that change as the engine runs; a restore drill compares only the rest (they can move between the persist and the compare).
 export const CONFIG_MOVING = /^(bootstrap|paused|framework_hash|legacy_registry_check)$/;
@@ -116,6 +120,9 @@ async function fingerprints(env, deps) {
   // Lesson enhancements (durable: lesson version history). Penetration, layers, confidence, coverage and gaps are derived and not written.
   const en = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(at) AS u FROM mk_enhancements').first();
   if (en && en.n) out.push({ key: 'registries/enhancements', fp: `${en.n}|${en.u}`, n: en.n });
+  // The central ITE mapping library (durable: confirmations are not derivable). Per-account ITE records live in each account's folder.
+  const im = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(updated) AS u, SUM(confirmations) AS c FROM mk_ite_map').first().catch(() => null);
+  if (im && im.n) out.push({ key: 'registries/ite_mapping', fp: `${im.n}|${im.u}|${im.c}`, n: im.n });
   const month = nowIso().slice(0, 7);
   const ev = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(updated) AS u FROM mk_events WHERE created LIKE ?').bind(month + '%').first();
   out.push({ key: 'governance/events_' + month, fp: `${ev.n}|${ev.u}` });
@@ -165,6 +172,10 @@ async function content(env, key, deps) {
   if (key === 'registries/enhancements') {
     const rows = (await env.DB.prepare('SELECT * FROM mk_enhancements ORDER BY asset_id, object_id').all()).results.map((r) => ({ ...r, payload_json: J(r.payload_json, {}) }));
     return { name: 'enhancements.json', folder: 'registries', text: JSON.stringify({ kind: 'mkos-enhancements', count: rows.length, records: rows }), n: rows.length };
+  }
+  if (key === 'registries/ite_mapping') {
+    const rows = await mappingRows(env);
+    return { name: 'ite_mapping.json', folder: 'registries', text: JSON.stringify({ kind: 'mkos-ite-mapping', count: rows.length, records: rows }), n: rows.length };
   }
   let m = /^governance\/(events|audit)_(\d{4}-\d{2})$/.exec(key);
   if (m) {

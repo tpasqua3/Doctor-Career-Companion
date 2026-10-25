@@ -788,7 +788,24 @@ const discName=k=>k.startsWith('t:')?(TRACKS.find(t=>t.id===k.slice(2))||{name:k
 const ite=()=>docs.ite&&Array.isArray(docs.ite.areas)?docs.ite:null;
 /* A missed item moves the plan only once it is reviewed (status ok or none); reports read before the review step have no status. */
 const iteDone=x=>!!x&&(!x.status||x.status==='ok'||x.status==='none');
-const iteMissed=()=>{const m={},d=ite();if(d)A(d.missed).forEach(x=>{if(iteDone(x)&&TOP[x.tid])m[x.tid]=(m[x.tid]||0)+1});return m};
+/* ITE performance records (MKOS ITE mapping v2, src/mkos/ite.js): one per confirmed missed item and objective, in the account's own record
+   med/iteperf, which the server writes when a confirmation reaches it. Until it has this report, they are read from the report itself by
+   the same rules (itePerfFor here and recordsForItem in src/mkos/ite.js: change them together), plus confirmations still waiting to
+   sync. Eligible = confirmed and not archived; it never depends on a lesson existing. */
+const iteRid=d=>d&&d.rid?String(d.rid).slice(0,40):'r'+Number((d&&d.t)||0).toString(36);
+const iteDay=t=>{const n=Number(t);return new Date(n>0?n:Date.now()).toISOString().slice(0,10)};
+function itePerfFor(d,x,i){if(!iteDone(x))return [];const rid=iteRid(d),ek=String(d.mapped||'').slice(0,40),cut=(v,n)=>String(v==null?'':v).slice(0,n);
+  const base={report_id:rid,item:i,exam_key:ek,blueprint:d.bp||'',status:'missed',source:'ITE',confirmed:true,archived:false,date:iteDay(x.ct||d.t),tid:cut(x.tid,120),text:cut(x.text,200),area:cut(x.area,80)};if(!x.status)base.legacy=1;
+  const objs=x.objective?[{objective:x.objective,oname:x.oname,ocat:x.ocat,osub:x.osub,opri:x.opri},...A(x.also)]:[];
+  if(objs.length)return objs.filter(o=>o&&o.objective).map(o=>Object.assign({},base,{id:rid+'#'+i+'#'+ek+'#'+o.objective,objective_id:cut(o.objective,80),oname:cut(o.oname,200),ocat:cut(o.ocat,80),osub:cut(o.osub,120),opri:o.opri??null}));
+  return x.tid?[Object.assign({},base,{id:rid+'#'+i+'#'+ek+'#topic',objective_id:'',kind:'topic'})]:[]}
+function itePerfView(){const d=ite();if(!d)return [];const rid=iteRid(d),P=docs.iteperf;
+  if(!P||!A(P.reports).includes(rid))return A(d.missed).flatMap((x,i)=>itePerfFor(d,x,i));
+  let r=A(P.r).filter(x=>x&&x.report_id===rid&&!x.archived);
+  A(d.sync).forEach(s=>{if(!s||s.archive||s.report_id!==rid)return;r=r.filter(x=>!(x.item===s.item&&x.exam_key===s.exam_key)).concat(A(s.recs))});
+  return r}
+const iteEligible=(r,ek)=>!!r&&r.confirmed===true&&!r.archived&&r.status==='missed'&&(!ek||r.exam_key===ek);
+const iteMissed=()=>{const m={},seen=new Set();itePerfView().forEach(r=>{if(!iteEligible(r)||!TOP[r.tid])return;const k=r.report_id+'#'+r.item;if(seen.has(k))return;seen.add(k);m[r.tid]=(m[r.tid]||0)+1});return m};
 function evidence(id,im){const t=st.topics[id]||{},cs=cardStat()[id];return Math.min(1,(t.n||0)/10)*.5+(t.rate?.15:0)+(cs&&cs.k?.15:0)+(t.asks?.1:0)+(im[id]?.1:0)}
 function landscape(){const fm=focusMap(),im=iteMissed(),rows={},subs={};
   Object.values(TOP).forEach(t=>{const ev=evidence(t.id,im);if(!ev)return;const pts=100*(1-need(t.id,fm)),k=secDisc(t.sec),r=rows[k]||(rows[k]={k,w:0,s:0,n:0,q:0,c:0});r.w+=ev;r.s+=ev*pts;r.n++;const x=st.topics[t.id]||{};r.q+=x.n||0;r.c+=x.c||0;
@@ -822,8 +839,11 @@ async function readITE(files,pasted){let text=String(pasted||'').trim(),images=[
   const missed=A(r&&r.missed).map(x=>x&&typeof x==='object'?{text:String(x.text||'').slice(0,200),area:String(x.area||'').slice(0,80)}:{text:String(x||'').slice(0,200),area:''}).filter(x=>x.text).slice(0,100)
     .map(x=>{const t=matchTopic(x.text);return {text:x.text,area:x.area,ttid:t?t.id:'',status:'pending'}});
   if(!areas.length&&!missed.length)throw{code:'upstream_error',message:'No scores or missed objectives could be found in that. Check it is the score report and try again.'};
-  put('ite',{exam:String((r&&r.exam)||'In-training examination').slice(0,80),year:String((r&&r.year)||'').slice(0,30),overall:num(r&&r.overallPct),pctile:num(r&&r.overallPercentile),areas,missed,v:2,t:Date.now()});
-  await iteMapNow(true)}
+  // Stage 1 (extraction) is kept in the account: the raw report text (when there is text), its content areas and its missed items.
+  // A new report replaces the older ones, so their performance records are archived (the first sync entry says so).
+  const t=Date.now(),rid='r'+t.toString(36);put('iteraw',{rid,text:text.slice(0,60000),images:images.length,t});
+  put('ite',{exam:String((r&&r.exam)||'In-training examination').slice(0,80),year:String((r&&r.year)||'').slice(0,30),overall:num(r&&r.overallPct),pctile:num(r&&r.overallPercentile),areas,missed,v:2,t,rid,sync:[{archive:true,report_id:rid}]});
+  S.iteTrace=null;await iteMapNow(true)}
 
 /* The study log: one line per sitting with a lesson, a question set or a deck, and how long it actually held attention. */
 const logDoc=()=>docs.log&&Array.isArray(docs.log.e)?docs.log:(docs.log={e:[]});
@@ -1845,6 +1865,7 @@ function vProgress(){const w=span(7),mo=span(monthSoFar()),all=Object.values(st.
   ${(()=>{const d=ite();return `<div class="card"><h3>In-training exam report</h3>${d?`<p class="small"><b>${esc(d.exam)}${d.year?' '+esc(d.year):''}</b>${d.overall!=null?' · '+d.overall+'% correct':''}${d.pctile!=null?' · percentile '+d.pctile:''} · ${d.missed.length} missed item${d.missed.length===1?'':'s'}, ${missedMapped().length} mapped to blueprint objectives${d.missed.some(x=>x.status==='pending')?', '+d.missed.filter(x=>x.status==='pending').length+' waiting for your review':''}</p>
      ${d.areas.length?`<div class="tablewrap"><table><thead><tr><th>Content area</th><th class="n">You</th><th class="n">Peers</th><th class="n">Percentile</th></tr></thead><tbody>${d.areas.map(a=>`<tr><td>${esc(a.name)}</td><td class="n">${a.pct}%</td><td class="n">${a.peer!=null?a.peer+'%':'—'}</td><td class="n">${a.pctile??'—'}</td></tr>`).join('')}</tbody></table></div>`:''}
      ${d.missed.length?vIteReview(d):''}
+     ${d.missed.length&&mkOn()&&MK&&MK.owner?vIteAudit():''}
      <div class="row"><button class="btn sm danger" data-act="itedel">Remove this report</button><span class="tiny muted">Check the numbers against your report; they were read by AI.</span></div>`
      :`<p class="small muted">Load your score report and it becomes a second reading of your strengths and weaknesses: content-area scores place each discipline, and every missed objective is matched to a topic and moved up your plan.</p>`}
      ${S.busy?'':`<label class="f">${d?'Replace with another report':'Report file'} (PDF, screenshots or photos)<input type="file" id="itefile" accept="application/pdf,image/*,.txt" multiple style="padding:8px 0"></label><label class="f">Or paste the report text<textarea id="itetext" placeholder="Paste the content-area scores and the list of missed educational objectives"></textarea></label><div class="row"><button class="btn" data-act="iteread" ${SAMPLE?'':'disabled'}>Read the report</button></div>`}</div>`})()}
@@ -2089,7 +2110,10 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='mkplan'){const sc=planScope(),pr=$('#plpri');if(pr)st.prefs.priority=pr.value.trim().slice(0,300);S.askOpen=false;if(S.quiz)endQuiz();S.lesson=null;S.deck=null;S.tab=hasBP()&&sc==='abim'?'boards':'today';return run('Claude is building your learning plan…',()=>makePlan(sc))}
   if(a==='chatclear'){S.chat=[];render();return}
   if(a==='logall'){S.logAll=!S.logAll;render();return}
-  if(a==='itedel'){del('ite');S.iteSel={};render();return}
+  if(a==='itedel'){const d=ite();if(d&&mkOn())mk('ite_confirm',{items:[{archive:true,reason:'removed',report_id:iteRid(d)}]}).then(r=>{if(r&&r.perf){docs.iteperf=r.perf;cacheDocs()}return mk('ite_trace',{family:iteFam()})}).catch(e=>console.warn('ITE remove',e));
+    del('ite');S.iteSel={};S.iteTrace=null;S.iteAudit=null;render();return}
+  if(a==='itenone'){const i=Number(b.dataset.i);S.iteSel=S.iteSel||{};S.iteSel[i]='';const n=iteConfirm([i]);if(n)toast('Saved as no blueprint objective.');render();return}
+  if(a==='iteaudit'){return run('Auditing the ITE pipeline…',async()=>{S.iteAudit=await mk('ite_audit',{family:iteFam()})})}
   if(a==='iteok'){const n=iteConfirm([Number(b.dataset.i)]);if(n)toast('Saved. Your plan and board lessons now use it.');render();return}
   if(a==='iteokall'){const d=ite();if(!d)return;const n=iteConfirm(d.missed.map((x,i)=>x.status==='pending'?i:-1).filter(i=>i>=0));toast(n+' item'+(n===1?'':'s')+' confirmed. Your plan and board lessons now use them.',5000);render();return}
   if(a==='iteall'){S.iteAll=!S.iteAll;render();return}
@@ -2280,13 +2304,16 @@ async function queueBatch(items,len,o){o=o||{};const W=gqWriter(o.writer),batch=
    areas, or from the weakest subjects, and narrowed to one subject ranked by the report's percentile. Every lesson written for a
    blueprint objective becomes a shared MKOS knowledge object on that objective, so the next physician gets it without any AI. */
 const iteFam=()=>bpKind()==='moc'?'lka':'cert';
-/* Mapping a report's missed items to blueprint objectives, in the order MKOS asks for:
-   1. this physician's own confirmed mappings (account document "itemap", kept per blueprint family) answer first, with no AI;
-   2. MKOS narrows the rest deterministically (ite_map with items): each item's content area picks its blueprint discipline, offered
-      whole, plus the closest objectives from other disciplines by wording;
-   3. one batched call to the "report" job chooses the objective (or two, or none) from those options only, with a confidence;
-   4. every proposal waits for the physician's review; only reviewed items move the plan and the board queue, and each confirmation
-      is remembered in "itemap" so the same wording maps itself next time. Without AI the closest objective by wording is proposed. */
+/* Mapping a report's missed items to blueprint objectives (MKOS ITE mapping v2, src/mkos/ite.js), in the order MKOS asks for:
+   0. this physician's own confirmed mappings (account document "itemap", kept per blueprint family) answer first, with no AI;
+   1-2. the central mapping library (ite_map with central: true): the same wording (normalized), then near-identical wording (>= 90%
+      similar), confirmed before under the same blueprint by any physician; no AI, and it still waits for this physician's review;
+   3. for the rest MKOS builds a shortlist by discipline (the item's content area picks its blueprint discipline; the closest
+      objectives by wording, plus a few from other disciplines), and one batched call to the "report" job chooses the objective (or two,
+      or none) from each item's own options only, with a confidence;
+   4. every proposal waits for the physician's review; only reviewed items move the plan and the board queue. Each confirmation is
+      remembered in "itemap", strengthens the central mapping (wording -> objective only, nothing about the physician), and becomes a
+      performance record in the account (ite_confirm). Without AI the closest objective by wording is proposed. */
 const iteGrams=s=>{const t=' '+String(s).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()+' ',g=new Set();for(let i=0;i<t.length-2;i++)g.add(t.slice(i,i+3));return g};
 const iteSim=(a,b)=>{let n=0;for(const g of a)if(b.has(g))n++;return a.size+b.size?2*n/(a.size+b.size):0};
 const iteKey=t=>String(t).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
@@ -2305,70 +2332,120 @@ async function iteMapNow(force){const d=ite();if(!d||!A(d.missed).length)return;
   if(!mkOn()){d.missed.forEach(x=>{if(!x.ttid&&x.tid)x.ttid=x.tid;x.tid=x.ttid||'';x.status='ok';x.src='topic'});d.mapped=fam;d.review='done';put('ite',d);return}
   d.objx=d.mapped===fam&&d.objx?d.objx:{};
   const todo=[];d.missed.forEach((x,i)=>{if(x.status&&x.status!=='pending')return;if(!x.ttid&&x.tid&&!x.status)x.ttid=x.tid;todo.push(i)});
-  // 1. The physician's own confirmed mappings.
+  // 0. The physician's own confirmed mappings.
   const ask=[];todo.forEach(i=>{const x=d.missed[i],r=iteRecall(x.text,fam);if(r){x.recall=r;x.src='yours'}else ask.push(i)});
-  // 2. MKOS shortlist for everything (remembered items too, so their objectives' details and alternatives are at hand).
-  const R=await mk('ite_map',{family:fam,items:todo.map(i=>({text:d.missed[i].text,area:d.missed[i].area||''}))});
-  const pools=R&&R.pools||{},its=A(R&&R.items);Object.assign(d.objx,R&&R.objectives||{});
+  // 1-2 and the shortlist for everything (remembered items too, so their objectives' details and alternatives are at hand).
+  const R=await mk('ite_map',{family:fam,central:true,items:todo.map(i=>({text:d.missed[i].text,area:d.missed[i].area||''}))});
+  if(R&&R.blueprint){d.bp=R.blueprint;d.bpName=String(R.blueprint_name||'').slice(0,120)}
+  const pools=R&&R.pools||{},its=A(R&&R.items),whole=!!(R&&R.whole);Object.assign(d.objx,R&&R.objectives||{});
   const byI={};todo.forEach((i,j)=>byI[i]=its[j]||{});
   todo.forEach(i=>{const x=d.missed[i],r=byI[i];x.cands=[...new Set([...A(r.near),...A(r.extra)])].slice(0,14);x.lex=r.best||null});
   // Remembered items are applied at once (their objectives may sit outside the shortlist, so fetch none: the ids are kept as they are).
+  const fresh=[];   // remembered items applied again: their records go to the account; they are not a new confirmation
   todo.forEach(i=>{const x=d.missed[i];if(!x.recall)return;const ids=A(x.recall.o).filter(id=>d.objx[id]);
-    if(x.recall.none){iteApply(x,d,[]);x.conf=100}else if(ids.length){iteApply(x,d,ids);x.conf=100;x.prop=ids}else{x.src='';ask.push(i)}delete x.recall});
+    if(x.recall.none){iteApply(x,d,[]);x.conf=100;fresh.push(i)}else if(ids.length){iteApply(x,d,ids);x.conf=100;x.prop=ids;fresh.push(i)}else{x.src='';ask.push(i)}delete x.recall});
+  // 1-2. The central library's answer is proposed as it is: no AI for these.
+  const ai=[];ask.forEach(i=>{const x=d.missed[i],c=byI[i].central;if(c){const ids=A(c.ids).filter(id=>d.objx[id]);
+      if(c.none||ids.length){x.prop=c.none?[]:ids;x.conf=c.score;x.src='central';x.cstep=c.step;x.cn=Number(c.confirmations)||0;x.cnone=!!c.none;x.status='pending';x.cands=[...new Set([...x.prop,...A(x.cands)])].slice(0,14);return}}
+    ai.push(i)});
   // 3. One batched AI choice per 50 items, from each item's own options only.
   const pick={};let aiOk=false;
-  for(let c=0;c<ask.length;c+=50){const part=ask.slice(c,c+50),keys=[...new Set(part.map(i=>byI[i].pool).filter(Boolean))];
+  for(let c=0;c<ai.length;c+=50){const part=ai.slice(c,c+50),keys=whole?[...new Set(part.map(i=>byI[i].pool).filter(Boolean))]:[];
     const O=d.objx,line=id=>`${iteCode(id)} ${O[id]?O[id].name:''}${O[id]&&O[id].subcategory&&O[id].subcategory!==O[id].name?' ['+O[id].subcategory+']':''}`;
     const prompt=`You are mapping a physician's missed in-training exam items to the ABIM ${fam==='lka'?'Longitudinal Knowledge Assessment':'Internal Medicine Certification'} blueprint objectives they test.
-For each numbered item choose the blueprint objective it tests, using the codes given, and only from that item's own discipline list or its other options. Choose two only when the item genuinely tests both. Return an empty list when none of its options fits. Judge by the clinical content (for example "immune thrombocytopenia" is the objective named idiopathic thrombocytopenic purpura), not by shared words. Give your confidence from 0 to 100.
+For each numbered item choose the blueprint objective it tests, using the codes given, and only from ${whole?"that item's own discipline list or its other options":"that item's own options"}. Choose two only when the item genuinely tests both. Return an empty list when none of its options fits. Judge by the clinical content (for example "immune thrombocytopenia" is the objective named idiopathic thrombocytopenic purpura), not by shared words. Give your confidence from 0 to 100.
 Reply with JSON only: {"m":[{"i":1,"o":["code"],"c":90}]}
 
-${keys.map(k=>`DISCIPLINE LIST "${k}":\n`+A(pools[k]).map(line).join('\n')).join('\n\n')}
-
-ITEMS:
-${part.map((i,j)=>{const x=d.missed[i],r=byI[i];return `${j+1}. "${x.text}" (listed under: ${x.area||'not shown'}). ${r.pool?'Discipline list "'+r.pool+'".':'No discipline list.'} Other options: ${A(r.extra).map(line).join('; ')}`}).join('\n')}`;
-    try{const out=await askJ('report',prompt);A(out&&out.m).forEach(m=>{const i=part[Number(m&&m.i)-1];if(i==null)return;const r=byI[i],ok=new Set([...A(pools[r.pool]),...A(r.extra)]);
+${whole?keys.map(k=>`DISCIPLINE LIST "${k}":\n`+A(pools[k]).map(line).join('\n')).join('\n\n')+'\n\n':''}ITEMS:
+${part.map((i,j)=>{const x=d.missed[i],r=byI[i];return whole?`${j+1}. "${x.text}" (listed under: ${x.area||'not shown'}). ${r.pool?'Discipline list "'+r.pool+'".':'No discipline list.'} Other options: ${A(r.extra).map(line).join('; ')}`
+      :`${j+1}. "${x.text}" (listed under: ${x.area||'not shown'}). Options: ${[...new Set([...A(r.near),...A(r.extra)])].map(line).join('; ')}`}).join('\n')}`;
+    try{const out=await askJ('report',prompt);A(out&&out.m).forEach(m=>{const i=part[Number(m&&m.i)-1];if(i==null)return;const r=byI[i],ok=new Set([...A(pools[r.pool]),...A(r.near),...A(r.extra)]);
         const ids=A(m.o).map(cd=>[...ok].find(id=>iteCode(id)===String(cd).trim())).filter(Boolean).slice(0,2);pick[i]={ids,c:A(m.o).length&&!ids.length?0:Math.max(0,Math.min(100,Number(m.c)||0))}});aiOk=true}
     catch(e){console.warn('ite pick',e)}}
-  ask.forEach(i=>{const x=d.missed[i],r=byI[i];
+  ai.forEach(i=>{const x=d.missed[i],r=byI[i];
     if(pick[i]){x.prop=pick[i].ids;x.conf=pick[i].c;x.src='ai'}else{x.prop=r.best&&r.best.objective?[r.best.objective]:[];x.conf=r.best?r.best.score:0;x.src='lex'}
     x.cands=[...new Set([...x.prop,...A(x.cands)])].slice(0,14);x.status='pending'});
   // Keep only the details of objectives an item can still be set to.
   const keep=new Set();d.missed.forEach(x=>{A(x.cands).forEach(id=>keep.add(id));A(x.prop).forEach(id=>keep.add(id));if(x.objective)keep.add(x.objective);A(x.also).forEach(y=>keep.add(y.objective))});
   Object.keys(d.objx).forEach(id=>{if(!keep.has(id))delete d.objx[id]});
-  d.mapped=fam;d.review=d.missed.some(x=>x.status==='pending')?'pending':'done';d.aiPick=aiOk||!ask.length;put('ite',d);GQ.objs=null}
+  d.mapped=fam;d.review=d.missed.some(x=>x.status==='pending')?'pending':'done';d.aiPick=aiOk||!ai.length;iteQueue(d,fresh,false);put('ite',d);GQ.objs=null;await iteSync()}
+/* Confirmations travel to MKOS (ite_confirm): each strengthens the central mapping (wording -> objective, nothing about the physician)
+   and replaces that item's records for that blueprint in the account's own record (med/iteperf). They wait in the report (d.sync) until
+   the server has them, so nothing is lost offline; the planner counts them meanwhile. `central` false: a remembered mapping applied again
+   (records only, not a new confirmation). */
+function iteQueue(d,idx,central){d.sync=A(d.sync);const ek=d.mapped||iteFam(),rid=iteRid(d);
+  idx.forEach(i=>{const x=d.missed[i];if(!x)return;const ids=x.status==='ok'?[x.objective,...A(x.also).map(y=>y.objective)].filter(Boolean):[];
+    const old=d.sync.find(s=>!s.archive&&s.report_id===rid&&s.item===i&&s.exam_key===ek);d.sync=d.sync.filter(s=>s!==old);
+    d.sync.push({report_id:rid,item:i,exam_key:ek,text:String(x.text||'').slice(0,300),area:String(x.area||'').slice(0,120),ids,method:x.src||'',conf:x.conf??null,recs:itePerfFor(d,x,i),
+      central:central||!!(old&&old.central),n:old&&old.central?old.n:uid()})})}
+let ITESYNC=null;
+async function iteSync(){const d=ite();if(!mkOn()||!d)return null;if(!A(d.sync).length)return iteTraceLoad();if(ITESYNC)return ITESYNC;
+  ITESYNC=(async()=>{try{for(let k=0;k<6&&A(d.sync).length;k++){const part=d.sync.slice(0,40),r=await mk('ite_confirm',{items:part});
+        if(r&&r.perf){docs.iteperf=r.perf;cacheDocs()}d.sync=A(d.sync).filter(s=>!part.includes(s));put('ite',d)}}
+      catch(e){console.warn('ITE sync',e)}finally{ITESYNC=null}
+    await iteTraceLoad();if(['progress','boards'].includes(S.tab)&&!S.busy)render()})();
+  return ITESYNC}
+/* The pipeline trace (ite_trace): every missed item's steps (mapped, confirmed, stored, eligible, queued, generated) with the reason for
+   the first one missing; MKOS queues a lesson for an eligible objective that has none (shared, through the seed queue). The page sends
+   its current report, which may not have reached the server yet. */
+const iteSnap=d=>({rid:iteRid(d),t:d.t,exam:d.exam,mapped:d.mapped||'',missed:A(d.missed).map(x=>({text:x.text,area:x.area||'',status:x.status||'',src:x.src||'',conf:x.conf??null,objective:x.objective||'',oname:x.oname||'',
+  also:A(x.also).map(y=>({objective:y.objective,oname:y.oname||''})),prop:A(x.prop),tid:x.tid||'',ct:x.ct||0}))});
+async function iteTraceLoad(){const d=ite();if(!mkOn()||!d)return null;S.iteTraceAt=Date.now();
+  try{const r=await mk('ite_trace',{family:iteFam(),snapshot:iteSnap(d)});S.iteTrace=r&&r.trace||null}catch(e){console.warn('ITE trace',e)}return S.iteTrace}
+/* Once per account: confirmed mappings and reviewed items from before v2 move to the central library and the account's records. */
+async function iteBoot(){if(!mkOn())return;try{if((docs.ite||docs.itemap)&&!docs.itemig){const r=await mk('ite_migrate',{});if(r&&r.perf){docs.iteperf=r.perf;cacheDocs()}if(r&&(r.migrated||r.already))docs.itemig={v:1}}
+  if(ite())await iteSync()}catch(e){console.warn('ITE boot',e)}}
 /* The review panel on the Progress tab: every missed item with the objective proposed for it (the AI's choice, the physician's own
    earlier mapping, or the closest by wording), a confidence, the other objectives it could be, and "No blueprint objective".
    Items still waiting come first, least confident first; reviewed ones can be reopened and changed. */
 function vIteReview(d){const O=d.objx||{},fam=d.mapped||iteFam(),pend=d.missed.map((x,i)=>[x,i]).filter(([x])=>x.status==='pending'),all=S.iteAll||!pend.length&&S.iteOpen;
   const rows=(all?d.missed.map((x,i)=>[x,i]):pend).sort((a,b)=>(a[0].status==='pending'?0:1)-(b[0].status==='pending'?0:1)||(a[0].conf??0)-(b[0].conf??0));
   const nm=id=>O[id]?O[id].name+' · '+O[id].category:iteCode(id);
-  const src={ai:'AI suggestion',lex:'closest by wording (no AI)',yours:'your earlier mapping',you:'set by you',topic:'matched to a topic'};
+  const src={ai:'AI suggestion',lex:'closest by wording (no AI)',yours:'your earlier mapping',you:'set by you',topic:'matched to a topic',central:'shared mapping library (no AI)'};
+  const srcOf=x=>x.src==='central'?`shared mapping library: ${x.cstep==='fuzzy'?'near-identical':'the same'} wording${x.cn?', confirmed '+x.cn+(x.cn===1?' time':' times'):''} (no AI)`:src[x.src]||'proposed';
   const row=([x,i])=>{const sel=iteSelOf(x,i),P=A(x.prop),C=[...new Set([...P,...A(x.cands),x.objective,...A(x.also).map(y=>y.objective)].filter(Boolean))],c=x.conf;
     const cc=x.status!=='pending'?'good':c==null?'off':c>=75?'good':c>=50?'warn':'bad';
     const opts=(P.length>1?`<option value="+" ${sel==='+'?'selected':''}>★ Both: ${esc(P.map(id=>O[id]?O[id].name:iteCode(id)).join(' + '))}</option>`:'')
       +C.map(id=>`<option value="${esc(id)}" ${sel===id?'selected':''}>${P.includes(id)?'★ ':''}${esc(nm(id))}</option>`).join('')
       +`<option value="" ${sel===''?'selected':''}>No blueprint objective</option>`;
-    return `<div class="itr"><div class="small">${esc(x.text)}</div><div class="tiny muted">${x.area?esc(x.area)+' · ':''}${x.status==='pending'?esc(src[x.src]||'proposed'):(x.status==='ok'?'confirmed':'confirmed: no blueprint objective')+(x.src==='yours'?' (your earlier mapping)':'')}</div>
+    return `<div class="itr"><div class="small">${esc(x.text)}</div><div class="tiny muted">${x.area?esc(x.area)+' · ':''}${x.status==='pending'?esc(srcOf(x)):(x.status==='ok'?'confirmed':'confirmed: no blueprint objective')+(x.src==='yours'?' (your earlier mapping)':'')}</div>
       <div class="row" style="flex-wrap:nowrap"><select data-itesel="${i}" style="flex:1;min-width:0;background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:7px 8px">${opts}</select>
-      <span class="chip num ${cc}" title="Confidence">${x.status==='pending'?(c!=null?Math.round(c):'?'):'✓'}</span><button class="btn sm" data-act="iteok" data-i="${i}">${x.status==='pending'?'Confirm':'Save'}</button></div></div>`};
+      <span class="chip num ${cc}" title="Confidence">${x.status==='pending'?(c!=null?Math.round(c):'?'):'✓'}</span><button class="btn sm" data-act="iteok" data-i="${i}">${x.status==='pending'?'Confirm':'Save'}</button><button class="btn sm" data-act="itenone" data-i="${i}" title="No blueprint objective fits this item">None</button></div></div>`};
   return `<div class="plain" style="gap:6px"><span class="eyebrow">Missed items → ABIM ${fam==='lka'?'LKA':'certification'} blueprint objectives</span>
-    ${pend.length?`<p class="small muted">Nothing below reaches your plan or the board queue until you confirm it. Check the low-confidence ones (red and amber) first; ★ marks the suggestion. What you confirm is kept in your own account and used the next time the same item appears.${d.aiPick===false?' The AI could not be reached, so these are the closest objectives by wording only; use "Map again" when it is back.':''}</p>
+    ${pend.length?`<p class="small muted">Nothing below reaches your plan or the board queue until you confirm it. Check the low-confidence ones (red and amber) first; ★ marks the suggestion. Confirm it, change it by choosing another objective in the list, or choose None. What you confirm is kept in your own account and used the next time the same item appears; the wording and the objective (nothing about you) also go to the shared mapping library, so the same item maps itself for every physician.${d.aiPick===false?' The AI could not be reached, so these are the closest objectives by wording only; use "Map again" when it is back.':''}</p>
       <div class="row"><button class="btn pri sm" data-act="iteokall">Confirm all ${pend.length} as shown</button><button class="btn sm" data-act="iteremap">Map again</button></div>`:`<p class="small muted">All ${d.missed.length} items reviewed.</p>`}
     ${rows.length?`<div class="itlist">${rows.map(row).join('')}</div>`:''}
     <div class="row">${pend.length?`<button class="btn sm" data-act="iteall">${S.iteAll?'Show only items waiting':'Show reviewed items too'}</button>`:`<button class="btn sm" data-act="iteopen">${S.iteOpen?'Hide the mappings':'Review or change the mappings'}</button>`}</div></div>`}
+/* ITE Pipeline Audit (owner and developer): this account's report stage by stage, every item expandable to its steps with the reason a
+   step is missing, and the audit invariant across all accounts (counts only: no account, no item text). */
+function vIteAudit(){const R=S.iteAudit,T=R&&R.mine,G=R&&R.all,ok=v=>v?'✅':'❌';
+  const stages=T&&T.counts?[['Items extracted',T.counts.extracted],['Mapped',T.counts.mapped],['Confirmed',T.counts.confirmed],['Stored to user profile',T.counts.stored],['Eligible items',T.counts.eligible],['Eligible objectives',T.counts.eligible_objectives],['Queued lessons',T.counts.queued_objectives],['Generated lessons',T.counts.generated_objectives],['No objective (complete)',T.counts.no_objective],['Stalled (audit failures)',T.counts.stalled]]:[];
+  const item=t=>{const o=A(t.objectives),code=o.length?o.map(y=>iteCode(y.id)+(y.name&&y.name!==y.id?' '+y.name:'')).join(' + '):A(t.objective_ids).map(iteCode).join(' + ')||'no objective';
+    const steps=[['Mapped',t.mapped],['Confirmed',t.confirmed],['Stored',t.stored],['Eligible',t.eligible],['Queued',t.queued],['Generated',t.generated]];
+    return `<details class="small"><summary>${t.stalled?'❌ ':t.stage==='done'?'✅ ':'· '}${esc(code)}<span class="tiny muted"> · ${esc(String(t.text||'').slice(0,90))}</span></summary>
+      <div class="tiny" style="padding:4px 0 6px 14px">${steps.map(([k,v])=>`${esc(k)} ${ok(v)}`).join(' · ')}${t.reason?`<div>Reason: ${esc(t.reason)}</div>`:''}${t.stalled?`<div>Stalled at "${esc(t.stage)}" since ${esc(new Date(t.since).toLocaleString())}.</div>`:''}
+      ${o.length>1?o.map(y=>`<div>${esc(iteCode(y.id))}: queued ${ok(y.queued)} · generated ${ok(y.generated)}${y.reason?' · '+esc(y.reason):''}</div>`).join(''):''}</div></details>`};
+  return `<div class="plain" style="gap:6px;border-top:1px solid var(--line);padding-top:8px"><span class="eyebrow">ITE pipeline audit (owner)</span>
+    <span class="tiny muted">Every missed item must trace Report → Item → Mapping → Confirmation → Weakness → Eligibility → Queue → Lesson. An item waiting on one step past its threshold is an audit failure.</span>
+    ${T&&T.counts?`<div class="tablewrap"><table><thead><tr><th>${esc(T.exam||'Report')} · ${esc(iteBpName(T.exam_key))}</th><th class="n">Count</th></tr></thead><tbody>${stages.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="n">${v??0}</td></tr>`).join('')}</tbody></table></div>
+      ${A(T.other_blueprints).length?`<span class="tiny muted">Also mapped under: ${A(T.other_blueprints).map(o=>esc(o.name)+' ('+o.records+')').join(', ')}.</span>`:''}
+      <div class="plain" style="gap:2px">${A(T.items).slice().sort((a,b)=>(b.stalled?1:0)-(a.stalled?1:0)||(a.stage==='done'?1:0)-(b.stage==='done'?1:0)).map(item).join('')}</div>`:R?'<p class="small muted">No trace for this report yet.</p>':''}
+    ${G?`<span class="small">All accounts: ${G.accounts} with a report · ${G.stalled} stalled item${G.stalled===1?'':'s'} ${G.pass?'· audit passes ✅':'· audit fails ❌'}${Object.keys(G.stalled_by_stage||{}).length?' ('+Object.entries(G.stalled_by_stage).map(([k,v])=>esc(k)+' '+v).join(', ')+')':''} · central library ${G.central.mappings} mapping${G.central.mappings===1?'':'s'}, ${G.central.confirmations} confirmation${G.central.confirmations===1?'':'s'}</span>`:''}
+    <div class="row"><button class="btn sm" data-act="iteaudit">${R?'Run the audit again':'Run the audit'}</button></div></div>`}
 /* Review: confirm what is selected for one item, or for every item still waiting. val is an objective id, '+' (both proposals) or '' (none). */
 const iteSelOf=(x,i)=>S.iteSel&&i in S.iteSel?S.iteSel[i]:x.status==='ok'?(x.also&&x.also.length?'+':x.objective):x.status==='none'?'':(A(x.prop).length>1?'+':(A(x.prop)[0]||''));
 function iteSet(d,i,val){const x=d.missed[i];if(!x)return;const ids=val==='+'?A(x.prop).slice(0,2).length?A(x.prop).slice(0,2):[x.objective,...A(x.also).map(y=>y.objective)].filter(Boolean):val?[val]:[];
   if(S.iteSel&&i in S.iteSel){x.src='you';delete S.iteSel[i]}iteApply(x,d,ids);iteRemember(x,d.mapped||iteFam(),ids.filter(id=>d.objx&&d.objx[id]))}
-function iteConfirm(idx){const d=ite();if(!d)return 0;let n=0;idx.forEach(i=>{const x=d.missed[i];if(!x)return;iteSet(d,i,iteSelOf(x,i));n++});
-  d.review=d.missed.some(x=>x.status==='pending')?'pending':'done';put('ite',d);put('itemap',iteMem());GQ.objs=null;return n}
+function iteConfirm(idx){const d=ite();if(!d)return 0;let n=0;const done=[];idx.forEach(i=>{const x=d.missed[i];if(!x)return;iteSet(d,i,iteSelOf(x,i));x.ct=Date.now();done.push(i);n++});
+  iteQueue(d,done,true);d.review=d.missed.some(x=>x.status==='pending')?'pending':'done';put('ite',d);put('itemap',iteMem());GQ.objs=null;iteSync();return n}
 // Subjects for the filter, weakest first by the report's percentile (or percent correct), then by the app's own record.
 function boardSubjects(){const d=ite(),pc={};if(d)d.areas.forEach(a=>{const k=discOf(a.name);if(!k)return;const v=a.pctile!=null?a.pctile:a.pct;if(v==null)return;(pc[k]=pc[k]||{v:[],isP:a.pctile!=null}).v.push(v)});
   const keys=[...new Set((TRACKS[0]&&TRACKS[0].sections||[]).map(s=>secDisc(s)))].filter(k=>!k.startsWith('t:'));
   return keys.map(k=>({k,name:discName(k),v:pc[k]?pc[k].v.reduce((a,b)=>a+b,0)/pc[k].v.length:null,isP:pc[k]?pc[k].isP:false})).sort((a,b)=>(a.v??101)-(b.v??101)||a.name.localeCompare(b.name))}
 const ord=n=>{n=Math.round(n);const s=['th','st','nd','rd'],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0])};
-const missedMapped=disc=>{const d=ite();if(!d)return [];const out=[];A(d.missed).forEach(x=>{if(!x.objective||!iteDone(x))return;out.push(x);A(x.also).forEach(y=>out.push(Object.assign({},x,y,{also:null})))});
+// The board queue's objectives: eligible records of the blueprint being studied only (a report mapped under another blueprint is named in
+// the diagnostics instead of being used silently).
+const missedMapped=disc=>{const ek=iteFam(),out=[];itePerfView().forEach(r=>{if(!iteEligible(r,ek)||!r.objective_id)return;out.push({objective:r.objective_id,oname:r.oname,ocat:r.ocat,osub:r.osub,opri:r.opri,tid:r.tid,text:r.text,area:r.area})});
   return out.filter(x=>!disc||discOf(x.ocat||'')===disc||(TOP[x.tid]&&secDisc(TOP[x.tid].sec)===disc))};
 function boardItems(B){const n=B.n,sec=B.sec;
   if(B.src==='ite')return missedMapped(sec).sort((a,b)=>(b.opri||0)-(a.opri||0)).filter((x,i,a)=>a.findIndex(y=>y.objective===x.objective)===i).slice(0,n)
@@ -2380,9 +2457,26 @@ function boardItems(B){const n=B.n,sec=B.sec;
     const P=plan(Math.max(40,n*6),'abim');const out=[];for(const k of order){for(const r of P)if(secDisc(r.t.sec)===k&&!out.some(o=>o.t.id===r.t.id))out.push({t:r.t});if(out.length>=n)break}return out.slice(0,n)}
   return plan(Math.max(n*4,20),'abim').filter(r=>!sec||secDisc(r.t.sec)===sec).slice(0,n).map(r=>({t:r.t}))}
 const bsNow=()=>({src:st.prefs.bssrc||'next',sec:GQ.bs.sec||'',n:Number(st.prefs.bsn)||5,len:LEN[st.prefs.bslen]?st.prefs.bslen:'std'});
+/* Why the board queue has nothing to queue, from the pipeline: no report, items not confirmed, mappings under another blueprint, none of
+   the confirmed items mapping to an objective, or a subject filter. Never a bare "nothing matches". */
+const iteBpName=k=>k==='lka'?'LKA':k==='cert'?'Certification':String(k||'another blueprint');
+function iteWhy(B){const P='<p class="small muted">',E='</p>';
+  if(B.src==='ite'||B.src==='areas'){const d=ite(),ek=iteFam();if(!d)return P+'0 eligible objectives. Reason: no in-training exam report has been read yet.'+E;
+    const R=itePerfView(),el=R.filter(r=>iteEligible(r,ek)&&r.objective_id),oth=R.filter(r=>iteEligible(r)&&r.objective_id&&r.exam_key!==ek),pend=A(d.missed).filter(x=>x.status==='pending').length;
+    if(!el.length&&oth.length)return P+`0 eligible objectives. Mappings exist under: ${esc([...new Set(oth.map(r=>iteBpName(r.exam_key)))].join(', '))} (${new Set(oth.map(r=>r.objective_id)).size} objectives). Current blueprint: ${iteBpName(ek)}. Nothing is switched for you: <button class="linkbtn" data-act="iteremapgo">map the report again for ${iteBpName(ek)}</button> and review it.`+E;
+    if(!el.length&&pend)return P+`0 eligible objectives. Reason: your ITE items have not been confirmed (${pend} waiting). <button class="linkbtn" data-tab="progress">Review them on the Progress tab</button>`+E;
+    if(!el.length)return P+'0 eligible objectives. Reason: none of your confirmed ITE items maps to a blueprint objective.'+E;
+    return P+`${new Set(el.map(r=>r.objective_id)).size} eligible objectives found, none in this subject. Choose "All subjects".`+E}
+  if(B.src==='weak')return P+'No weak subjects yet: answer questions, rate lessons or cards, or read your ITE report first.'+E;
+  return P+'No topics in your plan match this subject yet. Choose "All subjects", or build a plan first.'+E}
+/* The pipeline in one line on the board card: eligible objectives, lessons queued and written (from the trace). */
+function iteQueueLine(){const d=ite(),T=S.iteTrace;if(!mkOn()||!d)return'';
+  if(!S.iteTraceAt||Date.now()-S.iteTraceAt>300000){S.iteTraceAt=Date.now();iteTraceLoad().then(()=>{if(S.tab==='boards'&&!S.busy)render()})}
+  if(!T||!T.counts)return'';const c=T.counts;
+  return `<span class="small muted">${c.eligible_objectives} eligible objective${c.eligible_objectives===1?'':'s'} found${T.exam_key?' for '+esc(iteBpName(T.exam_key)):''}. ${c.queued_objectives-c.generated_objectives} lesson${c.queued_objectives-c.generated_objectives===1?'':'s'} currently queued, ${c.generated_objectives} written.${c.stalled?' '+c.stalled+' item'+(c.stalled===1?' is':'s are')+' stalled; see the ITE pipeline on the Progress tab.':''}</span>`}
 function vBoardBatch(){const B=bsNow(),subs=boardSubjects(),d=ite(),items=boardItems(B),mm=missedMapped(B.sec);
   return `<div class="card"><h3>Build board lessons</h3><p class="small muted">Queue a batch for this week, or one topic now. Lessons written for a blueprint objective are kept as shared knowledge objects, so they never have to be written again.</p>
-   <div class="plain"><span class="eyebrow">From</span>${segBtns('bssrc',[['next','Next in my plan'],['ite','Missed on my ITE'],['areas','ITE weak areas'],['weak','Weakest subjects']],B.src)}${B.src!=='next'&&B.src!=='weak'&&!d?'<span class="small muted">Read your in-training exam report on the <button class="linkbtn" data-tab="progress">Progress</button> tab to use this.</span>':B.src==='ite'||B.src==='areas'?`<span class="small muted">${mm.length} missed objective${mm.length===1?'':'s'} matched to the blueprint${B.sec?' in this subject':''}.</span>`:''}
+   <div class="plain"><span class="eyebrow">From</span>${segBtns('bssrc',[['next','Next in my plan'],['ite','Missed on my ITE'],['areas','ITE weak areas'],['weak','Weakest subjects']],B.src)}${B.src!=='next'&&B.src!=='weak'&&!d?'<span class="small muted">Read your in-training exam report on the <button class="linkbtn" data-tab="progress">Progress</button> tab to use this.</span>':B.src==='ite'||B.src==='areas'?`<span class="small muted">${mm.length} missed objective${mm.length===1?'':'s'} matched to the blueprint${B.sec?' in this subject':''}.</span>${iteQueueLine()}`:''}
    ${d&&(B.src==='ite'||B.src==='areas')&&d.mapped&&d.mapped!==iteFam()?`<span class="small muted">Your report was mapped to the ${d.mapped==='lka'?'LKA':'certification'} blueprint; you are now studying for the ${iteFam()==='lka'?'LKA':'certification exam'}. <button class="linkbtn" data-act="iteremapgo">Map it again</button> and review it on the Progress tab.</span>`:''}
    ${d&&(B.src==='ite'||B.src==='areas')&&d.missed.some(x=>x.status==='pending')?`<span class="small muted">${d.missed.filter(x=>x.status==='pending').length} missed item${d.missed.filter(x=>x.status==='pending').length===1?' is':'s are'} waiting for your review and not used yet. <button class="linkbtn" data-tab="progress">Review on the Progress tab</button></span>`:''}</div>
    <label class="f">Subject<select id="bssec" style="background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px"><option value="">All subjects</option>${subs.map(s=>`<option value="${s.k}" ${B.sec===s.k?'selected':''}>${esc(s.name)}${s.v!=null?' · '+(s.isP?ord(s.v)+' percentile':Math.round(s.v)+'% correct'):''}</option>`).join('')}</select></label>
@@ -2390,7 +2484,7 @@ function vBoardBatch(){const B=bsNow(),subs=boardSubjects(),d=ite(),items=boardI
    <div class="plain"><span class="eyebrow">How many</span>${segBtns('bsn',[[1,'1'],[3,'3'],[5,'5'],[10,'10'],[20,'20']],B.n)}</div>
    <div class="plain"><span class="eyebrow">Length of each</span>${segBtns('bslen',Object.entries(LEN).map(([k,v])=>[k,v.name+' · '+v.min+' min']),B.len)}</div>
    ${writerRow()}
-   ${items.length?`<div class="plain"><span class="eyebrow">Will queue</span>${items.map(x=>`<div class="small">${esc(x.label||x.t.name)}<span class="tiny muted"> · ${esc(x.t.sec.name)}</span></div>`).join('')}</div>`:'<p class="small muted">Nothing matches that yet.</p>'}
+   ${items.length?`<div class="plain"><span class="eyebrow">Will queue</span>${items.map(x=>`<div class="small">${esc(x.label||x.t.name)}<span class="tiny muted"> · ${esc(x.t.sec.name)}</span></div>`).join('')}</div>`:iteWhy(B)}
    <div class="row"><button class="btn pri" data-act="bsgo" ${items.length?'':'disabled'}>Queue ${items.length} lesson${items.length===1?'':'s'}</button></div>
    <label class="f">Or one topic<input type="text" id="bsone" placeholder="e.g. Thrombotic thrombocytopenic purpura"></label><div class="row"><button class="btn" data-act="bsone">Queue this topic</button></div></div>`}
 // The report's subjects as bars: percentile (or percent correct) with the peer mean, each bar showing its numbers on hover or tap.
@@ -2684,7 +2778,7 @@ document.addEventListener('click',async e=>{const k=e.target.closest('[data-kobj
     Object.keys(cdocs).forEach(n=>{const c=cdocs[n],s=docs[n];if(!s||((c&&c._t)||0)>(s._t||0)){docs[n]=c;if(!jget(n))jset(n,'PUT',clone(c))}})}
   else if(DB)docs=cdocs;
   else if(!WEB){try{docs=JSON.parse(localStorage.getItem(LS))||{}}catch(e){docs={}}}
-  overlay();loadState();pickVoice();render();flush();mkLoad();
+  overlay();loadState();pickVoice();render();flush();mkLoad();iteBoot();
   if(mkOn())gqModels().then(()=>{gqRefresh();if(S.tab==='today'||S.tab==='learn'||S.tab==='boards')render()});
 })();
 </script>

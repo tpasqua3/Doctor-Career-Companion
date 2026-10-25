@@ -1208,7 +1208,7 @@ async function api(request, env, url, ctx) {
   let body = {};
   if (request.method === 'POST' || request.method === 'PUT') {
     const text = await request.text();
-    if (text.length > (url.pathname === '/api/doc' || url.pathname === '/api/ai' || url.pathname === '/api/restore' ? MAX_DOC + 200000 : url.pathname === '/api/admin/page' ? 70000 : 20000)) return fail(413, 'That is too large.');
+    if (text.length > (url.pathname === '/api/doc' || url.pathname === '/api/ai' || url.pathname === '/api/restore' || url.pathname.startsWith('/api/mkos/') ? MAX_DOC + 200000 : url.pathname === '/api/admin/page' ? 70000 : 20000)) return fail(413, 'That is too large.');
     try { body = text ? JSON.parse(text) : {}; } catch { return fail(400, 'Bad request.'); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'Bad request.');
   }

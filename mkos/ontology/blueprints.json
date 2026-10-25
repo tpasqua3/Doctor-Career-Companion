@@ -2,7 +2,7 @@
   "id": "framework.blueprints",
   "type": "Framework",
   "name": "Board blueprint governance",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "status": "current",
   "created_date": "2026-10-17",
   "updated_date": "2026-10-25",
@@ -27,6 +27,11 @@
       "version": "1.2.0",
       "date": "2026-10-25",
       "summary": "Prompt wording is family data (wording, specialty), so prompts follow the learner's or blueprint's family; ABIM internal medicine wording unchanged."
+    },
+    {
+      "version": "1.3.0",
+      "date": "2026-10-25",
+      "summary": "ITE to blueprint objective mapping v2 (roadmap Phase 3.2): the central mapping library, per-account ITE performance, the pipeline trace with its stall thresholds and the audit invariant."
     }
   ],
   "principle": [
@@ -350,5 +355,55 @@
       "knowledge_base": "a medical knowledge base"
     },
     "field_default": "medicine"
+  },
+  "ite_mapping": {
+    "note": "In-training examination items to blueprint objectives (src/mkos/ite.js; spec 'MKOS ITE to ABIM Mapping Architecture v2'). Central knowledge (ITE wording -> objective, per blueprint) is kept in mk_ite_map, shared by every account, holds no user identity and is mirrored to Drive (registries/ite_mapping.json). How one physician did (missed items) stays in that account's own records (med/iteperf, med/itetrace).",
+    "order": [
+      "your_confirmed",
+      "central_exact",
+      "central_fuzzy",
+      "shortlist_ai",
+      "human_review"
+    ],
+    "fuzzy_min": 0.9,
+    "shortlist_size": 10,
+    "shortlist_extra": 4,
+    "shortlist_extra_no_discipline": 12,
+    "whole_discipline": false,
+    "stopwords": "a an the of in on with and or for to by from at as is are be",
+    "methods": {
+      "ai": "ai_reviewed",
+      "lex": "lex_reviewed",
+      "central": "central_reviewed",
+      "yours": "recalled",
+      "you": "human_selected",
+      "migrated": "migrated",
+      "topic": "topic_match"
+    },
+    "auto_queue": true,
+    "auto_queue_priority_base": 2,
+    "stall_hours": {
+      "mapped": 24,
+      "confirmed": 336,
+      "stored": 6,
+      "eligible": 24,
+      "queued": 24,
+      "generated": 336
+    },
+    "trace_stages": [
+      "extracted",
+      "mapped",
+      "confirmed",
+      "stored",
+      "eligible",
+      "queued",
+      "generated"
+    ],
+    "tick_users_per_run": 3,
+    "migration_accounts_per_run": 2,
+    "usap_metrics_wanted": [
+      "ite_pipeline_stalled_items",
+      "ite_pipeline_trace_complete_ratio"
+    ]
   }
 }

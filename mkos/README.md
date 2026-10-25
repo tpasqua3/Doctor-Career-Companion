@@ -61,6 +61,7 @@ licensed). The server reads the library from Drive itself.
 | `confidence.js` | The three confidence domains: evidence, relevance, lesson (stage 8) |
 | `coverage.js` | The coverage engine and gap detection (stages 9-10) |
 | `wording.js` | Prompt wording from the learner's or blueprint's family (specialty independence) |
+| `ite.js`, `ite_marks.js` | ITE -> blueprint objective mapping v2: the central mapping library, the account's ITE performance records, the pipeline trace and its audit (below) |
 | `routes.js` | `/api/mkos/<op>` and the connector tool `mkos` |
 
 The cron gives MKOS its turn in each 5-minute run in which no account records were waiting to be copied to Drive. Each run:
@@ -402,12 +403,56 @@ their passes. Gaps are derived on purpose: each is a function of objects, edges,
 adding or replacing a source, which closes the gap on the next run, and no owner state is kept on a gap. The lifecycle's cursors
 (`lc_*` settings) are run state.
 
+## ITE -> blueprint objective mapping v2 (src/mkos/ite.js, blueprints.json ite_mapping)
+
+From the owner's *MKOS ITE -> ABIM Mapping Architecture v2* (roadmap Phase 3.2). Four layers, kept apart:
+
+| Layer | Where | What |
+|---|---|---|
+| Knowledge (central) | `mk_ite_map` (D1), Drive `registries/ite_mapping.json` | ITE wording -> blueprint objective(s), per blueprint family: `mapping_id`, `blueprint` (family id from the blueprint data, e.g. `abim_im_cert`, `abim_im_lka`), `exam_key`, `source_text`, `norm` (normalized wording), `objective_id` and `objective_ids` (the BlueprintTopics; empty = "no blueprint objective"), `canonical_objective` and `canonical_ids` (the `obj.c.*` objectives the topic `projects_objective` onto), `discipline`, `confidence` (0..1), `method`, `verified`, `version`, `confirmations`, `last_confirmed` (a day). One row per wording, blueprint and objective set. No user id, report id or anything else about who confirmed it. |
+| Performance (per account) | `med/iteperf` (the account's records, so its own Drive folder) | `user_ite_performance`: one record per confirmed missed item and objective: `report_id`, `item`, `objective_id`, `blueprint`, `exam_key`, `status` (missed, mastered), `source` ITE, `confirmed`, `archived`, `date`, and display fields. Written by the server only (`ite_confirm`, the migration). |
+| Content | the shared lesson assets | An eligible objective reuses its lesson (`asset_find`, `objective_lesson`) or gets its pass-1 lesson queued once through the seed queue (`genjobs.js queueObjectiveSeeds`: shared, central, paced by `seed.reserve_calls` and `seed_paused`). |
+| Observability (per account) | `med/itetrace`; `mk_ite_watch`, `mk_ite_dirty`, `mk_ite_audit` (D1) | `objective_trace`: every missed item's steps (mapped, confirmed, stored, eligible, queued, generated), its stage, the reason the next step has not happened, and since when. |
+
+**Pipeline.** Extraction (the page): the raw report text (`med/iteraw`), content areas and missed items (`med/ite`), stored in the
+account. Mapping, in order: the physician's own confirmed mapping (`med/itemap`) -> central exact match (normalized wording, same
+blueprint) -> central fuzzy match (trigram similarity >= `fuzzy_min`, 0.90) -> the discipline shortlist (`shortlist_size`, 10, plus
+`shortlist_extra` from other disciplines; the whole discipline only with `whole_discipline`) and one batched AI call for what is left,
+through the page's own "report" job (label `doctor_companion_app.ite_objective_map`; the AI order is untouched; library answers are
+recorded as deterministic) -> the physician's review (Confirm, change the objective, or None). Nothing reaches planning until it is
+confirmed. A confirmation (`ite_confirm`) strengthens the central mapping (mapping only; a retried confirmation counts once) and
+replaces that item's records for that blueprint in the account. A new report archives the older reports' records.
+
+**Eligibility.** `isEligible(record) = confirmed && !archived` (status missed), and for a blueprint's board queue the record must belong
+to that blueprint. It never depends on a lesson. The page's planner reads the same records (`itePerfView`, `iteMissed`, `missedMapped`;
+`itePerfFor` in the page and `recordsForItem` here derive them by the same rules, and a test runs both). Records of another blueprint are
+never used silently: the board card says where the mappings are and offers to map the report again.
+
+**Trace and audit (change driven).** The trace is recomputed on each transition and written only when it changed: the page asks
+(`ite_trace`, with its current report) after it maps, confirms or queues; a job queued, finished, failed or cancelled for an objective,
+and a lesson stored for one, mark the accounts whose trace waits on it (`ite_marks.js`, `mk_ite_watch` -> `mk_ite_dirty`), and each engine
+run recomputes up to `tick_users_per_run` of them. Audit invariant: every missed item must trace Report -> Item -> Mapping -> Confirmation
+-> Weakness -> Eligibility -> Queue -> Lesson; an item waiting on one step longer than `stall_hours[step]` is an audit failure, shown on
+the owner's ITE pipeline audit panel (Progress tab). `ite_audit` (owner) adds the cross-account counts (no account ids, no item text).
+The app's USAP profile has no metric for this, so none is sent; wanted: `ite_pipeline_stalled_items`, `ite_pipeline_trace_complete_ratio`.
+
+**Migration** (`ensureMigrated`, once per account, idempotent): the account's confirmed mappings (`med/itemap`) become central mappings
+(method `migrated`) and its reviewed missed items become performance records derived exactly as the planner read them, in one batch with
+the account's marker `med/itemig`. The page runs it on its first visit; the engine sweeps accounts nobody opens. Logged as audit
+`ite_migrate` with counts only.
+
+Operations: `ite_map {family, items, central: true}`, `ite_confirm {items}`, `ite_trace {family, snapshot}`, `ite_migrate`; owner `ite_audit`.
+
+**Durable or derived.** Durable: `mk_ite_map` (mirrored and restored; never replacing a newer row), and the account records `med/iteperf`,
+`med/itetrace`, `med/itemig`, `med/iteraw` (in the account's own Drive folder with its other records). Derived or run state:
+`mk_ite_watch`, `mk_ite_dirty`, `mk_ite_audit` (rebuilt whenever a trace is computed) and `mk_ite_seen` (retry tokens, 30 days).
+
 ## Testing locally
 
 `node tools/mkos/dryrun.mjs --work <dir>` runs the whole engine on node:sqlite (`tools/mkos/d1shim.mjs`) against a library listing
 and the registries kept in `<dir>` (outside the repository), then prints the object counts, graph validation, all cutover gates,
 families, recommendations, the learner plan, the routing result and the lifecycle counts. `node --test test/*.mjs` runs the unit
-tests (`test/mkos_lifecycle.test.mjs` uses synthetic fixtures only).
+tests (`test/mkos_lifecycle.test.mjs` and `test/mkos_ite.test.mjs` use synthetic fixtures only).
 
 ## The generation queue (src/mkos/genjobs.js, assets.json generation_queue)
 

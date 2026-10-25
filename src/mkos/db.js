@@ -128,6 +128,24 @@ export const TABLES = [
   `CREATE TABLE IF NOT EXISTS mk_gaps (gap_id TEXT PRIMARY KEY, kind TEXT NOT NULL, key TEXT NOT NULL, severity REAL NOT NULL, detail_json TEXT NOT NULL, action_json TEXT NOT NULL,
      status TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS mk_gaps_kind ON mk_gaps (status, kind, severity DESC)`,
+  // ITE -> blueprint objective mapping v2 (ite.js). mk_ite_map is CENTRAL knowledge: one row per normalized ITE wording, blueprint
+  // family and objective set ('' = no blueprint objective), strengthened by every confirmation. It holds no user id, report id or
+  // anything else about who confirmed it. Durable: mirrored (registries/ite_mapping) and restored.
+  `CREATE TABLE IF NOT EXISTS mk_ite_map (mapping_id TEXT PRIMARY KEY, blueprint TEXT NOT NULL, exam_key TEXT NOT NULL, norm TEXT NOT NULL, source_text TEXT NOT NULL,
+     objective_id TEXT NOT NULL, objective_ids TEXT NOT NULL, canonical_objective TEXT, canonical_ids TEXT NOT NULL DEFAULT '[]', discipline TEXT, confidence REAL,
+     method TEXT NOT NULL, verified INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1, confirmations INTEGER NOT NULL DEFAULT 0, last_confirmed TEXT,
+     created TEXT NOT NULL, updated TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS mk_ite_map_norm ON mk_ite_map (blueprint, norm)`,
+  // Retries of one confirmation count once (a random token from the page, no identity). Run state, pruned after 30 days.
+  `CREATE TABLE IF NOT EXISTS mk_ite_seen (nonce TEXT PRIMARY KEY, at TEXT NOT NULL)`,
+  // Per account and derived (rebuilt from the account's own records whenever its trace is computed): which objectives an account's
+  // trace waits on, so a lesson finishing marks only those accounts (change driven), the accounts to recompute, and each account's
+  // trace summary for the owner's audit panel (counts and stall times only, no item text).
+  `CREATE TABLE IF NOT EXISTS mk_ite_watch (user_id TEXT NOT NULL, objective_id TEXT NOT NULL, PRIMARY KEY (user_id, objective_id))`,
+  `CREATE INDEX IF NOT EXISTS mk_ite_watch_obj ON mk_ite_watch (objective_id)`,
+  `CREATE TABLE IF NOT EXISTS mk_ite_dirty (user_id TEXT PRIMARY KEY, reason TEXT NOT NULL, marked_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS mk_ite_audit (user_id TEXT NOT NULL, report_id TEXT NOT NULL, exam_key TEXT, counts_json TEXT NOT NULL, stall_json TEXT NOT NULL, updated TEXT NOT NULL,
+     PRIMARY KEY (user_id, report_id))`,
 ];
 
 let ready = '';

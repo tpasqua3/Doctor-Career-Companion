@@ -21,6 +21,8 @@ import { J, nowIso, getSetting, setSetting, audit } from './db.js';
 import { getObject } from './kb.js';
 import { putAssets } from './assets.js';
 import { topicContext } from './bridge.js';
+import { examFamily } from './education.js';
+import { markJob, markUser, markObjectives } from './ite_marks.js';
 
 const QP = () => FRAMEWORK.frameworks.assets.generation_queue;
 const GM = () => FRAMEWORK.frameworks.assets.generation_metadata;
@@ -32,6 +34,8 @@ const nextUtcDay = () => { const d = new Date(); d.setUTCHours(24, 6, 0, 0); ret
 // (06 minutes past midnight UTC: just after the allowance resets.)
 
 let READY = false;
+// Tests only: open a second database in the same process.
+export const _resetGenInit = () => { READY = false; };
 export async function genInit(env) {
   if (READY) return;
   await env.DB.batch([
@@ -133,6 +137,8 @@ function progressOf(r, st, sp) {
 async function save(env, id, patch) {
   const keys = Object.keys(patch); if (!keys.length) return;
   await env.DB.prepare(`UPDATE mk_gen SET ${keys.map((k) => k + ' = ?').join(', ')}, updated = ? WHERE id = ?`).bind(...keys.map((k) => typeof patch[k] === 'object' && patch[k] !== null ? JSON.stringify(patch[k]) : patch[k]), nowIso(), id).run();
+  // ITE pipeline trace (ite.js): a job for a blueprint objective that ends moves the traces waiting on that objective.
+  if (patch.status === 'done' || patch.status === 'failed' || patch.status === 'cancelled') await markJob(env, id, 'job_' + patch.status);
 }
 
 /* The services the server can write with (its own keys), and the one it uses for a job when none is chosen. */
@@ -151,6 +157,7 @@ export async function genAdd(env, deps, u, a) {
   await env.DB.prepare('INSERT INTO mk_gen (id, user_id, batch, kind, title, status, runner, model, spec, state, created, updated, prio, objective) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .bind(id, String(u.id), S(a.batch, 60) || null, 'lesson', S(sp.title || sp.name, 160), runner === 'page' ? 'writing' : 'queued', runner, model, raw, JSON.stringify({}), now, now, Number(a.prio) || 10, sp.objective ? S(sp.objective, 80) : null).run();
   if (runner === 'page') await save(env, id, { lease: Date.now() });
+  if (sp.objective) { await markUser(env, u.id, 'queued'); await markObjectives(env, [S(sp.objective, 80)], 'queued'); }
   return { job: rowOut(await env.DB.prepare('SELECT * FROM mk_gen WHERE id = ?').bind(id).first()) };
 }
 /* gen_list {limit, batch}: this account's jobs, newest first (done ones for the last two weeks). */
@@ -388,14 +395,49 @@ export async function seedStart(env, deps, u, a) {
   const bp = await env.DB.prepare('SELECT objective_id, priority_score FROM mk_blueprint_objectives').all().catch(() => ({ results: [] }));
   const pri = Object.fromEntries(bp.results.map((r) => [r.objective_id, r.priority_score]));
   const stmts = todo.slice(0, lim).map((x, i) => {
-    const name = String(x.b.name || x.id), spec = { seed: 1, tid: x.tid, name: x.b.subcategory && !name.toLowerCase().includes(String(x.b.subcategory).toLowerCase()) && /^general\b|^other\b/i.test(name) ? `${x.b.subcategory}: ${name}` : name,
-      len: 'std', words, min: Math.round(words / 135), objective: x.id, blueprint_id: x.b.blueprint || null, pass: QP().seed.pass, checks: 2, cards: 4 };
+    const spec = seedSpecOf(x, words);
     return env.DB.prepare("INSERT INTO mk_gen (id, user_id, batch, kind, title, status, runner, model, spec, state, created, updated, prio, objective) VALUES (?, ?, 'seed', 'lesson', ?, 'queued', 'server', ?, ?, '{}', ?, ?, ?, ?)")
       .bind('s' + Date.now().toString(36) + i.toString(36).padStart(3, '0'), String(u.id), S(spec.name, 160), model, JSON.stringify(spec), now, now, Number(pri[x.id] ?? 0) / 100 + (lim - i) / 1e6, x.id);
   });
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
   await setSetting(env, 'seed_paused', null);
   return { queued: stmts.length, already: have.size, unmapped: results.filter((r) => !r.tid).length, total_objectives: results.length, model, words };
+}
+/* The pass-1 seed job for one blueprint objective (x: {id, b: BlueprintTopic body, tid}); shared by seed_start and the ITE pipeline. */
+function seedSpecOf(x, words) {
+  const name = String(x.b.name || x.id);
+  return { seed: 1, tid: x.tid, name: x.b.subcategory && !name.toLowerCase().includes(String(x.b.subcategory).toLowerCase()) && /^general\b|^other\b/i.test(name) ? `${x.b.subcategory}: ${name}` : name,
+    len: 'std', words, min: Math.round(words / 135), objective: x.id, blueprint_id: x.b.blueprint || null, pass: QP().seed.pass, checks: 2, cards: 4 };
+}
+/* ITE pipeline (ite.js, spec stage 6): an eligible objective with no lesson and no job gets its pass-1 lesson through the same seed queue
+   (shared, central, paced by seed.reserve_calls and seed_paused, on the server's own writing model; the AI order is untouched).
+   items: [{objective, tid}] (tid: the app topic to file it under when the objective has no curriculum node). Never duplicates a seed job
+   that is queued, running, waiting or done. Returns {results: {objective: {job} | {existing} | {error}}} or {error} for the whole call. */
+export async function queueObjectiveSeeds(env, deps, items, { prioBase = 2 } = {}) {
+  await genInit(env);
+  const M = await genModels(env, deps), model = M.first && M.server.includes(M.first) ? M.first : null;
+  if (!model) return { error: 'no_writer' };
+  const owner = deps && deps.ownerId ? await deps.ownerId() : null; if (!owner) return { error: 'no_owner' };
+  const words = QP().seed.length_words, now = nowIso(), results = {}, stmts = [];
+  let i = 0;
+  for (const it of A(items).slice(0, 60)) {
+    const id = String(it && it.objective || ''); if (!id || results[id]) continue;
+    const dup = await env.DB.prepare("SELECT id, status FROM mk_gen WHERE objective = ? AND batch = 'seed' AND status NOT IN ('cancelled','failed') LIMIT 1").bind(id).first();
+    if (dup) { results[id] = { existing: dup.id, status: dup.status }; continue; }
+    const o = await env.DB.prepare("SELECT body FROM mk_objects WHERE id = ? AND type = 'BlueprintTopic' AND status = 'current'").bind(id).first();
+    if (!o) { results[id] = { error: 'objective_missing' }; continue; }
+    const node = await env.DB.prepare("SELECT json_extract(n.body, '$.legacy_topic_id') AS tid FROM mk_objects n, json_each(n.body, '$.blueprint_topics') b WHERE n.type = 'CurriculumNode' AND b.value = ? LIMIT 1").bind(id).first().catch(() => null);
+    const tid = (node && node.tid) || (it.tid ? S(it.tid, 120) : '');
+    if (!tid) { results[id] = { error: 'no_topic' }; continue; }
+    const pri = await env.DB.prepare('SELECT priority_score FROM mk_blueprint_objectives WHERE objective_id = ?').bind(id).first().catch(() => null);
+    const spec = seedSpecOf({ id, b: J(o.body, {}), tid }, words), jid = 'w' + Date.now().toString(36) + (i++).toString(36).padStart(3, '0');
+    stmts.push(env.DB.prepare("INSERT INTO mk_gen (id, user_id, batch, kind, title, status, runner, model, spec, state, created, updated, prio, objective) VALUES (?, ?, 'seed', 'lesson', ?, 'queued', 'server', ?, ?, '{}', ?, ?, ?, ?)")
+      .bind(jid, String(owner), S(spec.name, 160), model, JSON.stringify(spec), now, now, Number(prioBase) + Number((pri && pri.priority_score) ?? 0) / 100, id));
+    results[id] = { job: jid, status: 'queued' };
+  }
+  for (let k = 0; k < stmts.length; k += 50) await env.DB.batch(stmts.slice(k, k + 50));
+  if (stmts.length) await audit(env, 'mkos-ite', 'ite_queue', null, null, null, { queued: stmts.length, model }).catch(() => { });
+  return { results, model };
 }
 /* seed_status: how far seeding has come, by status and by confidence tier, with the coverage of all objectives. */
 export async function seedStatus(env) {
@@ -416,13 +458,14 @@ export async function seedPause(env, u, a) { await setSetting(env, 'seed_paused'
 export async function seedRetry(env) { await genInit(env); const r = await env.DB.prepare("UPDATE mk_gen SET status = 'queued', tries = 0, not_before = 0, lease = 0, state = '{}', note = '' WHERE batch = 'seed' AND status = 'failed'").run(); return { requeued: r.meta ? r.meta.changes : 0 }; }
 
 /* ---------- ITE mapping: missed objectives -> ABIM blueprint objectives (no AI) ---------- */
-const gramsOf = (s) => { const t = ' ' + String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ', g = new Set(); for (let i = 0; i < t.length - 2; i++) g.add(t.slice(i, i + 3)); return g; };
-const sim = (A1, B1) => { let n = 0; for (const g of A1) if (B1.has(g)) n++; return A1.size + B1.size ? (2 * n) / (A1.size + B1.size) : 0; };
+export const gramsOf = (s) => { const t = ' ' + String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ', g = new Set(); for (let i = 0; i < t.length - 2; i++) g.add(t.slice(i, i + 3)); return g; };
+export const sim = (A1, B1) => { let n = 0; for (const g of A1) if (B1.has(g)) n++; return A1.size + B1.size ? (2 * n) / (A1.size + B1.size) : 0; };
 /* ite_map {missed:[text], family}: each missed educational objective is matched to the blueprint objective it belongs to (best trigram
    match of its words against the objective, its subcategory and category), with that objective's domain, priority and app topic. */
 export async function iteMap(env, u, a) {
   const missed = A(a.missed).map((x) => String(typeof x === 'string' ? x : x && x.text || '')).filter(Boolean).slice(0, 150); if (!missed.length && !A(a.items).length) return { map: [] };
-  const fam = a.family === 'lka' ? 'bpt.lka.%' : 'bpt.cert.%';
+  // The blueprint topics of the exam the family names, from the blueprint data (cert, lka, or any exam_key a family declares).
+  const fam = 'bpt.' + (a.family === 'lka' ? 'lka' : String(examFamily(String(a.family || 'cert')).exam_key || 'cert')) + '.%';
   const { results } = await env.DB.prepare(`SELECT o.id, json_extract(o.body, '$.name') AS name, json_extract(o.body, '$.category') AS cat, json_extract(o.body, '$.subcategory') AS sub, json_extract(o.body, '$.domain') AS dom,
     json_extract(o.body, '$.est_pct') AS pct, (SELECT json_extract(n.body, '$.legacy_topic_id') FROM mk_objects n, json_each(n.body, '$.blueprint_topics') b WHERE n.type = 'CurriculumNode' AND b.value = o.id LIMIT 1) AS tid
     FROM mk_objects o WHERE o.type = 'BlueprintTopic' AND o.status = 'current' AND o.id LIKE ?`).bind(fam).all();
@@ -458,14 +501,16 @@ function iteShortlist(a, pool, pri) {
   const cats = (area) => [...new Set(ITE_AREAS.filter(([re]) => re.test(area)).map(([, c]) => c))];
   const P = pool.map((p) => ({ ...p, w: new Set(iteWords((p.sub || '') + ' ' + p.name)) }));
   const score = (g, ws, p) => { let n = 0; for (const w of ws) if (p.w.has(w)) n++; return Math.max(sim(g, p.g), sim(g, p.gs) * 0.95) + (ws.length ? 0.25 * n / ws.length : 0); };
-  const pools = {}, used = new Set(), out = [];
+  // Shortlist sizes: the ITE pipeline (ite.js) passes its framework numbers in a._sl; other callers keep the original sizes.
+  const SL = { near: 8, extra: 4, extraNo: 12, ...(a._sl || {}) };
+  const pools = {}, used = new Set(A(a._also)), out = [];
   for (const it of items) {
     const cs = cats(it.area), key = cs.length ? cs.slice().sort().join('|') : '';
     if (key && !pools[key]) { pools[key] = P.filter((p) => cs.includes(p.cat)).map((p) => p.id); pools[key].forEach((id) => used.add(id)); }
     const ws = iteWords(it.text), g = gramsOf(ws.join(' ') || it.text), inPool = key ? new Set(pools[key]) : null;
     const ranked = P.map((p) => ({ p, s: score(g, ws, p) })).sort((x, y) => y.s - x.s);
-    const extra = ranked.filter((r) => !inPool || !inPool.has(r.p.id)).slice(0, key ? 4 : 12).map((r) => r.p.id);
-    const nearR = (inPool ? ranked.filter((r) => inPool.has(r.p.id)) : ranked).slice(0, 8), near = nearR.map((r) => r.p.id), top = nearR[0] || ranked[0];
+    const extra = ranked.filter((r) => !inPool || !inPool.has(r.p.id)).slice(0, key ? SL.extra : SL.extraNo).map((r) => r.p.id);
+    const nearR = (inPool ? ranked.filter((r) => inPool.has(r.p.id)) : ranked).slice(0, SL.near), near = nearR.map((r) => r.p.id), top = nearR[0] || ranked[0];
     extra.forEach((id) => used.add(id)); near.forEach((id) => used.add(id));
     out.push({ text: it.text, area: it.area, pool: key, extra, near, best: top ? { objective: top.p.id, score: Math.round(100 * Math.min(1, top.s)) } : null });
   }

@@ -26,6 +26,7 @@ import { reconcileStep, reconcileDue } from './reconcile.js';
 import { importOwnerAssets } from './assets.js';
 import { restoreStep } from './restore.js';
 import { lifecycleStep } from './lifecycle.js';
+import { iteTick } from './ite.js';
 
 export class BudgetSpent extends Error { constructor() { super('MKOS query budget spent for this run'); this.budget = true; } }
 // Only Cloudflare's own per-invocation limits count as a platform cap (a Google rate limit is an ordinary, retried error).
@@ -292,6 +293,8 @@ export async function mkTick(rawEnv, rawDeps, { root, mirrorRoot, maxBudget = 88
     // (rules only; at most lifecycle.json orchestrator.budget_share_max of the run).
     if (booted && (await getSetting(env, 'lifecycle')) !== 'off') { const lc = await lifecycleStep(env, deps, { meter });
       report.steps.push(`lifecycle +${lc.entered} entered, ${lc.advanced} stages, ${lc.classes} classified, ${lc.objectives} objectives, ${lc.relevance} relevance rows`); }
+    // ITE pipeline (ite.js): traces of the accounts a transition marked, and a few accounts still to migrate to v2 (rules only).
+    { const it = await iteTick(env, deps); if (it.traced || it.migrated) report.steps.push(`ite ${it.traced} traced, ${it.migrated} migrated`); }
   } catch (e) {
     if (e.budget) report.steps.push('budget spent');
     else if (PLATFORM.test(String(e.message || e))) { platformHit = true; report.steps.push('platform limit: ' + e.message); }
