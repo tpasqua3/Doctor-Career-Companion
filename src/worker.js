@@ -1698,7 +1698,7 @@ const MCP_TOOLS = [
   ...MKOS_TOOLS,
   { name: 'load_progress', description: "Load this physician's saved study and career record: the documents changed since `since` (milliseconds since 1970; 0 for everything), the list of every document path, and the server time to pass as `since` next time. `area` defaults to \"med\". `only` (a list of document names such as [\"says\", \"saylog\"]) returns just those documents, whenever they changed.",
     inputSchema: { type: 'object', properties: { area: { type: 'string' }, since: { type: 'number' }, only: { type: 'array', items: { type: 'string' } } } }, annotations: { readOnlyHint: true } },
-  { name: 'get_profile', description: "The account's first name, last name and email, and how much is saved.",
+  { name: 'get_profile', description: "The account's first name, last name and email, how much is saved, its storage status, whether recovery questions and a connector link are set, and for USAP admins their role and the Google Drive connection (read only).",
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
   { name: 'save_doc', description: "Save one document, replacing what was there. The path starts with the area, e.g. med/state or med/bank_cv.",
     inputSchema: { type: 'object', properties: { path: { type: 'string' }, body: { type: 'object' } }, required: ['path', 'body'] }, annotations: { readOnlyHint: false, destructiveHint: false } },
@@ -1746,8 +1746,15 @@ async function mcpServer(request, env, token, ctx) {
       return out({ now: Date.now(), area: lang, paths, docs });
     }
     if (name === 'get_profile') {
-      const u = await env.DB.prepare('SELECT first, last, email FROM users WHERE id = ?').bind(uid).first();
-      return out({ firstName: (u && u.first) || '', lastName: (u && u.last) || '', email: (u && u.email) || '', areas: await summary(env, uid) });
+      const u = await env.DB.prepare('SELECT id, first, last, email FROM users WHERE id = ?').bind(uid).first();
+      if (!u) return bad('This account no longer exists.');
+      /* The app's Profile tab (website, Claude and Life OS alike): the account's own settings, plus for USAP admins what the account
+         page's admin part shows (role, the Drive connection, masked for admins other than the owner). Read only: changes to the
+         password, recovery questions, connector link and the Drive connection happen on the website's account page. */
+      const admin = await adminOf(env, u), owner = isOwner(env, u), link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(uid).first();
+      return out({ firstName: u.first || '', lastName: u.last || '', email: u.email || '', areas: await summary(env, uid),
+        recovery: (await recoveryOf(env, uid)).length, connector: link ? link.created : null, storage: await storage(env, u), owner, admin,
+        drive: admin ? { mode: DRIVE.mode, account: owner ? DRIVE.email : maskMail(DRIVE.email), canEdit: admin.integrations === 'edit' } : undefined });
     }
     if (name === 'ai_providers' || name === 'ask_ai' || name === 'storage_status') {
       const u = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(uid).first(); if (!u) return bad('This account no longer exists.');
