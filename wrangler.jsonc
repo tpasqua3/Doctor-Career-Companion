@@ -10,7 +10,7 @@
   "compatibility_date": "2026-09-01",
   // Variables added in the Cloudflare dashboard are kept when a push from GitHub deploys, instead of being wiped.
   "keep_vars": true,
-  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*", "/usap/*", "/voice/hf/*", "/voice/ort/*", "/privacy.html", "/terms.html", "/privacy", "/terms", "/policy", "/policy.html"] },
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*", "/usap/*", "/voice/hf/*", "/voice/ort/*", "/privacy.html", "/terms.html", "/privacy", "/terms", "/policy", "/policy.html", "/google*.html"] },
   // No database_id: wrangler creates the database on the first deploy and reuses it afterwards.
   // DRILL_DB: an empty database used only to prove MKOS can be rebuilt from Google Drive (the restore drill); the app never reads it.
   "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }, { "binding": "DRILL_DB", "database_name": "mkos-restore-drill", "database_id": "92faf66e-4071-463d-ac3e-3ad51cf8a4f8" }],

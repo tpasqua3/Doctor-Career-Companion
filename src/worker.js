@@ -1769,6 +1769,9 @@ async function mcpServer(request, env, token, ctx) {
   const r = await one(msg); return r ? json(r) : new Response(null, { status: 202 });
 }
 
+/* Google Search Console ownership files (URL-prefix property, HTML file method). Served by the Worker so the exact
+   address answers 200 with Google's text, never a static-file redirect. Add a name here when Google issues a new one. */
+const GOOGLE_VERIFY = ['google6bea301e2f31e181.html'];
 const app = {
   /* Every five minutes: copy waiting records to Drive first; when nothing was waiting, the same run gives MKOS its turn (scan, jobs,
      mirror). Splitting the run this way keeps each invocation inside the platform's per-run limits. */
@@ -1790,6 +1793,8 @@ const app = {
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const gv = url.pathname.slice(1);
+    if (GOOGLE_VERIFY.includes(gv)) return new Response('google-site-verification: ' + gv, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     if (url.pathname.startsWith('/mcp/')) {
       try { return await mcpServer(request, env, url.pathname.slice(5).replace(/\/+$/, ''), ctx); }
       catch (e) { console.error(e); return json({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Server error' } }, 500); }
