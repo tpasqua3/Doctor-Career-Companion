@@ -15,14 +15,16 @@
 //   7. onRemediate / handleRemediation — opt-in deterministic remediation hooks (UARF). The app registers only the
 //      actions it allows; USAP can call nothing else, and actions blocked by a locked policy are always refused.
 //
-// Changes: 1.1.1 (2026-10-24) remediation endpoint: the binding marker is trusted only without CF-Connecting-IP (internet
+// Changes: 1.2.0 (2026-10-24) handleClient (shared browser reporter: page load time, script errors, page views) and
+// heartbeat (a daily zero for activity counters, so "no activity" is measured instead of looking like missing telemetry).
+// 1.1.1 (2026-10-24) remediation endpoint: the binding marker is trusted only without CF-Connecting-IP (internet
 // requests always carry it); key compared in constant time. 1.1.0 remediation hooks, MCP tool, access policy.
 //
 // Safe by default: with no UGF binding/URL configured the kit is a silent no-op (ugf_stage 'registered').
 // Privacy: no user identity, user text, amounts or content ever leaves the app in telemetry. Access checks send only
 // sha256(lowercased email).
 
-export const KIT_VERSION = "1.1.1";
+export const KIT_VERSION = "1.2.0";
 
 const DIMS_ALLOW = new Set(["route", "status_class", "provider", "model_id", "job", "outcome", "fell_back", "tool", "store",
   "database", "voice_kind", "surface", "subsystem", "tokens"]);
@@ -85,6 +87,7 @@ export function createUsapNode(config) {
   const accessCache = new Map(); // subjectHash -> {at, decision}
   const remediationHandlers = new Map();
   const lockedHooks = new Set(config.lockedHooks || []);
+  const seenToday = new Map();   // activity counters with a positive value today (heartbeat)
 
   const transport = (env) => {
     const b = env && env[bindingName];
@@ -103,6 +106,7 @@ export function createUsapNode(config) {
     try {
       if (typeof metricKey !== "string" || !finite(value)) return;
       if (buffer.length >= MAX_BUFFER) buffer.shift(); // drop oldest, never grow unbounded
+      if (value > 0) seenToday.set(metricKey, iso().slice(0, 10));
       buffer.push({ event_id: uid(), app_id: appId, subsystem_key: (dims && typeof dims.subsystem === "string") ? dims.subsystem : null,
         metric_key: metricKey, value, surface, occurred_at: iso(), idempotency_key: uid(), dims: cleanDims(dims), kit_version: KIT_VERSION });
     } catch { /* never throw into the app */ }
@@ -307,7 +311,42 @@ export function createUsapNode(config) {
       return J({ ok: false, hook: name, error: String(err && err.message || err).slice(0, 200) }, 500);
     }
   }
+  // ---- shared browser reporter (1.2.0) -----------------------------------------------------------------------------
+  // The app routes POST /api/usap/client here (no sign-in needed: it carries numbers only). The page sends, once per load:
+  //   { load_ms, errors, views }  -> frontend_load_ms, frontend_js_error_rate (1 if the load saw a script error), frontend_views
+  // CLIENT_SNIPPET (below) is the page side; inline it in the page (it is plain JavaScript, no dependencies).
+  async function handleClient(request, env, ctx) {
+    let url; try { url = new URL(request.url); } catch { return null; }
+    if (url.pathname !== "/api/usap/client") return null;
+    const J = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    if (request.method !== "POST") return J({ error: "method" }, 405);
+    let b = {}; try { const t = await request.text(); if (t.length > 2000) return J({ error: "too large" }, 413); b = JSON.parse(t || "{}"); } catch { return J({ error: "bad json" }, 400); }
+    const surface = ["web", "claude_artifact", "lifeos_hub"].includes(b.surface) ? b.surface : "web";
+    const ms = Number(b.load_ms), errs = Number(b.errors);
+    if (finite(ms) && ms >= 0 && ms < 120000) emitMetric("frontend_load_ms", ms, { surface }, surface);
+    if (finite(errs) && errs >= 0 && errs < 1000) emitMetric("frontend_js_error_rate", errs > 0 ? 1 : 0, { surface }, surface);
+    emitMetric("frontend_views", 1, { surface }, surface);
+    flushLater(env, ctx);
+    return J({ ok: true });
+  }
+
+  // ---- daily heartbeat (1.2.0) --------------------------------------------------------------------------------------
+  // Call once a day from the app's scheduled job. For each activity counter that had no events in this isolate today it
+  // emits 0 (e.g. ai_calls 0 on a day nobody used the assistant), so USAP can tell "no activity" from "not wired".
+  // Measurements that only exist when there is activity (latency, fallback rate, tokens) are judged by USAP against these
+  // counters (metric registry `applies_when`), never faked.
+  const _emit = emitMetric;
+  function heartbeat(env, counters = ["ai_calls", "frontend_views", "mcp_tool_calls"], ctx = null) {
+    const d = iso().slice(0, 10);
+    for (const k of counters) if (seenToday.get(k) !== d) _emit(k, 0, { job: "heartbeat" });
+    flushLater(env, ctx);
+  }
   const remediationHooks = () => [...remediationHandlers.keys()];
 
-  return { appId, KIT_VERSION, onRemediate, handleRemediation, remediationHooks, emitMetric, emitEvent, timeRequest, timeAI, flush, handleGovernance, mcpTool, serveUI, _decide: decide };
+  return { appId, KIT_VERSION, onRemediate, handleRemediation, remediationHooks, emitMetric, emitEvent, timeRequest, timeAI, flush, handleGovernance, mcpTool, serveUI, handleClient, heartbeat, _decide: decide };
 }
+
+// The page side of handleClient: inline this in the app's page (once). It posts load time, whether a script error happened
+// and one view, once per page load. `base` is "" on the website; inside Claude pass the site URL or route it through the app's
+// connector instead (the server side is the same).
+export const CLIENT_SNIPPET = `(function(base,surface){var errs=0;addEventListener("error",function(){errs++},true);addEventListener("unhandledrejection",function(){errs++});addEventListener("load",function(){setTimeout(function(){try{var n=performance.getEntriesByType("navigation")[0];var ms=n?Math.round(n.loadEventEnd||n.domContentLoadedEventEnd||0):0;fetch(base+"/api/usap/client",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({load_ms:ms,errors:errs,views:1,surface:surface}),keepalive:true}).catch(function(){})}catch(e){}},0)})})("", "web");`;

@@ -23,8 +23,9 @@ import { ttsList as mkosSays } from './mkos/pronounce.js';
    Observation only: counts and timings (never user data, text or amounts) go to USAP through the USAP_UGF service binding (USAP's
    NodeGateway entrypoint, no key needed); without the binding it does nothing. It also serves Settings > Governance
    (/api/usap/governance/*, /usap/ui.js, the usap_governance connector tool) and the remediation hooks registered near the end of
-   this file. The AI order of operations (SERVICES, TIERS, JOBS, AI_ORDER) is locked (SR-03): nothing here wraps, reorders or
-   observes runAI or the MKOS AI calls, and the hooks that would touch AI routing or MKOS migration are refused by the kit. */
+   this file, plus the browser reporter (/api/usap/client) and a daily heartbeat in usapStatus. The AI order of operations (SERVICES,
+   TIERS, JOBS, AI_ORDER) is locked (SR-03): usap.timeAI only times each provider call (owner go-ahead 2026-10-24) and never reorders
+   or skips one, and the hooks that would touch AI routing or MKOS migration are refused by the kit. */
 import { createUsapNode } from './usap_node_kit_v1.js';
 /* USAP Account-Level Data Framework (SR-42): src/adf.js wires the Brain's shared module src/usap_adf_v1.js (a copy: replace it, never
    edit it here) into the account folders only. See the note above syncUser. */
@@ -1743,7 +1744,7 @@ const app = {
     const gen = genRunSafe(env);
     ctx.waitUntil(gen);
     /* USAP: once both are done, the hourly status figures, then everything observed in this run is sent. */
-    ctx.waitUntil(Promise.allSettled([drive, gen]).then(() => usapStatus(env, event)).catch(() => { }).then(() => usap.flush(env)));
+    ctx.waitUntil(Promise.allSettled([drive, gen]).then(() => usapStatus(env, event, ctx)).catch(() => { }).then(() => usap.flush(env)));
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1759,6 +1760,8 @@ const app = {
     }
     /* USAP: the shared governance renderer, the remediation hooks (USAP only) and Settings > Governance (owner and granted people). */
     if (url.pathname === '/usap/ui.js') return usap.serveUI(request, env);
+    /* USAP browser reporter (kit 1.2.0): page load time, whether a script error happened, one view. Numbers only, no sign-in. */
+    if (url.pathname === '/api/usap/client') return usap.handleClient(request, env, ctx);
     if (url.pathname === '/api/usap/remediate') {
       /* A request over USAP's service binding has no visitor address; one from the internet always does, so it may not claim the binding. */
       if (request.headers.get('x-usap-ugf') === 'binding' && request.headers.get('CF-Connecting-IP')) return fail(401, 'Not allowed.');
@@ -1781,7 +1784,7 @@ const app = {
 /* ---------- USAP status figures (hourly, from the five-minute timer) ----------
    Read-only counts and ages from tables the app already keeps; nothing about a person, no text. Every figure is optional: a table
    that does not exist yet (MKOS before its first run) simply sends nothing. */
-async function usapStatus(env, event) {
+async function usapStatus(env, event, ctx) {
   if (new Date(event && event.scheduledTime || Date.now()).getUTCMinutes() >= 5) return;   // the first run of each hour
   const one = async (sql, ...a) => { try { return await env.DB.prepare(sql).bind(...a).first(); } catch { return null; } };
   const mkSet = async k => { const r = await one('SELECT v FROM mk_settings WHERE k = ?', k); try { return r ? JSON.parse(r.v) : null; } catch { return null; } };
@@ -1802,6 +1805,9 @@ async function usapStatus(env, event) {
   if (routed && routed.n) M('retrieval_satisfied_rate', (routed.r || 0) / routed.n, {});
   // The database's size, as D1 reports it after a statement.
   try { const r = await env.DB.prepare('SELECT 1').run(); M('d1_size_bytes', r && r.meta && r.meta.size_after, { database: 'doctor-career-companion' }); } catch { }
+  /* Once a day (the first run of 00:00 UTC): a zero for each activity counter with nothing yet today (kit heartbeat), so a quiet day
+     reads as "no activity" rather than missing telemetry: AI calls, page views, connector calls and speech characters. */
+  if (new Date(event && event.scheduledTime || Date.now()).getUTCHours() === 0) usap.heartbeat(env, ['ai_calls', 'frontend_views', 'mcp_tool_calls', 'tts_chars_used'], ctx);
   // ADF conformance, once a day (the first run of 00:00 UTC): checked on the most recently synced account folder that has its layout.
   if (new Date(event && event.scheduledTime || Date.now()).getUTCHours() === 0 && storeOn(env)) {
     try {

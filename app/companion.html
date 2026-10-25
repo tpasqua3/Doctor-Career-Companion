@@ -233,6 +233,10 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 <div class="toast" id="toast" hidden></div>
 <script>
 'use strict';
+/* USAP browser reporter (the node kit's CLIENT_SNIPPET): once per load it posts the load time, whether a script error happened and one
+   view to /api/usap/client (numbers only). Website only: inside Claude the page cannot reach /api and the connector has no generic api
+   tool, so the Claude copy sends nothing; Life OS frames the website, so it reports as "web". */
+if(!(window.claude&&window.claude.use))(function(base,surface){var errs=0;addEventListener("error",function(){errs++},true);addEventListener("unhandledrejection",function(){errs++});addEventListener("load",function(){setTimeout(function(){try{var n=performance.getEntriesByType("navigation")[0];var ms=n?Math.round(n.loadEventEnd||n.domContentLoadedEventEnd||0):0;fetch(base+"/api/usap/client",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({load_ms:ms,errors:errs,views:1,surface:surface}),keepalive:true}).catch(function(){})}catch(e){}},0)})})("", "web");
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,44);
