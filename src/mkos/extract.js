@@ -12,6 +12,7 @@ import { putObject, getObject, slug, norm, contentHash } from './kb.js';
 import { addEdges, RELS } from './graph.js';
 import { resolveName, AUTO } from './resolve.js';
 import { normalizeEvidence, normalizeStrength } from './scoring.js';
+import { noteSourceAI } from './dadd.js';
 
 const F = FRAMEWORK.frameworks, ING = F.ingestion, O = F.ontology;
 const CTYPES = new Set(O.concept_types.map((c) => c.key));
@@ -134,6 +135,7 @@ export async function extractStep(env, deps, src, { actor = 'extractor', event_i
       // USAP AI governance label (never changes the call): hybrid when the rules ran first and found no recommendation here.
       const reply = await deps.ai(EXTRACT_PROMPT(src, row.chunk, row.text, known), { action: kind === 'enrich' ? 'mkos_enrich' : 'mkos_extract', path: rules.recommendations.length ? 'ai' : 'hybrid' });
       await b.spend(); usedAI = true;
+      await noteSourceAI(env, src.id);   // UEPD: this source's AI calls, reported with its ProcedureCompleted
       const j = J(String(reply || '').replace(/^```(?:json)?|```$/g, '').trim(), null);
       if (j && typeof j === 'object') {
         const ai = { ...result, ...j, source_id: src.id, chunk: row.chunk };

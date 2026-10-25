@@ -11,6 +11,8 @@ import { topicContext, checkCitations } from './bridge.js';
 import { nodeForTopic } from './education.js';
 import { enrichLesson } from './enrich.js';
 import { markObjectives } from './ite_marks.js';
+import { domains, assess, policyFor, historyFor, contentAssessed, emit as daddEmit, HELD, APP as DADD_APP, heldByTriage } from './dadd.js';
+export { heldByTriage };
 
 const U = (uid) => 'u' + String(uid).replace(/[^a-z0-9]/gi, '').slice(0, 10).toLowerCase();
 const enc = new TextEncoder();
@@ -51,6 +53,9 @@ export function assetScore(o, { cov = null, uses = 0 } = {}) {
   const overall = Math.max(0, Math.min(100, Math.round(s)));
   return { citation_coverage: c, validation_score: S.base[rs] ?? 50, overall, tier: tierOf(overall).id, scored_at: nowIso() };
 }
+/* DADD-AI triage hold: an asset held for review (or reported) carries needs ['review'] and is served to no other learner; the owner's
+   own retrieval sees it as it stands (nothing is written back from that view). */
+const ownerView = (o) => heldByTriage(o) ? { ...o, needs: [], _ownerView: true } : o;
 const serves = (o) => !!tierOf(o && o.asset_confidence ? o.asset_confidence.overall : 0).serve;
 const GEN = () => FRAMEWORK.frameworks.assets.generation_metadata;
 /* Generation metadata (assets.json generation_metadata): who wrote it, with which prompt and template, for which objective. */
@@ -150,6 +155,7 @@ const currentWith = (ctx) => (ctx.guidelines || []).map((g) => g.current).filter
 /* Re-verification at retrieval: the asset's confidence is recomputed with what is known now (its review state, flags, citation coverage,
    grounding and clean reuse). A tier change is stored; an asset that falls below the serving tiers is queued for the owner's review. */
 async function reverify(env, o) {
+  if (o && o._ownerView) { const sc = assetScore(o); return { ...sc, serve: true }; }   // the owner's look at a held asset changes nothing
   const uses = ((await env.DB.prepare('SELECT COUNT(*) AS n FROM mk_asset_usage WHERE asset_id = ?').bind(o.id).first()) || {}).n || 0;
   const sc = assetScore(o, { uses }), before = o.asset_confidence || {}, t = tierOf(sc.overall);
   if (before.tier !== sc.tier || Math.abs((before.overall ?? -99) - sc.overall) >= 3) {
@@ -204,9 +210,10 @@ export async function findAsset(env, u, a) {
   const n = Math.max(1, Math.min(30, Number(a.n) || 1));
   if (a.personal) return { reuse: false, reason: 'personalized', missing: n };
   const pol = await policy(env), { ctx, basis: now } = await basisNow(env, u, tid, String(a.name || ''), pol);
+  const ov = (o) => a._owner ? ownerView(o) : o;   // DADD-AI: the owner still sees what is held from other learners
   if (!K.pool) {
     const variant = String(a.len || a.variant || 'std'), id = lessonId(tid, variant, now.band);
-    let o = await getObject(env, id);
+    let o = ov(await getObject(env, id));
     const jl = await judgeLesson(env, o, now, o ? await getObjects(env, Object.keys((o.basis || {}).recs || {})) : {}, pol); o = jl.o; let reason = jl.reason;
     if (reason === 'no_asset') for (const b of ['h', 'm', 'l', 'n']) if (b !== now.band) { const x = await getObject(env, lessonId(tid, variant, b)); if (x && x.status === 'current') { reason = 'blueprint_changed'; break; } }
     if (!reason) { const v = await reverify(env, o); if (!v.serve) reason = 'low_confidence'; }
@@ -224,7 +231,7 @@ export async function findAsset(env, u, a) {
   const ex = new Set((Array.isArray(a.exclude) ? a.exclude : []).map(String));
   for (const r of (await env.DB.prepare('SELECT asset_id FROM mk_asset_usage WHERE user_id = ? AND asset_id LIKE ?').bind(String(u.id), prefix + '%').all()).results) ex.add(r.asset_id);
   const cands = (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'EducationalAsset' AND id LIKE ? AND status = 'current' ORDER BY updated DESC LIMIT 400").bind(prefix + '%').all()).results
-    .map((r) => JSON.parse(r.body)).filter((o) => !ex.has(o.id) && (lvl == null || kind !== 'question' || Number(o.variant) === lvl));
+    .map((r) => ov(JSON.parse(r.body))).filter((o) => !ex.has(o.id) && (lvl == null || kind !== 'question' || Number(o.variant) === lvl));
   const live = await getObjects(env, [...new Set(cands.flatMap((o) => Object.keys((o.basis || {}).recs || {})))]), ok = [], reasons = {};
   for (const o of cands) { const r = await judge(o, now, live, pol, true) || (serves(o.asset_confidence ? o : { ...o, asset_confidence: assetScore(o) }) ? null : 'low_confidence'); if (r) reasons[r] = (reasons[r] || 0) + 1; else ok.push(o); }
   // Highest confidence first (durable before provisional); ties broken at random so a pool does not always open the same way.
@@ -239,13 +246,16 @@ export async function findAsset(env, u, a) {
 /* asset_put {kind, tid, name, len|level, personal, local_id, validated, generated_by, reviewed_by, sources, content | items:[{content, sources, validated, level, local_id}]}
    Validate -> store. Validated means the app's independent accuracy review ran over the whole asset; an asset citing a superseded
    guideline edition is stored but never served (stop-the-line). Unchanged content is a no-op (Generate Once, Store Once). */
-export async function putAssets(env, u, a) {
+export async function putAssets(env, u, a, opts = {}) {
   const kind = String(a.kind || ''), K = KINDS()[kind]; if (!K) return { error: 'unknown asset kind (lesson, question, flashcard)' };
   const tid = String(a.tid || ''); if (!tid) return { error: 'tid required' };
   const pol = await policy(env), items = (Array.isArray(a.items) ? a.items : [a]).slice(0, pol.batch), personal = !!a.personal;
   const { ctx, basis } = await basisNow(env, u, tid, String(a.name || ''), pol);
   const concepts = (ctx.node && ctx.node.concepts && ctx.node.concepts.length ? ctx.node.concepts : ctx.concept ? [ctx.concept.id] : []).slice(0, 20);
   const cites = [...new Set(Object.values(basis.families))], out = [];
+  let T = null;   // DADD-AI triage context, read once per call: the review policy, past owner decisions, the grounding recommendations
+  const triageCtx = async () => T || (T = { policy: await policyFor(env, kind), history: await historyFor(env, kind),
+    recs: Object.values(await getObjects(env, Object.keys(basis.recs || {}))).map((r) => ({ validated: r.governance_status === 'validated', method: ((r.provenance || []).find((p) => p && p.method) || {}).method || '' })) });
   for (const it of items) {
     const content = it.content; if (!content || typeof content !== 'object') { out.push({ error: 'content required' }); continue; }
     const text = JSON.stringify(content); if (text.length > pol.max) { out.push({ error: 'content too large' }); continue; }
@@ -283,7 +293,26 @@ export async function putAssets(env, u, a) {
     void vs; o.asset_confidence = assetScore(o, { cov }); o.confidence_tier = o.asset_confidence.tier;
     // A score below the serving tiers is queued for review at once, so it is never served before someone looks at it.
     if (!tierOf(o.asset_confidence.overall).serve && review_status !== 'citation_outdated') o.needs = ['review'];
-    const r = await putObject(env, o, { actor: personal ? 'learner:' + U(u.id) : 'app', summary: `generated ${kind}${review_status === 'validated' ? ', validated' : ', ' + review_status}`, audited: !K.pool });
+    /* DADD-AI confidence triage (shared assets written after generation; a personalized adaptation stays the learner's own as before,
+       and the owner's retroactive import keeps its reviewed state). The result is stored on the asset; held ones wait for the owner. */
+    let fresh = false;
+    if (!personal && opts.triage !== false) {
+      const prev = await getObject(env, id), ownerRev = !!(prev && prev.status === 'current' && prev.triage && prev.triage.review && ['accept', 'edit'].includes(prev.triage.review.decision));
+      // A live owner-reviewed asset is never replaced by a new AI version; one that needs regenerating is, but goes to review (hard failure).
+      if (ownerRev && !(prev.needs || []).length && prev.content_sha !== o.content_sha) { out.push({ id, version: prev.version, review_status: 'kept_owner_reviewed', changed: false }); continue; }
+      let tri = prev && prev.content_sha === o.content_sha && prev.triage ? prev.triage : null;
+      if (!tri) {
+        const X = await triageCtx(), objectives = new Set(basis.objs || []); if (objective) objectives.add(await h10(objective));
+        const scores = domains({ cited: srcs.length, cited_current: cc.results.filter((x) => x.status === 'current').length, recs: X.recs, families: Object.keys(basis.families || {}).length,
+          objectives: objectives.size, concepts: concepts.length, review_status, flagged: o.review ? o.review.flagged : 0, history: X.history });
+        tri = { kind, ...assess(scores, X.policy, { hard: review_status === 'citation_outdated' ? 'source_currency' : ownerRev ? 'validation' : null }), policy: X.policy.from, assessed_at: nowIso(), review: null, reported: null };
+        fresh = true;
+      }
+      o.triage = tri;
+      if (HELD.has(tri.action)) o.needs = [...new Set([...(o.needs || []), 'review'])];
+    }
+    const r = await putObject(env, o, { actor: personal ? 'learner:' + U(u.id) : 'app', summary: `generated ${kind}${review_status === 'validated' ? ', validated' : ', ' + review_status}${o.triage ? `; DADD-AI ${o.triage.band} ${o.triage.confidence}` : ''}`, audited: !K.pool });
+    if (fresh && r.changed) await contentAssessed(o, o.triage, String(a.name || '').trim() || tid);
     const last = await env.DB.prepare('SELECT content FROM mk_asset_store WHERE asset_id = ? ORDER BY at DESC, rowid DESC LIMIT 1').bind(id).first();
     if (!last || last.content !== text)
       await env.DB.prepare('INSERT OR REPLACE INTO mk_asset_store (asset_id, version, content, bytes, at) VALUES (?, ?, ?, ?, ?)').bind(id, r.version, text, text.length, nowIso()).run();
@@ -299,31 +328,115 @@ export async function putAssets(env, u, a) {
       await markObjectives(env, [objective], 'lesson_stored');   // ITE pipeline trace (ite.js): accounts waiting on this objective
     }
     if (!personal) await served(env, u.id, kind, [id]);
-    out.push({ id, version: r.version, review_status, changed: r.changed, older_citations: cc.older || 0, confidence: o.asset_confidence.overall, tier: o.asset_confidence.tier });
+    out.push({ id, version: r.version, review_status, changed: r.changed, older_citations: cc.older || 0, confidence: o.asset_confidence.overall, tier: o.asset_confidence.tier,
+      ...(o.triage ? { triage: { confidence: o.triage.confidence, band: o.triage.band, action: o.triage.action } } : {}) });
   }
   return { stored: out, current_with: currentWith(ctx) };
 }
 
-/* asset_flag {id, reason}: a learner reports a problem. One flag stops reuse until the owner reviews it. */
-export async function flagAsset(env, u, a, owner) {
-  const id = String(a.id || '');
+/* DADD-AI learner reports: asset_report {id, reason: wrong | unsafe | duplicate | other}. Stored: the item id, the reason, the time and a
+   per-account hash (one report per person and item). MKOS content is clinical (the critical class), so a reported item is hidden from
+   other learners until the owner reviews it, and it goes to the owner's queue flagged reported. ContentReported goes to USAP (kind, reason). */
+export const REPORT_REASONS = ['wrong', 'unsafe', 'duplicate', 'other'];
+const reportable = (o) => o && (o.type === 'EducationalAsset' || (o.type === 'EducationalObject' && o.edu_kind === 'clinical_pearl'));
+const kindOfCode = () => Object.fromEntries(Object.entries(KINDS()).map(([k, v]) => [v.code, k]));
+export const contentKind = (o) => { if (o.type === 'EducationalObject') return 'knowledge_object'; if (o.triage && o.triage.kind) return o.triage.kind;
+  const m = /^ea\.(?:s|u[a-z0-9]+\.g)\.([a-z]+)\./.exec(String(o.id)); return (m && kindOfCode()[m[1]]) || 'lesson'; };
+export async function reportAsset(env, u, a) {
+  const id = String(a.id || ''), reason = REPORT_REASONS.includes(a.reason) ? a.reason : 'other';
   if (!/^(ea|eo\.pe)\./.test(id) || (id.startsWith('ea.u') && !id.startsWith('ea.' + U(u.id) + '.'))) return { error: 'not found' };
-  const o = await getObject(env, id); if (!o || !(o.type === 'EducationalAsset' || (o.type === 'EducationalObject' && o.edu_kind === 'clinical_pearl'))) return { error: 'not found' };
+  const o = await getObject(env, id); if (!reportable(o)) return { error: 'not found' };
+  const acct = (await sha('dcc-report:' + u.id)).slice(0, 16), at = nowIso();
+  const ins = await env.DB.prepare('INSERT OR IGNORE INTO mk_asset_reports (asset_id, acct, reason, at) VALUES (?, ?, ?, ?)').bind(id, acct, reason, at).run();
+  if (!(ins.meta && ins.meta.changes)) return { ok: true, id, already: true };
+  const kind = contentKind(o), t = o.triage || { kind, critical: true, legacy: true };
+  const rep = t.reported || { n: 0, reasons: {} }; rep.n++; rep.reasons = { ...rep.reasons, [reason]: (rep.reasons[reason] || 0) + 1 }; rep.last_at = at;
+  await putObject(env, { ...o, needs: [...new Set([...(o.needs || []), 'review'])], triage: { ...t, kind, reported: rep, queue: 'held' } }, { actor: 'learner-report', summary: 'reported: ' + reason, audited: true });
+  if (id.startsWith('ea.s.') || id.startsWith('eo.')) daddEmit('ContentReported', { node_id: id, idempotency_key: `${DADD_APP}:${id}:${(await sha(acct + '|' + id)).slice(0, 12)}:ContentReported`, metadata: { kind, reason } });
+  return { ok: true, id, reported: rep.n };
+}
+
+/* asset_flag {id, reason}: a learner reports a problem (kept for older pages: the same as asset_report with reason "other"). The owner's
+   own flag keeps its note and stops reuse until it is reviewed, as before. */
+export async function flagAsset(env, u, a, owner) {
+  if (!owner) return reportAsset(env, u, { id: a.id, reason: REPORT_REASONS.includes(a.reason) ? a.reason : 'other' });
+  const id = String(a.id || '');
+  if (!/^(ea|eo\.pe)\./.test(id)) return { error: 'not found' };
+  const o = await getObject(env, id); if (!reportable(o)) return { error: 'not found' };
   const note = String(a.reason || '').replace(/\s+/g, ' ').slice(0, 500);
-  const flags = [...((o.data && o.data.flags) || []), { by: owner ? 'owner' : U(u.id), at: nowIso(), note }].slice(-20);
-  await putObject(env, { ...o, needs: [...new Set([...(o.needs || []), 'review'])], review_status: 'flagged', data: { ...(o.data || {}), flags } }, { actor: owner ? 'owner' : 'learner:' + U(u.id), summary: 'flagged: ' + (note || 'no reason given') });
+  const flags = [...((o.data && o.data.flags) || []), { by: 'owner', at: nowIso(), note }].slice(-20);
+  await putObject(env, { ...o, needs: [...new Set([...(o.needs || []), 'review'])], review_status: 'flagged', data: { ...(o.data || {}), flags } }, { actor: 'owner', summary: 'flagged: ' + (note || 'no reason given') });
   return { ok: true, id };
 }
 
-/* asset_review {id, result: ok | regenerate | retire, note} (owner): clear a flag, send the asset back for regeneration, or retire it. */
+/* asset_queue {id?, limit} (owner): the DADD-AI review queue. Held (red first, then reported, then orange), then the monitored ones
+   (sampled first). With an id: that item with its current content, for review. */
+const RANK = (t) => t.queue === 'held' ? (t.band === 'red' ? 0 : t.reported ? 1 : 2) : t.reported ? 1 : t.sampled ? 3 : 4;
+const qItem = (o) => { const t = o.triage || {}; return { id: o.id, name: o.name, kind: t.kind || contentKind(o), version: o.version, topic: o.app_topic || null, confidence: t.confidence ?? null, band: t.band || null,
+  action: t.action || null, queue: t.queue || null, failure_mode: t.failure_mode || null, contributing: t.contributing || [], severity: t.severity || null, scores: t.scores || null, hard_fail: t.hard_fail || null,
+  sampled: !!t.sampled, reported: t.reported || null, assessed_at: t.assessed_at || null, review_status: o.review_status, needs: o.needs || [] }; };
+export async function assetQueue(env, u, a) {
+  if (a.id) {
+    const o = await getObject(env, String(a.id)); if (!reportable(o)) return { error: 'not found' };
+    const content = (await loadContent(env, [o]))[o.id] || (o.type === 'EducationalObject' ? { text: o.text || o.statement || o.name } : null);
+    return { item: { ...qItem(o), review: (o.triage && o.triage.review) || null }, content };
+  }
+  const rows = (await env.DB.prepare("SELECT body FROM mk_objects WHERE type IN ('EducationalAsset','EducationalObject') AND status = 'current' AND id NOT LIKE 'ea.u%' AND json_extract(body, '$.triage.queue') IS NOT NULL ORDER BY updated DESC LIMIT 2000").all()).results.map((r) => JSON.parse(r.body));
+  const list = rows.sort((x, y) => RANK(x.triage) - RANK(y.triage) || (x.triage.confidence ?? 1) - (y.triage.confidence ?? 1));
+  const counts = { held: 0, monitor: 0, reported: 0, red: 0, orange: 0, yellow: 0 };
+  for (const o of rows) { const t = o.triage; counts[t.queue] = (counts[t.queue] || 0) + 1; if (t.reported) counts.reported++; if (counts[t.band] != null) counts[t.band]++; }
+  return { agency: 'DADD-AI', counts, items: list.slice(0, Math.min(200, Number(a.limit) || 50)).map(qItem) };
+}
+
+/* asset_decide {id, decision: accept | edit | reject, content (edit), note} (owner). The decision is stored with the asset (reviewer
+   owner, reviewed_at, version); an edit is a new version that supersedes the AI one; a reject retires it. ReviewDecided goes to USAP. */
+export async function decideAsset(env, u, a) {
+  const id = String(a.id || ''), o = await getObject(env, id); if (!reportable(o)) return { error: 'not found' };
+  const decision = String(a.decision || ''); if (!['accept', 'edit', 'reject'].includes(decision)) return { error: 'decision must be accept, edit or reject' };
+  const actor = 'owner:' + u.email, note = String(a.note || '').slice(0, 500), at = nowIso(), kind = contentKind(o), t = o.triage || { kind, critical: true };
+  const rec = { decision, reviewer: 'owner', reviewed_at: at, version: o.version, ...(note ? { note } : {}) };
+  let after = null, res;
+  if (decision === 'edit') {
+    const content = a.content; if (!content || typeof content !== 'object' || o.type !== 'EducationalAsset') return { error: 'edit needs content (an object, for an educational asset)' };
+    const text = JSON.stringify(content), pol = await policy(env); if (text.length > pol.max) return { error: 'content too large' };
+    const sc = t.scores ? { ...t.scores, generation: 1 } : null;
+    if (sc) after = assess(sc, await policyFor(env, kind), { critical: t.critical !== false, random: () => 1 }).confidence;
+    const next = { ...o, content_sha: await sha(text), review_status: 'validated', governance_status: 'validated', reviewed_by: 'owner', needs: [],
+      provenance: [...(o.provenance || []), { source_id: 'src.owner', method: 'owner_edit', agent: 'owner', at, note: 'supersedes AI version ' + o.version }],
+      triage: { ...t, kind, queue: null, action: 'live', review: { ...rec, supersedes_version: o.version, confidence_after: after } } };
+    next.asset_confidence = assetScore(next); next.confidence_tier = next.asset_confidence.tier;
+    res = await putObject(env, next, { actor, summary: 'owner edit (supersedes the AI version ' + o.version + ')', part: 'minor' });
+    await env.DB.prepare('INSERT OR REPLACE INTO mk_asset_store (asset_id, version, content, bytes, at) VALUES (?, ?, ?, ?, ?)').bind(id, res.version, text, text.length, at).run();
+  } else if (decision === 'accept') {
+    const next = { ...o, needs: [], review_status: 'validated', governance_status: 'validated', triage: { ...t, kind, queue: null, action: 'live', review: rec } };
+    if (o.type === 'EducationalAsset') { next.asset_confidence = assetScore(next); next.confidence_tier = next.asset_confidence.tier; }
+    res = await putObject(env, next, { actor, summary: 'reviewed: accepted' + (note ? ': ' + note : '') });
+  } else {
+    await putObject(env, { ...o, triage: { ...t, kind, queue: null, review: rec } }, { actor, summary: 'reviewed: rejected' + (note ? ': ' + note : '') });
+    res = await setStatus(env, id, 'retired', { actor, reason: note || 'rejected at review', force: true });
+  }
+  await audit(env, actor, 'asset_decide', id, o.version, res && res.version || null, { decision, note });
+  if (!id.startsWith('ea.u')) daddEmit('ReviewDecided', { node_id: id, idempotency_key: `${DADD_APP}:${id}:${o.version}:ReviewDecided`,
+    metadata: { kind, decision, reported: !!t.reported, sampled: !!t.sampled, band: t.band || null, asset_id: id, confidence_before: t.confidence ?? null, ...(decision === 'edit' && after != null ? { confidence_after: after } : {}) } });
+  return { ok: true, id, decision, version: res && res.version, confidence_after: after };
+}
+
+/* asset_review {id, result: ok | regenerate | retire, note} (owner): clear a flag, send the asset back for regeneration, or retire it.
+   ok is an accept and retire a reject (asset_decide); regenerate is recorded as a reject of this version. */
 export async function reviewAsset(env, u, a) {
   // Educational assets and clinical pearls share this review (a pearl validated here stops being labelled unvalidated; regenerate = failed validation).
-  const id = String(a.id || ''), o = await getObject(env, id); if (!o || !(o.type === 'EducationalAsset' || (o.type === 'EducationalObject' && o.edu_kind === 'clinical_pearl'))) return { error: 'not found' };
+  const id = String(a.id || ''), o = await getObject(env, id); if (!reportable(o)) return { error: 'not found' };
   const actor = 'owner:' + u.email, note = String(a.note || '').slice(0, 500);
-  if (a.result === 'retire') return setStatus(env, id, 'retired', { actor, reason: note || 'retired at review', force: true });
-  if (a.result === 'regenerate') { await putObject(env, { ...o, needs: ['regenerate'], review_status: 'needs_regenerate', data: { ...(o.data || {}), regenerate_reason: 'failed validation' + (note ? ': ' + note : '') } }, { actor, summary: 'sent for regeneration' + (note ? ': ' + note : '') }); return { ok: true }; }
+  if (a.result === 'retire') { const r = await decideAsset(env, u, { id, decision: 'reject', note: note || 'retired at review' }); return r.error ? r : { ok: true, ...r }; }
+  if (a.result === 'regenerate') {
+    const t = o.triage || { kind: contentKind(o), critical: true }, rec = { decision: 'reject', reviewer: 'owner', reviewed_at: nowIso(), version: o.version, regenerate: true };
+    await putObject(env, { ...o, needs: ['regenerate'], review_status: 'needs_regenerate', triage: { ...t, queue: null, review: rec }, data: { ...(o.data || {}), regenerate_reason: 'failed validation' + (note ? ': ' + note : '') } }, { actor, summary: 'sent for regeneration' + (note ? ': ' + note : '') });
+    if (!id.startsWith('ea.u')) daddEmit('ReviewDecided', { node_id: id, idempotency_key: `${DADD_APP}:${id}:${o.version}:ReviewDecided`, metadata: { kind: t.kind || contentKind(o), decision: 'reject', reported: !!t.reported, sampled: !!t.sampled, band: t.band || null, asset_id: id, confidence_before: t.confidence ?? null } });
+    return { ok: true };
+  }
   if (a.result !== 'ok') return { error: 'result must be ok, regenerate or retire' };
-  await putObject(env, { ...o, needs: [], review_status: 'validated', governance_status: 'validated' }, { actor, summary: 'reviewed ok' + (note ? ': ' + note : '') });
+  const r = await decideAsset(env, u, { id, decision: 'accept', note });
+  if (r.error) return r;
   await audit(env, actor, 'asset_review', id, o.version, null, { result: 'ok', note });
   return { ok: true };
 }
@@ -378,7 +491,7 @@ export async function importOwnerAssets(env, deps, { prog = {}, perStep = 6 } = 
       if (!d.tid || !d.len || d.focus || d.parent || d.deeper || d.part || !d.rev || !d.rev.done || !Array.isArray(d.segs) || !d.segs.length || d.mk) { out.skipped++; continue; }
       const checks = allQs.filter((q) => q.les === d.id).map(qOut);
       const r = await putAssets(env, u, { kind: 'lesson', tid: d.tid, name: '', len: d.len, validated: true, generated_by: (d.by && d.by.w) || 'legacy_record', reviewed_by: (d.by && d.by.r) || '', sources: d.src || [], title: d.title,
-        content: { title: d.title, len: d.len, min: d.min, rev: d.rev, segs: d.segs, pts: d.pts || [], pit: d.pit || [], src: d.src || [], unc: d.unc || [], ref: d.ref || '', by: d.by || null, checks, cards: [] } });
+        content: { title: d.title, len: d.len, min: d.min, rev: d.rev, segs: d.segs, pts: d.pts || [], pit: d.pit || [], src: d.src || [], unc: d.unc || [], ref: d.ref || '', by: d.by || null, checks, cards: [] }  }, { triage: false });
       const st = (r.stored || [])[0] || {}; if (st.review_status === 'citation_outdated') out.outdated++; else if (st.id) out.lessons++; n++;
     } else if (/^med\/bank_/.test(path)) {
       const by = {};
@@ -386,7 +499,7 @@ export async function importOwnerAssets(env, deps, { prog = {}, perStep = 6 } = 
       for (const [k, qs] of Object.entries(by)) {
         const [tid, lvl] = k.split('|');
         for (let i = 0; i < qs.length; i += 30) {
-          const r = await putAssets(env, u, { kind: 'question', tid, name: '', level: Number(lvl), generated_by: 'legacy_record', items: qs.slice(i, i + 30).map((q) => ({ content: qOut(q), validated: true, sources: q.src || [] })) });
+          const r = await putAssets(env, u, { kind: 'question', tid, name: '', level: Number(lvl), generated_by: 'legacy_record', items: qs.slice(i, i + 30).map((q) => ({ content: qOut(q), validated: true, sources: q.src || [] }))  }, { triage: false });
           for (const st of r.stored || []) { if (st.review_status === 'citation_outdated') out.outdated++; else if (st.id) out.questions++; }
         }
       }

@@ -14,6 +14,7 @@ import { nodeForTopic } from './education.js';
 import { conceptContext, curriculumPlan } from './adaptive.js';
 import { selection, select, boardPlan, scoresFor } from './blueprint.js';
 import { ttsList } from './pronounce.js';
+import { heldByTriage } from './dadd.js';
 
 const U = (uid) => 'u' + String(uid).replace(/[^a-z0-9]/gi, '').slice(0, 10).toLowerCase();
 const clamp = (x) => Math.max(0, Math.min(100, Math.round(x * 10) / 10));
@@ -35,7 +36,8 @@ export async function assetFlags(env, u) {
   const out = {}; for (const r of results) { const o = J(r.body); out[o.store?.item_id || o.id] = { needs: o.needs, status: o.review_status, kind: o.asset_kind, path: o.store?.path }; }
   // Shared library assets this learner was served that are now flagged (a guideline changed, or someone reported a problem).
   const sh = await env.DB.prepare("SELECT o.body FROM mk_asset_usage g JOIN mk_objects o ON o.id = g.asset_id WHERE g.user_id = ? AND json_array_length(COALESCE(json_extract(o.body, '$.needs'), '[]')) > 0 LIMIT 300").bind(String(u.id)).all().catch(() => ({ results: [] }));
-  for (const r of sh.results) { const o = J(r.body); out[o.id] = { needs: o.needs, status: o.review_status, kind: o.asset_kind, path: 'mkos' }; }
+  // An item DADD-AI holds for review (or that someone reported) is not a knowledge change: it is left out of this list.
+  for (const r of sh.results) { const o = J(r.body); if (heldByTriage(o)) continue; out[o.id] = { needs: o.needs, status: o.review_status, kind: o.asset_kind, path: 'mkos' }; }
   return { flags: out };
 }
 

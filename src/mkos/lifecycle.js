@@ -20,6 +20,7 @@ import { enrichFromPenetration } from './enrich.js';
 import { computeLayers } from './layers.js';
 import { computeObjectConfidence, computeLessonConfidence } from './confidence.js';
 import { coverageAndGaps } from './coverage.js';
+import { procedureCompleted, takeSourceAI } from './dadd.js';
 
 const O = LC.orchestrator, M = LC.metadata, OBJ = LC.objectives, CLASSES = LC.concept_classes;
 const CLASS_V = 'class' + LC.version, META_V = String(M.version);
@@ -188,6 +189,13 @@ export async function dirtyFor(env, sid) {
 }
 const done = (detail = {}, v = null) => ({ state: 'done', at: nowIso(), ...(v ? { v } : {}), detail });
 
+/* UEPD sop.source_ingestion (DADD-AI): the source's ingestion and decomposition finished (or failed), so its ProcedureCompleted goes
+   out once, naming the SourceIngested trigger kept on the lifecycle record. No asset is generated here (queued_review 0). */
+async function finishTrigger(env, doc, src, outcome, steps, written) {
+  if (!doc.trigger || doc.trigger_done) return;
+  doc.trigger_done = true;
+  await procedureCompleted(doc.trigger, { outcome, steps, written, queued_review: 0, ai_calls: await takeSourceAI(env, src.id), label: src.name });
+}
 /* Advance one source as far as this run allows. Returns 'advanced' | 'waiting' | 'continues' | 'finished'. */
 export async function advanceSource(env, sid, ctx) {
   const rec = await readRecord(env, sid); if (!rec) return 'missing';
@@ -198,7 +206,7 @@ export async function advanceSource(env, sid, ctx) {
   if (doc.retired) { delete doc.retired; }
   // 1. Ingested: the source has been read (or indexed, or mapped by title); then its metadata, cites edges and a refined class.
   if (S.ingested.state !== 'done') {
-    if (FAILED.has(src.ingest_state)) { if (S.ingested.state !== 'blocked') { S.ingested = { state: 'blocked', at: nowIso(), detail: { ingest_state: src.ingest_state } }; await save(); } return 'waiting'; }
+    if (FAILED.has(src.ingest_state)) { if (S.ingested.state !== 'blocked') { S.ingested = { state: 'blocked', at: nowIso(), detail: { ingest_state: src.ingest_state } }; await finishTrigger(env, doc, src, 'failed', 0, 0); await save(); } return 'waiting'; }
     if (!DONE.has(src.ingest_state)) return 'waiting';
     const re = await maybeReclassify(env, src), cur = re ? await getObject(env, sid) : src;
     const md = await computeMetadata(env, cur); await writeMetadata(env, sid, md);
@@ -213,6 +221,7 @@ export async function advanceSource(env, sid, ctx) {
     const derived = (await env.DB.prepare("SELECT COUNT(DISTINCT d.src) AS n FROM mk_edges e JOIN mk_edges d ON d.dst = e.src AND d.rel = 'derived_from' WHERE e.dst = ? AND e.rel = 'derived_from' AND e.src LIKE 'rec.%'").bind(sid).first()).n;
     const concepts = (await env.DB.prepare("SELECT COUNT(*) AS n FROM mk_edges WHERE src = ? AND rel = 'covers' AND dst LIKE 'c.%'").bind(sid).first()).n;
     S.knowledge_objects = done({ ...by, derived_from_recommendations: derived, concepts_covered: concepts }, src.version);
+    await finishTrigger(env, doc, src, 'ok', 2, Object.values(by).reduce((x, n) => x + (Number(n) || 0), 0));
     await save(); return 'advanced';
   }
   const concepts = ctx.concepts[sid] || (ctx.concepts[sid] = await sourceConcepts(env, sid));

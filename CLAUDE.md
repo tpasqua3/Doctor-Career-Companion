@@ -69,6 +69,44 @@ event. `idempotency_key` = `doctor_companion_app:<account tag>.<record>:<type>` 
 `duration_min`, `quantity`, `unit`, `category`, `label` (generic activity names), `objective_id`. Only completions within the last
 3 days are reported (no backfill; restores report nothing). Tests: `node --test test/activity.test.mjs`.
 
+## DADD-AI: confidence triage, owner review, reports and event procedures (owner decision 10/25/2026)
+MKOS is the highest governance priority of DADD-AI, the Department of Advancing the Development of Deterministic AI (a USAP governance
+agency; contract `specs/uepd_app_contract.md`, USAP `src/procedures.js`). "Monitor everything, review exceptions": AI-made content is not
+queued for the owner wholesale. Rules only, no AI calls; the code is `src/mkos/dadd.js` (bound to the node kit in `src/worker.js`).
+- **Triage** (`putAssets` in `src/mkos/assets.js`): every shared asset stored after generation (lessons, questions, flashcards, board
+  review content) gets `triage` { kind, confidence 0..1, scores, band green|yellow|orange|red, action, failure_mode, contributing,
+  severity, critical, sampled, queue held|monitor|null, hard_fail, policy, assessed_at, review, reported }. Domains (weights renormalized
+  over what is measured): source .15 (cited sources current), evidence .20 (grounding recommendations and guideline families), objective_mapping
+  .15 (two objectives or more score full: the Constitution), ontology .15 (concepts), extraction .10 (how the grounding recommendations were
+  extracted; only when there are some), generation .10 (the accuracy review), review .15 (past owner decisions on the kind, 0.5 at first).
+  Everything is the critical class. Bands come from USAP `GET /api/v1/governance/review/policy?kind=` over `USAP_UGF` (`x-usap-app`),
+  cached an hour, defaults when USAP is down: >= 0.95 live, 0.90-0.95 live_flagged (monitored), 0.80-0.90 orange and < 0.80 red
+  review_hold (red first in the queue). A superseded citation or a rewrite of an owner-reviewed asset that needs regenerating is a hard
+  failure (review_hold); a live owner-reviewed asset is never replaced by a new AI version (`kept_owner_reviewed`). Held means needs
+  `['review']`: `asset_find` serves it to no other learner; the owner's own `asset_find` sees it (`_owner`, nothing written back).
+  Personalized adaptations (`ea.u…`) and the owner's retroactive import (`{ triage: false }`) are not triaged; existing assets keep
+  their state (no backfill). Unchanged content keeps its assessment.
+- **Owner review** (`asset_queue`, `asset_decide`; owner only, also through the connector's `mkos` tool; the page's Knowledge tab shows
+  the queue to the owner): accept, edit (a new version superseding the AI one, `owner_edit` provenance, `confidence_after`) or reject
+  (retired), stored as `triage.review` { decision, reviewer owner, reviewed_at, version }. `asset_review` ok/retire/regenerate maps onto
+  accept/reject.
+- **Reports** (`asset_report` {id, reason wrong|unsafe|duplicate|other}; `asset_flag` from a learner is the same with "other"): one per
+  account and item in `mk_asset_reports` (item id, reason, time, a one-way hash of the account id; nothing else), counted on the asset
+  (`triage.reported`), held from others until reviewed. The page offers it on library lessons and on answered library questions.
+- **Events** (system scope, no user_id, central labels only): ContentAssessed (each new assessment), ReviewDecided (kind, decision,
+  reported, sampled, band, asset_id, confidence_before, confidence_after on an edit), ContentReported (kind, reason), SourceIngested
+  (`registerFile`, a new or changed source by md5; key kept as `trigger` on the lifecycle record), ProcedureCompleted
+  (sop.source_ingestion, when the source's decomposition finishes (ok), its ingestion fails (failed) or a newer version replaces it
+  (skipped); ai_calls = the extraction's AI calls on that source, setting `uepd_ai:<source>`), CoverageGapDetected/Closed (an objective
+  with exam weight and no lesson: `mk_gaps` kind `lesson` opening or closing in `detectGaps`).
+- **Daily health report** (`healthReport`, 00:00 UTC run of `usapStatus`, node kit metrics): dadd_ai_overall_confidence and
+  dadd_ai_failure_rate (assets assessed in 30 days), dadd_ai_educational_coverage (blueprint topics with a current lesson, coverage
+  rows), dadd_ai_objective_coverage (current blueprint objectives with a shared asset), dadd_ai_knowledge_population (canonical
+  objectives with supporting knowledge), dadd_ai_evidence_linkage (current shared assets with a cites link), dadd_ai_ontology_integrity
+  (concepts neither orphaned nor schema-stopped), dadd_ai_guideline_currency (sources current and not past their review date),
+  dadd_ai_population_velocity (knowledge objects created in 7 days). A figure with no data is not sent.
+Tests: `node --test test/dadd.test.mjs`.
+
 ## AI order of operations
 The app's AI order of operations (`SERVICES`, `TIERS`, `JOBS`, `AI_ORDER` in `src/worker.js`) was deliberately worked out and is changed
 only on a deliberate, specific request from the owner. MKOS calls only free services directly and never changes that hierarchy.

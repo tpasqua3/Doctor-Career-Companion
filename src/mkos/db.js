@@ -84,6 +84,9 @@ export const TABLES = [
   `CREATE TABLE IF NOT EXISTS mk_asset_store (asset_id TEXT NOT NULL, version TEXT NOT NULL, content TEXT NOT NULL, bytes INTEGER NOT NULL, at TEXT NOT NULL, PRIMARY KEY (asset_id, version))`,
   `CREATE TABLE IF NOT EXISTS mk_asset_usage (asset_id TEXT NOT NULL, user_id TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (asset_id, user_id))`,
   `CREATE INDEX IF NOT EXISTS mk_asset_usage_user ON mk_asset_usage (user_id, kind)`,
+  // DADD-AI learner reports (dadd.js, assets.js reportAsset): one row per item and account, keyed by a one-way hash of the account id.
+  // Only the item id, the reason and the time are kept; the count and reasons also live on the asset (triage.reported), which is durable.
+  `CREATE TABLE IF NOT EXISTS mk_asset_reports (asset_id TEXT NOT NULL, acct TEXT NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (asset_id, acct))`,
   // Continuous Knowledge Lifecycle (lifecycle.js, mkos/ontology/lifecycle.json): one record per source of the stages it has reached.
   // Durable: mirrored to Drive (registries/lifecycle.json) and restored. stages_json holds {stage: {state, at, v, detail}} and the
   // history of earlier cycles (a source re-enters the lifecycle when its content version changes).

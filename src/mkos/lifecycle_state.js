@@ -33,12 +33,19 @@ export async function writeRecord(env, sourceId, doc, { source_v = null, cycle =
 }
 
 /* A source enters (or re-enters) the lifecycle: a new or changed source starts a new cycle at the first stage; the previous cycle is
-   kept in the record's history (Knowledge Preservation: never delete). Idempotent for a source already at the start of a cycle. */
-export async function enterLifecycle(env, sourceId, { event = 'entered', source_v = null } = {}) {
+   kept in the record's history (Knowledge Preservation: never delete). Idempotent for a source already at the start of a cycle.
+   trigger: the UEPD trigger key (SourceIngested) this cycle answers; a trigger it replaces before finishing is returned as `replaced`
+   (the caller reports that procedure as skipped). */
+export async function enterLifecycle(env, sourceId, { event = 'entered', source_v = null, trigger = null } = {}) {
   const cur = await readRecord(env, sourceId), now = nowIso();
-  if (cur && cur.doc.stages && (cur.doc.stages.ingested || {}).state !== 'done' && !cur.doc.retired) return { unchanged: true };
+  const open = cur && cur.doc.trigger && !cur.doc.trigger_done && cur.doc.trigger !== trigger ? cur.doc.trigger : null;
+  if (cur && cur.doc.stages && (cur.doc.stages.ingested || {}).state !== 'done' && !cur.doc.retired) {
+    if (trigger && cur.doc.trigger !== trigger) { await writeRecord(env, sourceId, { ...cur.doc, trigger, trigger_done: false }, { source_v: cur.source_v, cycle: cur.cycle, created: cur.created_at }); return { unchanged: true, replaced: open }; }
+    return { unchanged: true };
+  }
   const history = cur ? [...(cur.doc.history || []), { cycle: cur.cycle, started: cur.doc.started || cur.created_at, ended: now, reached: cur.stage, status: cur.status, event: cur.doc.event || null, source_v: cur.source_v }]
     .slice(-(Number(LC.orchestrator.history_cycles_kept) || 10)) : [];
-  const doc = { started: now, event, stages: freshStages(), history };
-  return writeRecord(env, sourceId, doc, { source_v, cycle: cur ? cur.cycle + 1 : 1, created: cur ? cur.created_at : now });
+  const doc = { started: now, event, stages: freshStages(), history, ...(trigger ? { trigger, trigger_done: false } : {}) };
+  const r = await writeRecord(env, sourceId, doc, { source_v, cycle: cur ? cur.cycle + 1 : 1, created: cur ? cur.created_at : now });
+  return open ? { ...r, replaced: open } : r;
 }

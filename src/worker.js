@@ -19,6 +19,7 @@ import { aiWindow, markGeminiOut } from './mkos/extract.js';
 import { persistNow, durability } from './mkos/mirror.js';
 import { mkInit } from './mkos/db.js';
 import { ttsList as mkosSays } from './mkos/pronounce.js';
+import { bindDadd, healthReport as daddHealth } from './mkos/dadd.js';
 /* USAP node kit (Brain domain-sdk/usap_node_kit_v1.js, copied unchanged; replace it, never edit it here).
    Observation only: counts and timings (never user data, text or amounts) go to USAP through the USAP_UGF service binding (USAP's
    NodeGateway entrypoint, no key needed); without the binding it does nothing. It also serves Settings > Governance
@@ -44,6 +45,9 @@ const usap = createUsapNode({
      SR-12: MKOS domain migration is gated, so apply_migration is refused too. */
   lockedHooks: ['provider_circuit', 'rollback_config', 'apply_migration'],
 });
+/* DADD-AI (the Department of Advancing the Development of Deterministic AI, USAP): MKOS's triage, review, report and procedure events
+   go out through this kit (system scope, no user id). The kit passes metadata through as given, so `scores` and `contributing` arrive whole. */
+bindDadd({ emit: (type, ev) => usap.emitEvent(type, ev) });
 const enc = new TextEncoder();
 const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
 const rand = n => hex(crypto.getRandomValues(new Uint8Array(n)));
@@ -1886,6 +1890,8 @@ async function usapStatus(env, event, ctx) {
   /* Once a day (the first run of 00:00 UTC): a zero for each activity counter with nothing yet today (kit heartbeat), so a quiet day
      reads as "no activity" rather than missing telemetry: AI calls, page views, connector calls and speech characters. */
   if (new Date(event && event.scheduledTime || Date.now()).getUTCHours() === 0) usap.heartbeat(env, ['ai_calls', 'frontend_views', 'mcp_tool_calls', 'tts_chars_used'], ctx);
+  /* DADD-AI health report, once a day (the first run of 00:00 UTC): rules over MKOS's own tables, values 0..1 except the velocity count. */
+  if (new Date(event && event.scheduledTime || Date.now()).getUTCHours() === 0) { try { await daddHealth(env, M, now); } catch (e) { console.error('dadd health', e); } }
   // ADF conformance, once a day (the first run of 00:00 UTC): checked on the most recently synced account folder that has its layout.
   if (new Date(event && event.scheduledTime || Date.now()).getUTCHours() === 0 && storeOn(env)) {
     try {

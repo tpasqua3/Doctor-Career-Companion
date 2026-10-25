@@ -7,6 +7,7 @@ import { putObject, getObject, setStatus, norm, slug } from './kb.js';
 import { addEdges } from './graph.js';
 import { sourceClass } from './scoring.js';
 import { enterLifecycle } from './lifecycle_state.js';
+import { sourceTriggerKey, sourceIngested, procedureCompleted, takeSourceAI } from './dadd.js';
 
 const F = FRAMEWORK.frameworks, ING = F.ingestion;
 const SPEC_BY_ALIAS = new Map(); for (const s of F.specialties.specialties) for (const a of s.folder_aliases) SPEC_BY_ALIAS.set(a.toLowerCase(), s.id);
@@ -209,7 +210,15 @@ export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep
   // A source in a folder no specialty knows: the folder is proposed as a specialty for the owner's review (never assigned silently).
   if (!src.specialty.length && pathParts.length && (changed === 'source_added' || changed === 'source_modified')) await proposeSpecialty(env, pathParts[0], id, { actor });
   // Every new or changed source enters the Continuous Knowledge Lifecycle (lifecycle.js): no knowledge asset may stop at ingestion.
-  if (changed === 'source_added' || changed === 'source_modified') await enterLifecycle(env, id, { event: changed });
+  if (changed === 'source_added' || changed === 'source_modified') {
+    // UEPD sop.source_ingestion (DADD-AI): SourceIngested for the new content (by md5), its trigger key kept on the lifecycle record
+    // so the completion can name it; an earlier trigger this replaces before it finished is reported as skipped.
+    const trigger = await sourceTriggerKey(src);
+    await takeSourceAI(env, id);
+    const lc = await enterLifecycle(env, id, { event: changed, trigger });
+    sourceIngested(trigger, src);
+    if (lc && lc.replaced) await procedureCompleted(lc.replaced, { outcome: 'skipped', label: src.name });
+  }
   if (old && old.status === 'retired') await setStatus(env, id, 'current', { actor, event_id: ev, force: true, reason: 'back in the library' });
   if (src.ingest_state === 'queued' && (changed === 'source_added' || changed === 'source_modified')) await queue(env, 'extract', id, { event_id: ev }, src.copyright === 'licensed_no_verbatim' ? 7 : 4);
   if (changed === 'source_added' || changed === 'source_modified') await queue(env, 'family', id, { event_id: ev }, 3);

@@ -1844,7 +1844,7 @@ const rateRow=(tid,cur)=>`<div class="rate">${[[1,'New to me'],[2,'Shaky'],[3,'G
 function qBody(q,picked){const done=picked!=null;
   return `<p class="stem">${esc(q.stem)}</p><div class="opts">${q.opts.map((o,i)=>`<button class="opt" data-pick="${i}" data-q="${q.id}" ${done?'disabled':''} data-s="${done?(i===q.ans?'right':i===picked?'wrong':''):''}"><b>${'ABCDE'[i]}</b><span>${esc(o)}</span></button>`).join('')}</div>
   ${done?`<div class="plain"><b style="color:var(--${picked===q.ans?'good':'bad'})">${picked===q.ans?'Correct.':'Incorrect. The answer is '+'ABCDE'[q.ans]+'.'}</b><p>${esc(q.exp)}</p>${q.cav?`<p class="caveat"><b>Uncertain.</b> ${esc(q.cav)}</p>`:''}${q.obj?`<p class="small"><b>Educational objective:</b> ${esc(q.obj)}</p>`:''}${q.src&&q.src.length?`<p class="tiny muted">${q.src.map(esc).join(' · ')}</p>`:''}${(mkCite(q,'q:'+q.id,()=>{const tt=TOP[q.tid];if(tt)put('bank_'+tt.sec.id,bank(tt.sec.id))}),mkcNote(q,q.id))}
-   <div class="row">${q.d?`<span class="chip off">Level ${q.d}</span>`:''}<span class="chip ${q.rev?'good':'off'}">${q.rev?'Passed accuracy review':'Not reviewed'}</span>${q.ref?`<span class="chip off">${esc(q.ref)}</span>`:''}<button class="btn sm" data-act="sayq" data-q="${q.id}">Listen</button><button class="btn sm" data-act="askq" data-q="${q.id}">Ask about this</button><button class="btn sm ${q.flag?'danger':''}" data-act="flag" data-q="${q.id}">${q.flag?'Flagged as wrong':'Flag as inaccurate'}</button></div></div>`:''}`}
+   <div class="row">${q.d?`<span class="chip off">Level ${q.d}</span>`:''}<span class="chip ${q.rev?'good':'off'}">${q.rev?'Passed accuracy review':'Not reviewed'}</span>${q.ref?`<span class="chip off">${esc(q.ref)}</span>`:''}<button class="btn sm" data-act="sayq" data-q="${q.id}">Listen</button><button class="btn sm" data-act="askq" data-q="${q.id}">Ask about this</button><button class="btn sm ${q.flag?'danger':''}" data-act="flag" data-q="${q.id}">${q.flag?'Flagged as wrong':'Flag as inaccurate'}</button>${q.mk&&/^ea\.s\./.test(q.mk)?(q.rep?'<span class="tiny muted">Reported to MKOS: hidden from others until it is reviewed.</span>':rptUI(q.mk,q.id)):''}</div></div>`:''}`}
 /* Scoring one answer: the topic, the day, the stated gap and the question's own review schedule all update. A miss comes back in 1, 3, 7 and 21 days. */
 function score(q,pick){const ok=pick===q.ans,s=tS(q.tid),d=day();q.hist.push({t:Date.now(),ok});s.n++;d.q++;if(ok){s.c++;d.c++}s.last=Date.now();
   if(!ok){q.stage=1;q.due=Date.now()+864e5;pullCards(q.tid,1)}else if(q.stage){q.stage++;q.due=q.stage>4?0:Date.now()+[0,1,3,7,21][q.stage]*864e5}
@@ -2094,6 +2094,19 @@ document.addEventListener('click',async e=>{unlock();
   if(a==='mkbuild'){mkLoad(true);return}
   if(a==='hqx'){S.hq=null;render();return}
   if(a==='hisq')return hisQuestions(b.dataset.id,Math.min(30,Math.max(1,Math.round(Number(($('#hqn')||{}).value))||5)));
+  if(a==='rpt'){RPT=RPT===b.dataset.id?'':b.dataset.id;render();return}
+  if(a==='rptgo'){const id=b.dataset.id,qid=b.dataset.q;mkA('asset_report',{id,reason:b.dataset.r}).then(r=>{if(r&&r.ok){RPT='';
+      const L=S.lesson;if(L&&L.mk&&L.mk.id===id){L.mk.flagged=1;const dd=docs['les_'+L.id];if(dd){dd.mk=L.mk;put('les_'+L.id,dd)}}
+      const q=qid&&findQ(qid);if(q){q.rep=1;const tt=TOP[q.tid];if(tt)saveBank(tt.sec.id)}
+      toast('Reported. It is hidden from other learners until the owner reviews it.');render()}else toast('Could not report it just now. Try again in a moment.')});return}
+  if(a==='dqload'){DQ.list=null;DQ.err='';dqLoad();return}
+  if(a==='dqopen'){DQ.cur=b.dataset.id;DQ.item=null;DQ.edit=false;DQ.rej=false;render();mk('asset_queue',{id:DQ.cur}).then(r=>{DQ.item=r&&!r.error?r:{error:(r&&r.error)||'not found'};render()}).catch(e=>{DQ.item={error:errMsg(e)};render()});return}
+  if(a==='dqclose'){DQ.cur=null;DQ.item=null;render();return}
+  if(a==='dqedit'){DQ.edit=!DQ.edit;render();return}
+  if(a==='dqrej'){DQ.rej=true;render();return}
+  if(a==='dqdec'){const d=b.dataset.d,args={id:DQ.cur,decision:d,note:(($('#dqnote')||{}).value||'').trim()};
+    if(d==='edit'){try{args.content=JSON.parse(($('#dqjson')||{}).value||'')}catch(e){toast('The edited content is not valid JSON.');return}}
+    mk('asset_decide',args).then(r=>{if(r&&r.ok){toast(d==='accept'?'Accepted: it is live for every learner.':d==='edit'?'Saved as a new owner-reviewed version.':'Rejected and retired.');DQ.cur=null;DQ.item=null;DQ.list=null;dqLoad()}else toast((r&&r.error)||'Could not save the decision.')}).catch(e=>toast(errMsg(e)));return}
   if(a==='lesflag'){const L=S.lesson;if(!L||!L.mk||!L.mk.id)return;mkA('asset_flag',{id:L.mk.id,reason:'Reported from the lesson screen'}).then(r=>{if(r&&r.ok){L.mk.flagged=1;const d=docs['les_'+L.id];if(d){d.mk=L.mk;put('les_'+L.id,d)}toast('Reported. MKOS will not serve this lesson again until it is reviewed.');render()}else toast('Could not report it just now. Try again in a moment.')});return}
   if(a==='lesfresh'){const L=S.lesson,t=L&&TOP[L.tid];if(!t||!LEN[L.len])return;P.stop();S.session=null;return run('Claude is writing a fresh version of "'+L.title+'"…',async()=>{const D=await genLesson(t,L.len,'',{fresh:1});openLesson(D);if(st.prefs.auto)playLesson(D)})}
   if(a==='lesq'||a==='lescards'||a==='lesdeep'||a==='lesresume'){const L=S.lesson,t=TOP[L.tid],n=qN(),kind=b.dataset.kind;if(!t)return;P.stop();S.session=null;
@@ -2581,7 +2594,11 @@ function mkLessonIn(t,len,r){const c=r.content,id=uid(),L0=LEN[len];
   mkCardsIn(t,A(c.cards).map(x=>({content:x})));
   put('les_'+id,les);st.lessons.push({id,tid:t.id,title:les.title,len,min:les.min,t:Date.now(),deeper:0});while(st.lessons.length>80){del('les_'+st.lessons.shift().id)}
   const s=tS(t.id);s.les++;s.last=Date.now();day().les++;saveState();return les}
-const mkLesLine=L=>{if(!L.mk||!mkOn())return'';const m=L.mk,rep=m.flagged?'<span class="tiny muted">Reported: MKOS will not serve it again until it is reviewed.</span>':'<button class="btn link" data-act="lesflag">Report a problem</button>';
+/* DADD-AI reports: a signed-in physician reports an AI-generated library item (wrong, unsafe, duplicate, other). It goes to the owner's
+   review queue flagged reported and, being clinical, is hidden from other learners until it is reviewed (MKOS asset_report). */
+let RPT='';const RPTR=[['wrong','Wrong'],['unsafe','Unsafe'],['duplicate','Duplicate'],['other','Other']];
+const rptUI=(id,qid)=>!id||!mkOn()?'':RPT===id?`<span class="row" style="display:inline-flex;gap:4px;flex-wrap:wrap"><span class="tiny muted">What is the problem?</span>${RPTR.map(([k,l])=>`<button class="btn sm" data-act="rptgo" data-id="${esc(id)}" data-r="${k}" data-q="${esc(qid||'')}">${l}</button>`).join('')}<button class="btn link sm" data-act="rpt" data-id="${esc(id)}">Cancel</button></span>`:`<button class="btn link" data-act="rpt" data-id="${esc(id)}">Report a problem</button>`;
+const mkLesLine=L=>{if(!L.mk||!mkOn())return'';const m=L.mk,rep=m.flagged?'<span class="tiny muted">Reported: MKOS will not serve it again until it is reviewed.</span>':rptUI(m.id,'');
   const tierChip=m.tier?`<span class="chip${m.tier==='durable'?' good':''}" style="margin-right:6px" data-tip="${esc(tierName(m.tier)+(m.conf!=null?': confidence '+m.conf+'/100':'')+(m.tier==='provisional'?'. Served while it is re-checked each time it is used; rises to durable as it holds up.':m.tier==='durable'?'. Validated, grounded and current.':''))}" tabindex="0">${tierName(m.tier)}</span>`:'';
   return m.reused?`<p class="small muted"><span class="chip good" style="margin-right:6px">From the MKOS library</span>${tierChip}${m.obj?'Written for this blueprint objective, ':'Written once, '}reviewed, and still current${m.cw&&m.cw.length?' with '+esc(m.cw.join('; ')):''}, so it was served instead of being written again. <button class="btn link" data-act="lesfresh">Write a fresh version</button> · ${rep}</p>`
     :m.id?`<p class="tiny muted">Saved to the MKOS library${m.personal?' as your own':''}, so it can be reused while it stays current. ${rep}</p>`:''};
@@ -2697,7 +2714,28 @@ function vKnowledge(){if(!mkOn())return `<div class="plain"><h1>Knowledge</h1><p
    <label class="f" style="max-width:200px">Type<select id="kt">${KTYPES.map(([v,l])=>`<option value="${v}" ${KN.type===v?'selected':''}>${l}</option>`).join('')}</select></label><button class="btn pri" data-act="ksearch">Search</button></div>
    ${KN.err?`<div class="err">${esc(KN.err)}</div>`:''}${KN.busy?thinking('Searching…'):''}
    ${KN.res?(KN.res.length?`<div style="display:flex;flex-direction:column">${KN.res.map(o=>`<button class="item" data-kobj="${esc(o.id)}"><div><b>${esc(o.name)}</b><div class="tiny muted">${esc(o.type)}${o.trust!=null?' · trust '+Math.round(o.trust):''}${o.confidence!=null?' · confidence '+Math.round(o.confidence):''} · v${esc(o.version)}</div></div>${kChip(o.status)}</button>`).join('')}</div>`:'<p class="small muted">Nothing matched.</p>'):''}</div>
-   ${MK&&MK.knowledge?`<p class="tiny muted">${Object.entries(MK.knowledge.objects||{}).map(([k,n])=>n+' '+k).join(' · ')}</p>`:''}${kMapView()}`}
+   ${MK&&MK.knowledge?`<p class="tiny muted">${Object.entries(MK.knowledge.objects||{}).map(([k,n])=>n+' '+k).join(' · ')}</p>`:''}${MK&&MK.owner?daddView():''}${kMapView()}`}
+/* DADD-AI review queue (owner): the Department of Advancing the Development of Deterministic AI routes every AI-made library item by a
+   rule-based confidence. Clinical content scoring under 0.90, failing a hard check, or reported by a learner is held from other learners
+   here until the owner accepts, edits (a new version superseding the AI one) or rejects it; 0.90-0.95 is live and monitored. */
+const DQ={list:null,busy:false,err:'',cur:null,item:null,edit:false,rej:false},DQB={green:'good',yellow:'',orange:'off',red:'danger'};
+async function dqLoad(){if(DQ.busy)return;DQ.busy=true;try{DQ.list=await mk('asset_queue',{limit:60});DQ.err=''}catch(e){DQ.err=errMsg(e)}DQ.busy=false;render()}
+function daddView(){if(!DQ.list&&!DQ.busy&&!DQ.err)setTimeout(dqLoad,0);
+  if(!DQ.list)return DQ.err?`<div class="card"><div class="err">${esc(DQ.err)}</div><button class="btn sm" data-act="dqload">Try again</button></div>`:`<div class="card">${thinking('Loading the DADD-AI review queue…')}</div>`;
+  const L=DQ.list,c=L.counts||{},chip=x=>`<span class="chip ${DQB[x.band]||''}">${esc(x.band||'unscored')}${x.confidence!=null?' '+Number(x.confidence).toFixed(2):''}</span>`;
+  const row=x=>`<button class="item" data-act="dqopen" data-id="${esc(x.id)}"><div><b>${esc(x.name||x.id)}</b><div class="tiny muted">${esc(x.kind)} · ${x.queue==='held'?'held from other learners':'live, monitored'}${x.reported?' · reported '+x.reported.n+'×':''}${x.sampled?' · sampled':''}${x.failure_mode?' · weakest: '+esc(x.failure_mode.replace(/_/g,' ')):''}${x.hard_fail?' · hard check: '+esc(x.hard_fail.replace(/_/g,' ')):''}</div></div>${chip(x)}</button>`;
+  let det='';if(DQ.cur){const I=DQ.item;det=!I?thinking('Opening…'):I.error?`<div class="err">${esc(I.error)}</div>`:(()=>{const x=I.item,sc=x.scores||{};
+    return `<div class="plain" style="border-top:1px solid var(--line);padding-top:8px"><div class="row between"><b>${esc(x.name||x.id)}</b><button class="btn link sm" data-act="dqclose">Close</button></div>
+     <div class="small">${Object.entries(sc).map(([k,v])=>`<span class="chip">${esc(k.replace(/_/g,' '))} ${Number(v).toFixed(2)}</span>`).join(' ')}</div>
+     ${x.reported?`<p class="small">Reported by ${x.reported.n} learner${x.reported.n===1?'':'s'}: ${Object.entries(x.reported.reasons||{}).map(([k,n])=>esc(k)+' '+n).join(', ')}</p>`:''}
+     <pre class="small" style="white-space:pre-wrap;max-height:320px;overflow:auto">${esc(JSON.stringify(I.content,null,1)||'')}</pre>
+     <label class="f">Note (optional)<input type="text" id="dqnote" maxlength="300"></label>
+     ${DQ.edit?`<label class="f">Edited content (JSON)<textarea id="dqjson" rows="10">${esc(JSON.stringify(I.content,null,1)||'')}</textarea></label><div class="row"><button class="btn pri" data-act="dqdec" data-d="edit">Save as the reviewed version</button><button class="btn" data-act="dqedit">Cancel edit</button></div>`
+       :`<div class="row"><button class="btn pri" data-act="dqdec" data-d="accept">Accept</button><button class="btn" data-act="dqedit">Edit</button>${DQ.rej?`<button class="btn danger" data-act="dqdec" data-d="reject">Confirm: reject and retire</button>`:`<button class="btn" data-act="dqrej">Reject</button>`}</div>`}</div>`})()}
+  const items=A(L.items);
+  return `<div class="card"><div class="row between"><h3>DADD-AI review queue</h3><button class="btn sm" data-act="dqload">Refresh</button></div>
+   <p class="tiny muted">AI-made library items are routed by a rule-based confidence (DADD-AI). Held: ${c.held||0} · monitored: ${c.monitor||0} · reported: ${c.reported||0} · red ${c.red||0}, orange ${c.orange||0}, yellow ${c.yellow||0}.</p>
+   ${items.length?`<div style="display:flex;flex-direction:column">${items.map(row).join('')}</div>`:'<p class="small muted">Nothing is waiting for review.</p>'}${det}</div>`}
 /* The Continuous Knowledge Lifecycle on the Knowledge tab (knowledge_map): each source's stage with the stalled ones, coverage by
    dimension, the gaps with their recommended actions, and specialties proposed from library folders. */
 const KM={map:null,busy:false,err:'',all:false},

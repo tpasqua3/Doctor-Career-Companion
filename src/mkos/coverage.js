@@ -5,6 +5,7 @@
 // are derived (recomputed from objects, edges, blueprints and the relevance graph) and rewritten only where a value changed.
 import { FRAMEWORK } from './framework.js';
 import { J, nowIso } from './db.js';
+import { coverageGap } from './dadd.js';
 
 const F = FRAMEWORK.frameworks, LC = F.lifecycle, CV = LC.coverage, G = LC.gaps, OBJP = LC.objectives.id_prefix;
 const SET = '(SELECT value FROM json_each(?1))';
@@ -115,14 +116,16 @@ export async function detectGaps(env, x) {
   const lowLessons = await all(env, `SELECT c.object_id AS id, c.score, o.name FROM mk_confidence c JOIN mk_objects o ON o.id = c.object_id AND o.status = 'current' WHERE c.domain = 'lesson' AND c.score < ?`, Number(G.lesson_confidence_min) || 0.5);
   const gaps = gapRules(x, { specialtyRows: spc.map((r) => ({ key: r.key, num: r.num, den: r.den, sources: srcBySpec.get(r.key) || 0 })), sources, citedSuperseded, lowLessons, orgsBySpecialty, today });
   const stored = new Map((await all(env, 'SELECT gap_id, severity, detail_json, action_json, status FROM mk_gaps')).map((r) => [r.gap_id, r]));
-  const at = nowIso(), st = [], seen = new Set(); let opened = 0, resolved = 0;
+  const at = nowIso(), st = [], seen = new Set(), ev = []; let opened = 0, resolved = 0;
   for (const g of gaps) { seen.add(g.gap_id); const o = stored.get(g.gap_id), dj = JSON.stringify(g.detail), aj = JSON.stringify(g.action);
     if (o && o.status === 'open' && o.severity === g.severity && o.detail_json === dj && o.action_json === aj) continue;
-    if (!o || o.status !== 'open') opened++;
+    if (!o || o.status !== 'open') { opened++; if (g.kind === 'lesson') ev.push(['CoverageGapDetected', g]); }
     st.push(env.DB.prepare(`INSERT INTO mk_gaps (gap_id, kind, key, severity, detail_json, action_json, status, first_seen, last_seen) VALUES (?,?,?,?,?,?, 'open', ?, ?)
       ON CONFLICT (gap_id) DO UPDATE SET severity = excluded.severity, detail_json = excluded.detail_json, action_json = excluded.action_json, status = 'open', last_seen = excluded.last_seen`).bind(g.gap_id, g.kind, g.key, g.severity, dj, aj, at, at)); }
-  for (const [id, o] of stored) if (o.status === 'open' && !seen.has(id)) { resolved++; st.push(env.DB.prepare("UPDATE mk_gaps SET status = 'resolved', last_seen = ? WHERE gap_id = ?").bind(at, id)); }
+  for (const [id, o] of stored) if (o.status === 'open' && !seen.has(id)) { resolved++; if (id.startsWith('lesson:')) ev.push(['CoverageGapClosed', { gap_id: id, key: id.slice(7), detail: J(o.detail_json, {}) }]); st.push(env.DB.prepare("UPDATE mk_gaps SET status = 'resolved', last_seen = ? WHERE gap_id = ?").bind(at, id)); }
   for (let i = 0; i < st.length; i += 40) await env.DB.batch(st.slice(i, i + 40));
+  // DADD-AI / UEPD: an objective with exam weight and no lesson opening or closing as a gap (state changes only; mk_gaps is the open set).
+  for (const [type, g] of ev) await coverageGap(type, g, at);
   return { gaps: gaps.length, opened, resolved, writes: st.length };
 }
 
