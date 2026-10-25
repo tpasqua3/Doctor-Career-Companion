@@ -107,6 +107,34 @@ queued for the owner wholesale. Rules only, no AI calls; the code is `src/mkos/d
   dadd_ai_population_velocity (knowledge objects created in 7 days). A figure with no data is not sent.
 Tests: `node --test test/dadd.test.mjs`.
 
+## Sign in with Google and Life OS sign-on (roadmap Phase 8, spec `/specs/google_signin_sso.md`)
+Website only (the account page `public/account.html`; the Claude copy's sign-in stays its connector link, and `app/companion.html` is
+unchanged). Server: the routes in `src/worker.js` ("Sign in with Google and Life OS single sign-on"), token checks in `src/gsi.js`.
+- Client: this app's own, `GOOGLE_OAUTH_CLIENT_ID`/`_SECRET` (the Drive connection's), else `GOOGLE_CLIENT_ID`/`_SECRET`.
+  `GET /api/auth/config` gives the page `{ google, client_id, redirect }`.
+- `GET /auth/google[?stay=0|1&invite=]` redirects to Google with the EXISTING registered callback `<origin>/api/google/callback`; the
+  cookie `gsi_state` (`signin.<stay>.<state>[.<invite>]`, 10 minutes) makes Google's answer a sign-in only when its state matches,
+  otherwise the Drive connection code runs exactly as before. In a frame it answers a page that opens the sign-in in a new window.
+  Failures land on `/account.html?gsi=<message>`.
+- `POST /auth/google/onetap { credential, stay, invite }`: One Tap (account page, signed out, top level only), verified against
+  Google's JWKS (RS256, keys cached an hour), then the claim checks (aud, iss, exp, email_verified, email).
+- Account rule (`googleAccount`): the email is the identity. An existing account signs in and records `users.google_sub` =
+  sha256("google-sub:" + sub) and `google_linked` (a new sub updates it); none: created password-less (empty salt and hash) through
+  the `SIGNUP_CODE` gate (an invitation code typed on the sign-up form goes with the Google button and One Tap), with the sign-up's
+  Drive folder. The link is also in the Drive `account.json` (`google: { sub_hash, linked_at }`). Password login of a password-less
+  account answers "This account signs in with Google."; its direct reset (recovery questions or name) is refused; it can set a
+  password (and recovery questions) without a current one, and then has both.
+- Life OS: `POST /api/lifeos/sso` only over its Service Binding (no `cf-connecting-ip` and `x-lifeos-hub: binding`, else 404), checked
+  before the cross-site check. `{ op: "ticket", link }` (a `links` token) or `{ op: "ticket", email, verified: "google", name?, create?,
+  want_link? }` (creates password-less through the same gate; `want_link` adds a `links` token like `/api/lifeos/connect`; the account's
+  Google link is not recorded from Life OS's word). Answer `{ ok, code, created, link? }`; the code is kept as sha256 in `sso_tickets`,
+  120 seconds, single use. `GET /auth/lifeos?code=&to=` redeems it (DELETE ... RETURNING) and 302s to the same-origin path (`safePath`).
+- Cookies: a frame navigation (`sec-fetch-dest: iframe`), or a log-in/sign-up whose body says `framed: true` (the page inside a frame),
+  gets `SameSite=None; Secure; Partitioned`; otherwise `SameSite=Lax`. "Stay logged in" (default on): 30 days; off: a browser-session
+  cookie and a one-day server session. Sign-out and account deletion clear both kinds. `currentUser` accepts any live `dcc_session`.
+- Login and sign-up are real `<form>`s (`autocomplete` username/email, current-password/new-password) so browsers save passwords.
+Tests: `node --test test/gsi.test.mjs` (D1 stand-in over `node:sqlite`, Google stubbed).
+
 ## AI order of operations
 The app's AI order of operations (`SERVICES`, `TIERS`, `JOBS`, `AI_ORDER` in `src/worker.js`) was deliberately worked out and is changed
 only on a deliberate, specific request from the owner. MKOS calls only free services directly and never changes that hierarchy.

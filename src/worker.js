@@ -34,6 +34,8 @@ import { watched as actWatched, detect as actDetect, emitActivity, objective as 
 import { driveAdapter, adfOnce, adfConformance, adfExport } from './adf.js';
 /* USAP AI governance (kit 1.3.0): the catalog action of each AI call. Labels only; see src/aigov.js. */
 import { govDims, govOf, GOV_APP } from './aigov.js';
+/* Sign in with Google and Life OS single sign-on (Phase 8): Google's ID token checks; the routes are further down. */
+import { gsiClient, checkClaims, decodeJwt, verifyIdToken, safePath } from './gsi.js';
 /* Route templates only: the connector token in /mcp/<token> and any id never leave the app. */
 const usapRoute = url => url.pathname.startsWith('/mcp') ? '/mcp/:token'
   : '/' + url.pathname.split('/').filter(Boolean).slice(0, 3).map(s => /^[a-f0-9]{16,}$/i.test(s) || /^\d+$/.test(s) || s.length > 40 ? ':id' : s).join('/');
@@ -64,7 +66,17 @@ const fail = (status, error) => json({ error }, status);
 /* One record can be up to about 900,000 characters: room for an hour-long lesson with its tables, or a question bank fed by sets of 30.
    D1 holds at most 2 MB in a row. */
 const SESSION_DAYS = 30, MAX_DOC = 900000;
-const cookie = (token, age) => `dcc_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
+/* The session cookie. Inside the Life OS frame (a frame navigation, `sec-fetch-dest: iframe`) it is a third-party cookie, so it is set
+   SameSite=None; Secure; Partitioned (CHIPS: kept only under Life OS as the top-level site); otherwise SameSite=Lax as always. An
+   `age` of null is a browser-session cookie ("stay logged in" unticked). Signing out clears both kinds (a partitioned cookie is cleared
+   only by a partitioned header). */
+const cookie = (token, age, o = {}) => `dcc_session=${token}; Path=/; HttpOnly; Secure; ${o.frame ? 'SameSite=None; Partitioned' : 'SameSite=Lax'}${age === null ? '' : '; Max-Age=' + age}`;
+const clearCookies = () => [cookie('', 0), cookie('', 0, { frame: true })];
+const withCookies = (res, list) => { for (const c of [].concat(list)) res.headers.append('Set-Cookie', c); return res; };
+/* A frame navigation (/auth/lifeos, the Google callback in a frame). A password log-in or sign-up is a fetch from the page
+   (sec-fetch-dest "empty"), so the page itself says `framed: true` when it runs inside a frame (Life OS). */
+const frameReq = request => request.headers.get('sec-fetch-dest') === 'iframe';
+const INVITE_MSG = 'This site is by invitation. Enter the invitation code you were given.';
 const LANG_OK = /^[a-z]{2,3}$/;
 const PATH_OK = /^[a-z]{2,3}\/[A-Za-z0-9_\-.~:@+]{1,120}$/;
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -91,15 +103,24 @@ function init(env) {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS drive_docs (user_id TEXT NOT NULL, path TEXT NOT NULL, file_id TEXT NOT NULL, synced TEXT NOT NULL, PRIMARY KEY (user_id, path))`),
   ]).then(() => env.DB.prepare('ALTER TABLE drive_accounts ADD COLUMN v INTEGER NOT NULL DEFAULT 0').run().catch(() => { }))   // added later; fails harmlessly once it is there
     .then(() => env.DB.prepare('ALTER TABLE drive_accounts ADD COLUMN adf TEXT').run().catch(() => { }))   // ADF: when the account folder got its standard layout (once)
+    /* Sign in with Google: the account's Google link, sha256("google-sub:" + sub) (never the raw sub, never a token) and when it was made.
+       A password-less (Google) account has an empty salt and hash. */
+    .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN google_sub TEXT').run().catch(() => { }))
+    .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN google_linked TEXT').run().catch(() => { }))
+    /* Life OS sign-in tickets: sha256 of the code only, 120 seconds, single use. */
+    .then(() => env.DB.prepare('CREATE TABLE IF NOT EXISTS sso_tickets (code_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)').run())
     .catch(e => { schema = null; throw e; });
   return schema;
 }
 
 async function currentUser(request, env) {
-  const m = /(?:^|;\s*)dcc_session=([a-f0-9]{64})/.exec(request.headers.get('Cookie') || '');
-  if (!m) return null;
-  const row = await env.DB.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires > ?').bind(await sha(m[1]), Date.now()).first();
-  return row || null;
+  /* A browser may hold two session cookies (an ordinary one and one partitioned under Life OS); any live one signs in. */
+  const all = [...(request.headers.get('Cookie') || '').matchAll(/(?:^|;\s*)dcc_session=([a-f0-9]{64})/g)].slice(0, 3);
+  for (const m of all) {
+    const row = await env.DB.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires > ?').bind(await sha(m[1]), Date.now()).first();
+    if (row) return row;
+  }
+  return null;
 }
 /* Passwords are replaced in one place, whichever way the change was asked for (email link, the direct form, or the account page).
    Every login session of the account ends, except `keep` (the session the change was made from), and any unused reset link dies. */
@@ -133,10 +154,12 @@ const MAX_RECOVERY = 3, ANSWER_ROUNDS = 25000;
 const answerKey = a => String(a || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 200);
 const recoveryOf = async (env, uid) => (await env.DB.prepare('SELECT slot, question, salt, hash FROM recovery WHERE user_id = ? ORDER BY slot').bind(uid).all()).results;
 const sameName = (a, b) => same(String(a || '').trim().toLowerCase(), String(b || '').trim().toLowerCase());
-async function startSession(env, userId) {
-  const token = rand(32);
-  await env.DB.prepare('INSERT INTO sessions (token_hash, user_id, expires) VALUES (?, ?, ?)').bind(await sha(token), userId, Date.now() + SESSION_DAYS * 864e5).run();
-  return cookie(token, SESSION_DAYS * 86400);
+/* `stay` (default on): a 30-day session; off: a browser-session cookie whose server session ends within a day. `frame`: the cookie
+   for the Life OS frame (see cookie above), always a lasting one. */
+async function startSession(env, userId, o = {}) {
+  const token = rand(32), stay = !!o.frame || o.stay !== false;
+  await env.DB.prepare('INSERT INTO sessions (token_hash, user_id, expires) VALUES (?, ?, ?)').bind(await sha(token), userId, Date.now() + (stay ? SESSION_DAYS : 1) * 864e5).run();
+  return cookie(token, stay ? SESSION_DAYS * 86400 : null, { frame: !!o.frame });
 }
 /* ---------- The app's AI ----------
    Three services can answer, each switched on by its own setting:
@@ -985,10 +1008,10 @@ async function syncUser(env, uid, B) {
   if (!row) return { on: true, busy: true };
   let error = '';
   try {
-    const u = await env.DB.prepare('SELECT id, email, first, last, created FROM users WHERE id = ?').bind(uid).first();
+    const u = await env.DB.prepare('SELECT id, email, first, last, created, google_sub, google_linked FROM users WHERE id = ?').bind(uid).first();
     if (!u) return { on: true };
     const set = async (col, val) => { await env.DB.prepare(`UPDATE drive_accounts SET ${col} = ? WHERE user_id = ?`).bind(val, uid).run(); row[col] = val; };
-    const about = () => JSON.stringify({ app: 'doctor-career-companion', accountId: u.id, created: String(u.created).slice(0, 10), written: new Date().toISOString() }, null, 1);
+    const about = () => accountFile(u);
     if (!row.folder) { B.n--; await set('folder', await mkdir(env, folderName(u.id), ACCTS(env), { dccAccount: u.id })); await set('v', LAYOUT); }
     /* A folder made before names were taken out: rename it, rewrite its account file, and replace its backups, which carried the email. */
     if (row.folder && (row.v || 0) < LAYOUT && row.records && row.backups && row.profile) {
@@ -1030,6 +1053,15 @@ async function syncUser(env, uid, B) {
   }
   return { on: true, error };
 }
+/* The account file in the account's Drive folder: no name or email; the Google link (its hash and date) once there is one. */
+const accountFile = u => JSON.stringify({ app: 'doctor-career-companion', accountId: u.id, created: String(u.created).slice(0, 10),
+  google: u.google_linked ? { sub_hash: u.google_sub || null, linked_at: u.google_linked } : undefined, written: new Date().toISOString() }, null, 1);
+/* Rewrite the account file now (a new Google link); a folder not made yet gets it when syncUser makes it. */
+const profileSoon = (env, ctx, uid) => { if (ctx && storeOn(env)) ctx.waitUntil((async () => {
+  const row = await env.DB.prepare('SELECT profile FROM drive_accounts WHERE user_id = ?').bind(uid).first();
+  const u = await env.DB.prepare('SELECT id, created, google_sub, google_linked FROM users WHERE id = ?').bind(uid).first();
+  if (row && row.profile && u) await gupload(env, { id: row.profile, text: accountFile(u) });
+})().catch(e => console.error('account file', e))); };
 const syncSoon = (env, ctx, uid) => { if (ctx && storeOn(env)) ctx.waitUntil(syncUser(env, uid, { n: 14 }).catch(e => console.error(e))); };
 /* How much of one account's record is in Drive. */
 async function storage(env, user) {
@@ -1225,6 +1257,155 @@ async function lifeosConnect(env, user) {
   return new Response(null, { status: 302, headers: { Location: home + '/#connected=' + token, ...head } });
 }
 
+/* ---------- Sign in with Google and Life OS single sign-on (roadmap Phase 8, spec /specs/google_signin_sso.md) ----------
+   The email is the identity. Three ways in, one account: the password (the browser may save it), "stay logged in", and Google.
+     GET  /auth/google              starts Google's redirect flow (state in the short gsi_state cookie, with stay and an invitation code)
+     GET  /api/google/callback      the app's existing, registered OAuth callback (the Drive connection's): a sign-in only when gsi_state
+                                    matches Google's `state`; otherwise the Drive code runs exactly as before
+     POST /auth/google/onetap       One Tap's credential, verified against Google's keys
+     POST /api/lifeos/sso           Life OS asks for a sign-in ticket (Service Binding only: no cf-connecting-ip and x-lifeos-hub: binding)
+     GET  /auth/lifeos?code=&to=    the framed app redeems the ticket (single use, 120 s) and gets its own session cookie
+   Google sign-in is website-only: the Claude copy's sign-in is still its connector link. */
+const GOOGLE_ONLY = 'This account signs in with Google.';
+const GSI_CALLBACK = '/api/google/callback';
+const gsiCookie = (v, age) => `gsi_state=${v}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
+/* The pending Google sign-in in this browser: signin.<stay 0|1>.<state>[.<invitation code, URI-encoded>]. */
+function gsiPending(request) {
+  const m = /(?:^|;\s*)gsi_state=([^;]+)/.exec(request.headers.get('Cookie') || '');
+  if (!m) return null;
+  const p = m[1].split('.');
+  if (p[0] !== 'signin' || !/^[a-f0-9]{48}$/.test(p[2] || '')) return null;
+  let invite = ''; try { invite = decodeURIComponent(p.slice(3).join('.')); } catch { }
+  return { stay: p[1] !== '0', state: p[2], invite };
+}
+const redirect = (loc, cookies = []) => withCookies(new Response(null, { status: 302, headers: { Location: loc, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } }), cookies);
+const gsiBack = (url, msg, cookies) => redirect(url.origin + '/account.html?gsi=' + encodeURIComponent(msg), cookies);
+
+/* The account rule for a Google-verified email (`g`: email, sub or null, given, family, name). An account with the email is signed in
+   and, when `link` is on, its Google link recorded or updated (the email is the identity, so a different sub still signs in). None:
+   created password-less when `create`, through the same invitation gate as the sign-up form, with the sign-up's Drive folder. */
+async function googleAccount(env, ctx, g, { create, invite, link = true }) {
+  const now = new Date().toISOString(), subHash = g.sub ? await sha('google-sub:' + g.sub) : null;
+  const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(g.email).first();
+  if (u) {
+    if (link && ((subHash && u.google_sub !== subHash) || !u.google_linked)) {
+      await env.DB.prepare('UPDATE users SET google_sub = COALESCE(?, google_sub), google_linked = ? WHERE id = ?').bind(subHash, now, u.id).run();
+      profileSoon(env, ctx, u.id);
+    }
+    return { user: u, created: false };
+  }
+  if (!create) return { error: 'No account uses that email address.', status: 404 };
+  if (env.SIGNUP_CODE && !same(str(invite, 100), String(env.SIGNUP_CODE))) return { error: INVITE_MSG, status: 403 };
+  const words = String(g.name || '').split(/\s+/).filter(Boolean);
+  const first = (g.given || words[0] || '').slice(0, 60), last = (g.family || (g.given ? '' : words.slice(1).join(' '))).slice(0, 60), id = rand(16);
+  try {
+    await env.DB.prepare('INSERT INTO users (id, email, salt, hash, first, last, created, google_sub, google_linked) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(id, g.email, '', '', first, last, now, subHash, now).run();
+  } catch (e) {   // the same email made a moment ago by another request: use that one
+    const again = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(g.email).first();
+    if (again) return { user: again, created: false };
+    throw e;
+  }
+  syncSoon(env, ctx, id);   // as at sign-up: the account's own folder in Drive is made now
+  return { user: { id, email: g.email, first, last }, created: true };
+}
+
+/* Google's answer at the reused callback, for a sign-in. Every failure lands on the login page with a message. */
+async function googleCallback(request, env, url, ctx, pend) {
+  const clear = gsiCookie('', 0), back = msg => gsiBack(url, msg, [clear]);
+  const err = url.searchParams.get('error');
+  if (err) return back(err === 'access_denied' ? 'Google sign-in was cancelled.' : 'Google did not sign you in. Try again.');
+  const c = gsiClient(env);
+  if (!c.id || !c.secret) return back('Sign in with Google is not switched on for this site.');
+  let g;
+  try {
+    const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form({ grant_type: 'authorization_code', code: str(url.searchParams.get('code'), 2000), client_id: c.id, client_secret: c.secret, redirect_uri: url.origin + GSI_CALLBACK }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.id_token) return back('Google did not complete the sign-in. Try again.');
+    g = checkClaims(decodeJwt(j.id_token).payload, c.id);   // straight from Google over TLS: the claims are checked, no signature needed
+  } catch (e) { return back(e && e.gsi ? e.message : 'Google could not be reached. Try again.'); }
+  const a = await googleAccount(env, ctx, g, { create: true, invite: pend.invite });
+  if (a.error) return back(a.error);
+  return redirect(url.origin + '/', [clear, await startSession(env, a.user.id, { stay: pend.stay, frame: frameReq(request) })]);
+}
+
+const smallPage = (title, body) => new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:17px/1.5 system-ui,sans-serif;background:Canvas;color:CanvasText}main{max-width:36ch;padding:24px;text-align:center}h1{font-size:1.4rem;margin:0 0 8px}a{display:inline-block;margin:10px 6px 0;padding:10px 16px;border-radius:8px;border:1px solid;text-decoration:none;color:inherit;font-weight:600}</style><main>${body}</main></html>`,
+  { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } });
+
+async function authRoutes(request, env, url, ctx) {
+  const route = request.method + ' ' + url.pathname;
+  /* Life OS: the hub asks for a ticket for one of its people. Only a Service Binding request (no visitor address) that says so. */
+  if (url.pathname === '/api/lifeos/sso') {
+    if (request.headers.get('cf-connecting-ip') || request.headers.get('x-lifeos-hub') !== 'binding' || request.method !== 'POST') return fail(404, 'Not found.');
+    await init(env); await driveState(env);
+    return lifeosSso(request, env, ctx);
+  }
+  if (route === 'GET /auth/google') {
+    const c = gsiClient(env);
+    if (!c.id || !c.secret) return gsiBack(url, 'Sign in with Google is not switched on for this site.');
+    /* Google refuses to be shown in a frame: open the sign-in in its own window instead. */
+    if (frameReq(request)) return smallPage('Sign in with Google', `<h1>Sign in with Google</h1><p>Google's sign-in opens in a new window. Sign in there, then come back here and reload.</p><a href="${url.pathname}${url.search.replace(/"/g, '')}" target="_blank" rel="noopener">Open Sign in with Google</a>`);
+    const state = rand(24), stay = url.searchParams.get('stay') === '0' ? '0' : '1', invite = str(url.searchParams.get('invite'), 100);
+    return redirect('https://accounts.google.com/o/oauth2/v2/auth?' + form({ client_id: c.id, redirect_uri: url.origin + GSI_CALLBACK, response_type: 'code', scope: 'openid email profile', state, prompt: 'select_account' }),
+      [gsiCookie(['signin', stay, state].join('.') + (invite ? '.' + encodeURIComponent(invite) : ''), 600)]);
+  }
+  if (route === 'POST /auth/google/onetap') {
+    const origin = request.headers.get('Origin');
+    if (origin && new URL(origin).host !== url.host) return fail(403, 'Cross-site request refused.');
+    const text = await request.text(); if (text.length > 20000) return fail(413, 'That is too large.');
+    let body; try { body = JSON.parse(text || '{}'); } catch { return fail(400, 'Bad request.'); }
+    const c = gsiClient(env);
+    if (!c.id) return json({ ok: false, error: 'Sign in with Google is not switched on for this site.' }, 404);
+    if (!body || typeof body.credential !== 'string') return json({ ok: false, error: 'Bad request.' }, 400);
+    let g; try { g = await verifyIdToken(body.credential, c.id); } catch (e) { return json({ ok: false, error: e && e.gsi ? e.message : 'That Google sign-in could not be checked.' }, 401); }
+    await init(env); await driveState(env);
+    const a = await googleAccount(env, ctx, g, { create: true, invite: body.invite });
+    if (a.error) return json({ ok: false, error: a.error }, a.status);
+    return withCookies(json({ ok: true, created: a.created }), await startSession(env, a.user.id, { stay: body.stay !== false, frame: frameReq(request) }));
+  }
+  /* The framed app inside Life OS redeems its ticket: single use (deleted as it is read), 120 seconds. */
+  if (route === 'GET /auth/lifeos') {
+    const code = url.searchParams.get('code') || '', to = safePath(url.searchParams.get('to'));
+    if (!/^[a-f0-9]{64}$/.test(code)) return redirect(url.origin + '/');
+    await init(env);
+    const row = await env.DB.prepare('DELETE FROM sso_tickets WHERE code_hash = ? RETURNING user_id, expires').bind(await sha(code)).first();
+    if (!row || row.expires < Date.now() || !await env.DB.prepare('SELECT 1 FROM users WHERE id = ?').bind(row.user_id).first()) return redirect(url.origin + '/');
+    return redirect(url.origin + to, [await startSession(env, row.user_id, { stay: true, frame: frameReq(request) })]);
+  }
+  return fail(404, 'Not found.');
+}
+
+/* { op: "ticket", link } (an existing connector link) or { op: "ticket", email, verified: "google", name?, create?, want_link? }. */
+async function lifeosSso(request, env, ctx) {
+  const text = await request.text(); if (text.length > 20000) return json({ ok: false, error: 'That is too large.' }, 413);
+  let b; try { b = JSON.parse(text || '{}'); } catch { return json({ ok: false, error: 'Bad request.' }, 400); }
+  if (!b || typeof b !== 'object' || b.op !== 'ticket') return json({ ok: false, error: 'Unknown operation.' }, 400);
+  let uid, created = false;
+  if (b.link !== undefined) {
+    const t = String(b.link || ''), row = /^[a-f0-9]{64}$/.test(t) ? await env.DB.prepare('SELECT user_id FROM links WHERE token_hash = ?').bind(await sha(t)).first() : null;
+    if (!row) return json({ ok: false, error: 'Unknown link.' }, 404);
+    uid = row.user_id;
+  } else {
+    if (b.verified !== 'google') return json({ ok: false, error: 'Only a Google-verified email can be signed in.' }, 400);
+    const email = str(b.email, 200).toLowerCase();
+    if (!EMAIL_OK.test(email)) return json({ ok: false, error: 'Bad email.' }, 400);
+    /* Life OS vouches for the email; the account's own Google link is recorded only by a real Google sign-in here. */
+    const a = await googleAccount(env, ctx, { email, sub: null, given: '', family: '', name: str(b.name, 120) }, { create: b.create === true, link: false });
+    if (a.error) return json({ ok: false, error: a.error }, a.status);
+    uid = a.user.id; created = a.created;
+  }
+  const code = rand(32), out = { ok: true, code, created };
+  const writes = [env.DB.prepare('DELETE FROM sso_tickets WHERE expires < ?').bind(Date.now()),
+    env.DB.prepare('INSERT INTO sso_tickets (code_hash, user_id, expires) VALUES (?, ?, ?)').bind(await sha(code), uid, Date.now() + 120e3)];
+  if (b.want_link === true) {   // a connector link made the same way as /api/lifeos/connect makes one (in addition to any others)
+    const token = rand(32); out.link = token;
+    writes.push(env.DB.prepare('INSERT INTO links (token_hash, user_id, created) VALUES (?, ?, ?)').bind(await sha(token), uid, new Date().toISOString()));
+  }
+  await env.DB.batch(writes);
+  return json(out);
+}
+
 async function api(request, env, url, ctx) {
   const route = request.method + ' ' + url.pathname;
   if (request.method !== 'GET') {
@@ -1240,11 +1421,19 @@ async function api(request, env, url, ctx) {
   }
   await init(env); await driveState(env);
 
+  /* Sign in with Google: what the login page may show (the client id is public), and the sign-in arriving at the reused Drive
+     callback. Only a gsi_state cookie whose state matches Google's `state` makes it a sign-in; anything else is the Drive flow below. */
+  if (route === 'GET /api/auth/config') { const c = gsiClient(env); return json({ google: !!c.id, client_id: c.id || undefined, redirect: !!(c.id && c.secret) }); }
+  if (route === 'GET ' + GSI_CALLBACK) {
+    const pend = gsiPending(request);
+    if (pend && same(str(url.searchParams.get('state'), 100), pend.state)) return googleCallback(request, env, url, ctx, pend);
+  }
+
   if (route === 'POST /api/signup') {
     const email = str(body.email, 200).toLowerCase(), password = typeof body.password === 'string' ? body.password : '';
     const first = str(body.firstName, 60), last = str(body.lastName, 60);
     /* Sign-up can be limited to invited people: set a SIGNUP_CODE secret and only someone who types it can create an account. */
-    if (env.SIGNUP_CODE && !same(str(body.code, 100), String(env.SIGNUP_CODE))) return fail(403, 'This site is by invitation. Enter the invitation code you were given.');
+    if (env.SIGNUP_CODE && !same(str(body.code, 100), String(env.SIGNUP_CODE))) return fail(403, INVITE_MSG);
     if (!first) return fail(400, 'Enter your first name.');
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter a valid recovery email address.');
     if (!PASSWORD_OK(password)) return fail(400, PASSWORD_RULE);
@@ -1253,18 +1442,19 @@ async function api(request, env, url, ctx) {
     await env.DB.prepare('INSERT INTO users (id, email, salt, hash, first, last, created) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind(id, email, salt, await hashPassword(password, salt), first, last, new Date().toISOString()).run();
     syncSoon(env, ctx, id);   // the account's own folder in Drive is made now, before anything is saved in it
-    return json(profile({ id, email, first, last }), 200, { 'Set-Cookie': await startSession(env, id) });
+    return json(profile({ id, email, first, last }), 200, { 'Set-Cookie': await startSession(env, id, { stay: body.stay !== false, frame: frameReq(request) || body.framed === true }) });
   }
   if (route === 'POST /api/login') {
     const email = str(body.email, 200).toLowerCase(), password = typeof body.password === 'string' ? body.password : '';
     const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
     const bad = () => fail(401, 'That email and password do not match.');
     if (!u) { await hashPassword(password || 'x', '00000000000000000000000000000000'); return bad(); }
+    if (!u.hash) return fail(401, GOOGLE_ONLY);   // a password-less account: Sign in with Google is its login and its recovery
     if (u.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
     if (!same(await hashPassword(password, u.salt), u.hash)) { await strike(env, u); return bad(); }
     await env.DB.prepare('UPDATE users SET fails = 0, locked_until = 0 WHERE id = ?').bind(u.id).run();
     await env.DB.prepare('DELETE FROM sessions WHERE expires < ?').bind(Date.now()).run();
-    return json(profile(u), 200, { 'Set-Cookie': await startSession(env, u.id) });
+    return json(profile(u), 200, { 'Set-Cookie': await startSession(env, u.id, { stay: body.stay !== false, frame: frameReq(request) || body.framed === true }) });
   }
 
   /* The login screen asks which way a forgotten password is replaced here, so it can show the right form. */
@@ -1274,8 +1464,9 @@ async function api(request, env, url, ctx) {
     if (resetMode(env) !== 'direct') return fail(403, 'Passwords are reset by email on this site.');
     const email = str(body.email, 200).toLowerCase();
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter the email address of your account.');
-    const u = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+    const u = await env.DB.prepare('SELECT id, hash FROM users WHERE email = ?').bind(email).first();
     if (!u) return fail(404, 'No account uses that email address.');
+    if (!u.hash) return fail(403, GOOGLE_ONLY);
     return json({ questions: (await recoveryOf(env, u.id)).map(r => r.question) });
   }
   /* Step 2: the answer to one of those questions, and the new password. An account with no questions set gives its first and last name. */
@@ -1286,6 +1477,7 @@ async function api(request, env, url, ctx) {
     if (!PASSWORD_OK(password)) return fail(400, PASSWORD_RULE);
     const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
     if (!u) { await hashPassword('x', '00000000000000000000000000000000', ANSWER_ROUNDS); return fail(401, 'Those details do not match an account.'); }
+    if (!u.hash) return fail(403, GOOGLE_ONLY);
     if (u.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
     const set = await recoveryOf(env, u.id);
     if (set.length) {
@@ -1333,9 +1525,8 @@ async function api(request, env, url, ctx) {
   const user = await currentUser(request, env);
   if (request.method === 'GET' && url.pathname === '/api/lifeos/connect') return lifeosConnect(env, user);
   if (route === 'POST /api/logout') {
-    const m = /(?:^|;\s*)dcc_session=([a-f0-9]{64})/.exec(request.headers.get('Cookie') || '');
-    if (m) await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(await sha(m[1])).run();
-    return json({ ok: true }, 200, { 'Set-Cookie': cookie('', 0) });
+    for (const m of (request.headers.get('Cookie') || '').matchAll(/(?:^|;\s*)dcc_session=([a-f0-9]{64})/g)) await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(await sha(m[1])).run();
+    return withCookies(json({ ok: true }), clearCookies());
   }
   if (!user) return fail(401, 'Log in to continue.');
 
@@ -1347,8 +1538,9 @@ async function api(request, env, url, ctx) {
   if (route === 'POST /api/password') {
     if (user.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
     if (!PASSWORD_OK(body.password)) return fail(400, PASSWORD_RULE);
-    if (typeof body.current !== 'string' || !same(await hashPassword(body.current, user.salt), user.hash)) { await strike(env, user); return fail(401, 'Your current password is not right.'); }
-    if (body.password === body.current) return fail(400, 'Choose a password different from your current one.');
+    /* A password-less (Google) account sets its first password here: it is signed in, and has no current password to give. */
+    if (user.hash && (typeof body.current !== 'string' || !same(await hashPassword(body.current, user.salt), user.hash))) { await strike(env, user); return fail(401, 'Your current password is not right.'); }
+    if (user.hash && body.password === body.current) return fail(400, 'Choose a password different from your current one.');
     const m = /(?:^|;\s*)dcc_session=([a-f0-9]{64})/.exec(request.headers.get('Cookie') || '');
     await setPassword(env, user.id, body.password, m ? await sha(m[1]) : '');
     return json({ ok: true });
@@ -1368,7 +1560,7 @@ async function api(request, env, url, ctx) {
       if (answer && answer.length < 2) return fail(400, 'Each answer needs at least 2 letters or numbers.');
       rows.push({ question, answer, old });
     }
-    if (typeof body.current !== 'string' || !same(await hashPassword(body.current, user.salt), user.hash)) { await strike(env, user); return fail(401, 'Your current password is not right.'); }
+    if (user.hash && (typeof body.current !== 'string' || !same(await hashPassword(body.current, user.salt), user.hash))) { await strike(env, user); return fail(401, 'Your current password is not right.'); }
     const writes = [env.DB.prepare('DELETE FROM recovery WHERE user_id = ?').bind(user.id)];
     for (const [slot, r] of rows.entries()) {
       const salt = r.answer ? rand(16) : r.old.salt, hash = r.answer ? await hashPassword(r.answer, salt, ANSWER_ROUNDS) : r.old.hash;
@@ -1380,7 +1572,7 @@ async function api(request, env, url, ctx) {
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
     const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user), admin = await adminOf(env, user);
-    return json({ ...profile(user), reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), says: await siteSays(env, user), connector: link ? link.created : null, areas: await summary(env, user.id),
+    return json({ ...profile(user), password: !!user.hash, google: user.google_linked ? { linked_at: user.google_linked } : null, reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), says: await siteSays(env, user), connector: link ? link.created : null, areas: await summary(env, user.id),
       library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: await storage(env, user), owner, admin,
       drive: admin ? { mode: DRIVE.mode, account: owner ? DRIVE.email : maskMail(DRIVE.email), canConnect: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET), canEdit: admin.integrations === 'edit', redirect: url.origin + '/api/google/callback' } : undefined });
   }
@@ -1552,9 +1744,10 @@ async function api(request, env, url, ctx) {
       env.DB.prepare('DELETE FROM resets WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM recovery WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM links WHERE user_id = ?').bind(user.id),
+      env.DB.prepare('DELETE FROM sso_tickets WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
     ]);
-    return json({ ok: true }, 200, { 'Set-Cookie': cookie('', 0) });
+    return withCookies(json({ ok: true }), clearCookies());
   }
   return fail(404, 'Not found.');
 }
@@ -1852,6 +2045,12 @@ const app = {
       if (request.method !== 'GET' && origin && new URL(origin).host !== url.host) return fail(403, 'Cross-site request refused.');
       try { await init(env); return await usap.handleGovernance(request, env, ctx, await currentUser(request, env)); }
       catch (e) { console.error(e); return fail(500, 'Something went wrong on the server. Try again.'); }
+    }
+    /* Sign in with Google (/auth/google, /auth/google/onetap), Life OS sign-on (/auth/lifeos) and the hub's ticket route, which only
+       Life OS's Service Binding reaches (it is checked before the cross-site check, since the hub's request is not a browser's). */
+    if (url.pathname.startsWith('/auth/') || url.pathname === '/api/lifeos/sso') {
+      try { return await authRoutes(request, env, url, ctx); }
+      catch (e) { console.error(e); return url.pathname === '/api/lifeos/sso' || request.method !== 'GET' ? json({ ok: false, error: 'Something went wrong on the server. Try again.' }, 500) : redirect(url.origin + '/account.html?gsi=' + encodeURIComponent('Something went wrong on the server. Try again.')); }
     }
     if (url.pathname.startsWith('/api/')) {
       try { return await api(request, env, url, ctx); }
