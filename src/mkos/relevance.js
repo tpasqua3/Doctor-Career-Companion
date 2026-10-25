@@ -10,9 +10,11 @@
 // mk_relevance is derived: rebuilt by the sweep (lifecycle.js) from objects, edges and the rule table; never mirrored to Drive.
 import { FRAMEWORK } from './framework.js';
 import { nowIso } from './db.js';
+import { markDirty } from './dirty.js';
 
 const LC = FRAMEWORK.frameworks.lifecycle, R = LC.relevance, OBJ = LC.objectives;
-export const RULES_V = 'r' + R.version + '.' + LC.version;
+// The rules version: rows carry it as computed_v; a change marks every object dirty (a resumable backfill, lifecycle.js).
+export const RULES_V = R.rules_version || ('r' + R.version + '.' + LC.version);
 const HOPS = R.hops, HOP_RELS = Object.keys(HOPS);
 const MIN = Number(R.min_score), CAP = Number(R.max_per_object) || 400;
 const BANDS = [...R.bands].sort((a, b) => a.value - b.value);
@@ -33,11 +35,6 @@ const BAND_SQL = (() => {
   for (let i = BANDS.length - 1; i > 0; i--) parts.push(`WHEN s > ${((BANDS[i].value + BANDS[i - 1].value) / 2).toFixed(4)} THEN '${BANDS[i].key}'`);
   return `CASE ${parts.join(' ')} ELSE '${BANDS[0].key}' END`;
 })();
-const UPSERT = `ON CONFLICT (object_id, objective_id) DO UPDATE SET
-  score = CASE WHEN mk_relevance.computed_v != excluded.computed_v OR excluded.score > mk_relevance.score THEN excluded.score ELSE mk_relevance.score END,
-  band = CASE WHEN mk_relevance.computed_v != excluded.computed_v OR excluded.score > mk_relevance.score THEN excluded.band ELSE mk_relevance.band END,
-  basis_json = CASE WHEN mk_relevance.computed_v != excluded.computed_v OR excluded.score > mk_relevance.score THEN excluded.basis_json ELSE mk_relevance.basis_json END,
-  computed_v = excluded.computed_v, updated = excluded.updated`;
 
 /* Concept-to-concept edges of the hop relations touching `ids` (both directions), chunked under D1's 100 bound parameters. */
 export async function hopEdges(env, ids) {
@@ -76,27 +73,60 @@ export async function objectiveSet(env) {
   return new Set((await env.DB.prepare("SELECT id FROM mk_objects WHERE type = 'Objective' AND id LIKE ? AND status IN ('current','modified')").bind(OBJ.id_prefix + '%').all()).results.map((r) => r.id));
 }
 
-/* Compute and store the concept rows of `concepts` at tag (rules version + sweep). Returns rows written. */
-export async function computeConceptRows(env, concepts, tag, objectives) {
-  if (!concepts.length) return 0;
-  const e1 = await hopEdges(env, concepts), n1 = new Set();
-  for (const e of e1) for (const x of [e.src, e.dst]) if (!concepts.includes(x)) n1.add(x);
-  const edges = (Number(R.max_hops) || 1) >= 2 ? [...e1, ...(await hopEdges(env, [...n1]))] : e1;
-  const adj = adjacency(edges), at = nowIso(), rows = [];
-  for (const a of concepts) rows.push(...conceptRows(a, adj, objectives));
-  await writeRows(env, rows, tag, at);
-  const counts = {}; for (const r of rows) counts[r.object_id] = (counts[r.object_id] || 0) + 1;
-  await mark(env, concepts.map((c) => [c, counts[c] || 0]), tag);
-  return rows.length;
-}
-async function writeRows(env, rows, tag, at) {
-  const per = 14, stmts = [];   // 7 columns x 14 rows = 98 bound parameters
-  for (let i = 0; i < rows.length; i += per) {
-    const part = rows.slice(i, i + per);
-    stmts.push(env.DB.prepare(`INSERT INTO mk_relevance (object_id, objective_id, score, band, basis_json, computed_v, updated) VALUES ${part.map(() => '(?,?,?,?,?,?,?)').join(',')} ${UPSERT}`)
-      .bind(...part.flatMap((r) => [r.object_id, r.objective_id, r.score, r.band, JSON.stringify(r.basis), tag, at])));
+/* ---------- Recompute only what changed (dirty.js): new rows inserted, changed rows updated, stale rows deleted, unchanged rows untouched.
+   Every write is checked against the stored row first (score, band, basis), and the upsert repeats the check in its WHERE, so a recompute
+   of an object whose relevance did not change writes nothing. computed_v is the rules version at which the row last changed. ---------- */
+const same = (a, b) => a && b && a.score === b.score && a.band === b.band && a.basis_json === b.basis_json;
+const UPSERT_CHANGED = `ON CONFLICT (object_id, objective_id) DO UPDATE SET score = excluded.score, band = excluded.band, basis_json = excluded.basis_json,
+  computed_v = excluded.computed_v, updated = excluded.updated
+  WHERE mk_relevance.score != excluded.score OR mk_relevance.band != excluded.band OR mk_relevance.basis_json != excluded.basis_json`;
+async function storedRows(env, ids) {
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { results } = await env.DB.prepare('SELECT object_id, objective_id, score, band, basis_json FROM mk_relevance WHERE object_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(ids.slice(i, i + 200))).all();
+    for (const r of results) out.set(r.object_id + '|' + r.objective_id, r);
   }
-  for (let i = 0; i < stmts.length; i += 40) await env.DB.batch(stmts.slice(i, i + 40));
+  return out;
+}
+/* Pure: the writes that bring `stored` (Map key -> row) to `want` (rows) for the objects `ids`: { put: [rows], del: [[object, objective]], changed: Set(object) }. */
+export function diffRows(ids, want, stored) {
+  const put = [], del = [], changed = new Set(), keep = new Set();
+  for (const r of want) { const k = r.object_id + '|' + r.objective_id; keep.add(k); if (!same(r, stored.get(k))) { put.push(r); changed.add(r.object_id); } }
+  const idset = new Set(ids);
+  for (const [k, r] of stored) if (idset.has(r.object_id) && !keep.has(k)) { del.push([r.object_id, r.objective_id]); changed.add(r.object_id); }
+  return { put, del, changed };
+}
+async function applyDiff(env, d, at) {
+  const stmts = [];
+  for (let i = 0; i < d.put.length; i += 14) {     // 7 columns x 14 rows = 98 bound parameters
+    const part = d.put.slice(i, i + 14);
+    stmts.push(env.DB.prepare(`INSERT INTO mk_relevance (object_id, objective_id, score, band, basis_json, computed_v, updated) VALUES ${part.map(() => '(?,?,?,?,?,?,?)').join(',')} ${UPSERT_CHANGED}`)
+      .bind(...part.flatMap((r) => [r.object_id, r.objective_id, r.score, r.band, r.basis_json, RULES_V, at])));
+  }
+  const byObj = new Map(); for (const [o, t] of d.del) (byObj.get(o) || byObj.set(o, []).get(o)).push(t);
+  for (const [o, ts] of byObj) stmts.push(env.DB.prepare('DELETE FROM mk_relevance WHERE object_id = ? AND objective_id IN (SELECT value FROM json_each(?))').bind(o, JSON.stringify(ts)));
+  let n = 0;
+  for (let i = 0; i < stmts.length; i += 40) for (const r of await env.DB.batch(stmts.slice(i, i + 40))) n += (r.meta && r.meta.changes) || 0;
+  return n;
+}
+const ELIGIBLE_CONCEPT = `type = 'Concept' AND status IN ('current','modified') AND gov NOT IN (${R.excluded_governance.map(lit).join(',')})`;
+/* The concept rows `concepts` should have now (an ineligible or missing concept has none). */
+export async function expectedConceptRows(env, concepts, objectives) {
+  if (!concepts.length) return [];
+  const live = (await env.DB.prepare(`SELECT id FROM mk_objects WHERE id IN (SELECT value FROM json_each(?)) AND ${ELIGIBLE_CONCEPT}`).bind(JSON.stringify(concepts)).all()).results.map((r) => r.id);
+  if (!live.length) return [];
+  const e1 = await hopEdges(env, live), n1 = new Set();
+  for (const e of e1) for (const x of [e.src, e.dst]) if (!live.includes(x)) n1.add(x);
+  const edges = (Number(R.max_hops) || 1) >= 2 ? [...e1, ...(await hopEdges(env, [...n1]))] : e1;
+  const adj = adjacency(edges), rows = [];
+  for (const a of live) for (const r of conceptRows(a, adj, objectives)) rows.push({ object_id: r.object_id, objective_id: r.objective_id, score: r.score, band: r.band, basis_json: JSON.stringify(r.basis) });
+  return rows;
+}
+/* Recompute the concept rows of `concepts`; returns { writes, changed: [concept ids whose rows changed] }. */
+export async function recomputeConcepts(env, concepts, objectives) {
+  if (!concepts.length) return { writes: 0, changed: [] };
+  const d = diffRows(concepts, await expectedConceptRows(env, concepts, objectives), await storedRows(env, concepts));
+  return { writes: await applyDiff(env, d, nowIso()), changed: [...d.changed] };
 }
 export async function mark(env, list, tag) {
   const at = nowIso(), stmts = [];
@@ -112,31 +142,54 @@ export async function marked(env, ids, tag) {
   return out;
 }
 
-/* Object rows for every knowledge object attached to `concepts` (one INSERT ... SELECT per attachment rule, on the server). The concept
-   rows of these concepts must be written at the same tag first. */
+/* Object rows: score = attachment factor (object to concept a) x score(a -> objective), the best path over every attachment of the object.
+   attachSql: the attachments of the concepts in a set (to find objects to mark); byObjSql: the attachments of the objects in a set (to
+   compute their rows). The set is one JSON parameter (json_each), so any batch stays far under D1's 100 bound parameters. */
 const TYPES = R.object_types.map(lit).join(','), GOV = R.excluded_governance.map(lit).join(',');
-function attachSql(rule, ph) {
+const SET = (n) => `(SELECT value FROM json_each(?${n}))`;
+function attachSql(rule, set) {
   if (rule.via) return `SELECT d.src AS obj, e.src AS c, ${Number(rule.factor)} AS f, '${rule.rel}' AS a FROM mk_edges e JOIN mk_edges d ON d.dst = e.dst AND d.rel = ${lit(rule.via)} AND d.status = 'current'
-    WHERE e.rel = 'recommended_by' AND e.status = 'current' AND e.src IN (${ph})`;
+    WHERE e.rel = 'recommended_by' AND e.status = 'current' AND e.src IN ${set}`;
   return rule.object_is === 'dst'
-    ? `SELECT e.dst AS obj, e.src AS c, ${Number(rule.factor)} AS f, '${rule.rel}' AS a FROM mk_edges e WHERE e.rel = ${lit(rule.rel)} AND e.status = 'current' AND e.src IN (${ph})`
-    : `SELECT e.src AS obj, e.dst AS c, ${Number(rule.factor)} AS f, '${rule.rel}' AS a FROM mk_edges e WHERE e.rel = ${lit(rule.rel)} AND e.status = 'current' AND e.dst IN (${ph})`;
+    ? `SELECT e.dst AS obj, e.src AS c, ${Number(rule.factor)} AS f, '${rule.rel}' AS a FROM mk_edges e WHERE e.rel = ${lit(rule.rel)} AND e.status = 'current' AND e.src IN ${set}`
+    : `SELECT e.src AS obj, e.dst AS c, ${Number(rule.factor)} AS f, '${rule.rel}' AS a FROM mk_edges e WHERE e.rel = ${lit(rule.rel)} AND e.status = 'current' AND e.dst IN ${set}`;
+}
+function byObjSql(rule, set) {
+  if (rule.via) return `SELECT d.src AS obj, e.src AS c, ${Number(rule.factor)} AS f, '${rule.rel}' AS a FROM mk_edges d JOIN mk_edges e ON e.dst = d.dst AND e.rel = 'recommended_by' AND e.status = 'current'
+    WHERE d.rel = ${lit(rule.via)} AND d.status = 'current' AND d.src IN ${set}`;
+  return rule.object_is === 'dst'
+    ? `SELECT e.dst AS obj, e.src AS c, ${Number(rule.factor)} AS f, '${rule.rel}' AS a FROM mk_edges e WHERE e.rel = ${lit(rule.rel)} AND e.status = 'current' AND e.dst IN ${set}`
+    : `SELECT e.src AS obj, e.dst AS c, ${Number(rule.factor)} AS f, '${rule.rel}' AS a FROM mk_edges e WHERE e.rel = ${lit(rule.rel)} AND e.status = 'current' AND e.src IN ${set}`;
 }
 export const ATTACH = [...R.attachments, { rel: 'via_recommendation', via: R.via_recommendation.rel, factor: R.via_recommendation.factor }];
-export async function computeObjectRows(env, concepts, tag) {
+const ELIGIBLE_OBJECT = `o.type IN (${TYPES}) AND o.type != 'Concept' AND o.status IN ('current','modified') AND o.gov NOT IN (${GOV}) AND o.id NOT LIKE '${OBJ.id_prefix}%' AND o.id NOT LIKE 'ea.%'`;
+// The rows the objects in ?1 should have now (the best path per objective; ties broken by attachment then concept, so it is deterministic).
+const EXPECTED_OBJECT_SQL = `WITH x AS (${ATTACH.map((r) => byObjSql(r, SET(1))).join(' UNION ALL ')}),
+  cand AS (SELECT x.obj AS obj, r.objective_id AS objective_id, x.f * r.score AS s, x.a AS a, x.f AS f, x.c AS c, json_extract(r.basis_json, '$.path') AS p
+    FROM x JOIN mk_relevance r ON r.object_id = x.c JOIN mk_objects o ON o.id = x.obj WHERE ${ELIGIBLE_OBJECT}),
+  best AS (SELECT obj, objective_id, s, a, f, c, p, ROW_NUMBER() OVER (PARTITION BY obj, objective_id ORDER BY s DESC, a, c) AS rn FROM cand WHERE s >= ${MIN - 1e-9})
+  SELECT obj AS object_id, objective_id, ROUND(s, 4) AS score, ${BAND_SQL} AS band, json_object('attach', a, 'factor', f, 'via', c, 'path', p) AS basis_json FROM best WHERE rn = 1`;
+export async function expectedObjectRows(env, ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 40) out.push(...(await env.DB.prepare(EXPECTED_OBJECT_SQL).bind(JSON.stringify(ids.slice(i, i + 40))).all()).results);
+  return out;
+}
+/* Recompute the rows of knowledge objects `ids` (not concepts; their concepts' rows must be current). Returns { writes, changed }. */
+export async function recomputeObjects(env, ids) {
+  if (!ids.length) return { writes: 0, changed: [] };
+  const d = diffRows(ids, await expectedObjectRows(env, ids), await storedRows(env, ids));
+  return { writes: await applyDiff(env, d, nowIso()), changed: [...d.changed] };
+}
+/* Mark dirty every knowledge object attached to `concepts` (their concept rows changed): one INSERT ... SELECT on the server. */
+export async function markAttached(env, concepts, reason = 'concept_rows_changed') {
   if (!concepts.length) return 0;
-  const at = nowIso(), stmts = [];
-  for (let i = 0; i < concepts.length; i += 40) {
-    const part = concepts.slice(i, i + 40), ph = part.map(() => '?').join(',');
-    for (const rule of ATTACH) stmts.push(env.DB.prepare(`INSERT INTO mk_relevance (object_id, objective_id, score, band, basis_json, computed_v, updated)
-      SELECT obj, objective_id, ROUND(s, 4), ${BAND_SQL}, json_object('attach', a, 'factor', f, 'via', c, 'path', p), ?, ? FROM (
-        SELECT x.obj AS obj, r.objective_id AS objective_id, MAX(x.f * r.score) AS s, x.a AS a, x.f AS f, x.c AS c, json_extract(r.basis_json, '$.path') AS p
-        FROM (${attachSql(rule, ph)}) x JOIN mk_relevance r ON r.object_id = x.c AND r.computed_v = ? JOIN mk_objects o ON o.id = x.obj
-        WHERE o.type IN (${TYPES}) AND o.type != 'Concept' AND o.status IN ('current','modified') AND o.gov NOT IN (${GOV}) AND o.id NOT LIKE '${OBJ.id_prefix}%' AND o.id NOT LIKE 'ea.%'
-        GROUP BY x.obj, r.objective_id HAVING s >= ${MIN - 1e-9}) WHERE 1 ${UPSERT}`).bind(tag, at, ...part, tag));
-  }
   let n = 0;
-  for (let i = 0; i < stmts.length; i += 20) for (const r of await env.DB.batch(stmts.slice(i, i + 20))) n += (r.meta && r.meta.changes) || 0;
+  for (let i = 0; i < concepts.length; i += 200) {
+    const r = await env.DB.prepare(`INSERT INTO mk_relevance_dirty (object_id, radius, reason, marked_at)
+      SELECT DISTINCT x.obj, -1, ?2, ?3 FROM (${ATTACH.map((r) => attachSql(r, SET(1))).join(' UNION ALL ')}) x JOIN mk_objects o ON o.id = x.obj WHERE o.type IN (${TYPES}) AND o.type != 'Concept'
+      ON CONFLICT (object_id) DO NOTHING`).bind(JSON.stringify(concepts.slice(i, i + 200)), reason, nowIso()).run();
+    n += (r.meta && r.meta.changes) || 0;
+  }
   return n;
 }
 
@@ -216,4 +269,114 @@ export async function boardFromProjection(env, conceptId) {
     else if (!out.task_importance) out.task_importance = w.importance;
   }
   return out;
+}
+
+/* ---------- The dirty queue (dirty.js): expand seeds ring by ring, recompute concepts, then the objects attached to concepts that changed ----------
+   Every unit is small and resumable: a seed's neighbours are marked with one radius less before the seed itself is lowered to -1, so an
+   interrupted run simply continues. Objects wait until no concept is dirty, so they are always computed from current concept rows. */
+const D = R.dirty || {};
+const HOPS_LIST = HOP_RELS.map(lit).join(',');
+const CHILD_RELS = "'derived_from','part_of'";
+async function expandSeeds(env, seeds) {
+  const cons = seeds.filter((s) => s.object_id.startsWith('c.') && s.radius > 0), other = seeds.filter((s) => !s.object_id.startsWith('c.') && s.radius > 0), marks = [];
+  if (cons.length) {
+    const rad = new Map(cons.map((s) => [s.object_id, s.radius]));
+    // Any status: a concept just retired or superseded still reaches the neighbours whose rows pointed at it.
+    const { results } = await env.DB.prepare(`SELECT src, dst FROM mk_edges WHERE rel IN (${HOPS_LIST}) AND (src IN ${SET(1)} OR dst IN ${SET(1)})`).bind(JSON.stringify([...rad.keys()])).all();
+    for (const e of results) { if (!e.src.startsWith('c.') || !e.dst.startsWith('c.') || e.src === e.dst) continue;
+      if (rad.has(e.src)) marks.push({ id: e.dst, radius: rad.get(e.src) - 1, reason: 'hop_radius' });
+      if (rad.has(e.dst)) marks.push({ id: e.src, radius: rad.get(e.dst) - 1, reason: 'hop_radius' }); }
+  }
+  if (other.length) {
+    const rad = new Map(other.map((s) => [s.object_id, s.radius]));
+    const { results } = await env.DB.prepare(`SELECT src, dst FROM mk_edges WHERE rel IN (${CHILD_RELS}) AND dst IN ${SET(1)}`).bind(JSON.stringify([...rad.keys()])).all();
+    for (const e of results) if (!/^(src\.|cn\.|bpt\.|ea\.)/.test(e.src)) marks.push({ id: e.src, radius: rad.get(e.dst) - 1, reason: 'derived_radius' });
+  }
+  if (marks.length) await markDirty(env, marks);
+  // Lower each seed to -1 only at the radius it was expanded at (a higher mark that arrived meanwhile is expanded next time).
+  const st = seeds.map((s) => env.DB.prepare('UPDATE mk_relevance_dirty SET radius = -1 WHERE object_id = ? AND radius = ?').bind(s.object_id, s.radius));
+  for (let i = 0; i < st.length; i += 40) await env.DB.batch(st.slice(i, i + 40));
+  return marks.length;
+}
+async function clear(env, ids) {
+  for (let i = 0; i < ids.length; i += 200) await env.DB.prepare('DELETE FROM mk_relevance_dirty WHERE radius < 0 AND object_id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(ids.slice(i, i + 200))).run();
+}
+/* Subjects whose relevance just changed, for penetration (impact.js): a knowledge object's source when it has one (a new guideline's
+   recommendations aggregate into one subject), otherwise the object itself. */
+async function queuePenetration(env, ids, reason) {
+  if (!ids.length) return;
+  for (let i = 0; i < ids.length; i += 200) await env.DB.prepare(`INSERT OR IGNORE INTO mk_penetration_queue (subject_id, reason, marked_at)
+    SELECT DISTINCT COALESCE(json_extract(o.body, '$.source_id'), o.id), ?2, ?3 FROM mk_objects o WHERE o.id IN ${SET(1)}`).bind(JSON.stringify(ids.slice(i, i + 200)), reason, nowIso()).run();
+}
+/* One slice of dirty work while room() allows. Returns counts. */
+export async function processDirty(env, objectives, room, { trace = null } = {}) {
+  const out = { expanded: 0, concepts: 0, objects: 0, writes: 0 };
+  const cb = Number(D.concept_batch) || 30, ob = Number(D.object_batch) || 40, sb = Number(D.seed_batch) || 40;
+  while (room()) {
+    const seeds = (await env.DB.prepare('SELECT object_id, radius FROM mk_relevance_dirty WHERE radius >= 0 ORDER BY radius DESC LIMIT ?').bind(sb).all()).results;
+    if (seeds.length) { out.expanded += seeds.length; await expandSeeds(env, seeds); continue; }
+    const cons = (await env.DB.prepare("SELECT object_id FROM mk_relevance_dirty WHERE radius < 0 AND object_id LIKE 'c.%' LIMIT ?").bind(cb).all()).results.map((r) => r.object_id);
+    if (cons.length) {
+      if (trace) trace.concepts.push(...cons);
+      const r = await recomputeConcepts(env, cons, objectives);
+      await clear(env, cons);
+      if (r.changed.length) await markAttached(env, r.changed);
+      out.concepts += cons.length; out.writes += r.writes; continue;
+    }
+    const objs = (await env.DB.prepare('SELECT object_id FROM mk_relevance_dirty WHERE radius < 0 LIMIT ?').bind(ob).all()).results.map((r) => r.object_id);
+    if (!objs.length) break;
+    if (trace) trace.objects.push(...objs);
+    const r = await recomputeObjects(env, objs);
+    await clear(env, objs);
+    if (r.changed.length) await queuePenetration(env, r.changed, 'relevance_changed');
+    out.objects += objs.length; out.writes += r.writes;
+  }
+  return out;
+}
+export async function dirtyCount(env) { return ((await env.DB.prepare('SELECT COUNT(*) AS n FROM mk_relevance_dirty').first()) || {}).n || 0; }
+
+/* BACKFILL (a rules-version change, a restore, or the first run): every relevance object is marked, one id range at a time. Returns true
+   when the whole store is marked. prog: {cursor}. */
+export async function backfillStep(env, prog, room) {
+  const at = nowIso(), per = Number(D.backfill_batch) || 500;
+  while (room()) {
+    const ids = (await env.DB.prepare(`SELECT id FROM mk_objects WHERE type IN (${TYPES}) AND id > ? AND id NOT LIKE '${OBJ.id_prefix}%' ORDER BY id LIMIT ?`).bind(prog.cursor || '', per).all()).results.map((r) => r.id);
+    if (ids.length) await env.DB.prepare(`INSERT INTO mk_relevance_dirty (object_id, radius, reason, marked_at) SELECT value, -1, 'rules_backfill', ?2 FROM json_each(?1) WHERE 1
+      ON CONFLICT (object_id) DO NOTHING`).bind(JSON.stringify(ids), at).run();
+    if (ids.length < per) {
+      // Rows of objects that no longer exist are marked too, so the recompute removes them.
+      await markOrphans(env); prog.cursor = ''; return true;
+    }
+    prog.cursor = ids[ids.length - 1];
+  }
+  return false;
+}
+async function markOrphans(env) {
+  const ids = (await env.DB.prepare(`SELECT DISTINCT r.object_id AS id FROM mk_relevance r LEFT JOIN mk_objects o ON o.id = r.object_id
+    WHERE o.id IS NULL OR o.status NOT IN ('current','modified') OR o.gov IN (${GOV}) LIMIT 500`).all()).results.map((r) => r.id);
+  if (ids.length) await markDirty(env, ids.map((id) => ({ id, radius: -1, reason: 'orphan_rows' })));
+  return ids.length;
+}
+
+/* CONSISTENCY AUDIT (read only): a rotating pass that recomputes rows in memory and compares them with the stored rows; an object whose
+   rows drifted (a change some write path did not mark) is marked dirty. It never rewrites a row itself. One pass, then it rests
+   relevance.dirty.audit_hours. prog: {cursor, phase: concepts|objects|orphans, checked, drifted}. Returns true when the pass is done. */
+export async function auditStep(env, prog, objectives, room) {
+  prog.phase = prog.phase || 'concepts';
+  const per = Number(D.audit_batch) || 40;
+  while (room()) {
+    if (prog.phase === 'orphans') { prog.drifted = (prog.drifted || 0) + await markOrphans(env); prog.phase = 'done'; return true; }
+    const concept = prog.phase === 'concepts';
+    const ids = (await env.DB.prepare(concept ? `SELECT id FROM mk_objects WHERE type = 'Concept' AND id > ? ORDER BY id LIMIT ?`
+      : `SELECT id FROM mk_objects WHERE type IN (${TYPES}) AND type != 'Concept' AND id > ? AND id NOT LIKE '${OBJ.id_prefix}%' ORDER BY id LIMIT ?`).bind(prog.cursor || '', per).all()).results.map((r) => r.id);
+    if (ids.length) {
+      const want = concept ? await expectedConceptRows(env, ids, objectives) : await expectedObjectRows(env, ids);
+      const d = diffRows(ids, want, await storedRows(env, ids));
+      prog.checked = (prog.checked || 0) + ids.length;
+      if (d.changed.size) { prog.drifted = (prog.drifted || 0) + d.changed.size; await markDirty(env, [...d.changed].map((id) => ({ id, radius: -1, reason: 'audit_drift' }))); }
+    }
+    if (ids.length < per) { prog.cursor = ''; prog.phase = concept ? 'objects' : 'orphans'; continue; }
+    prog.cursor = ids[ids.length - 1];
+  }
+  return false;
 }

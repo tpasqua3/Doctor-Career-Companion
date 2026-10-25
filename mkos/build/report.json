@@ -1,5 +1,5 @@
 {
-  "built": "2026-10-25T04:00:25.597Z",
+  "built": "2026-10-25T04:11:44.768Z",
   "errors": 0,
   "warnings": [],
   "counts": {
@@ -17,14 +17,14 @@
     "layers": 11,
     "stop_the_line_conditions": 8
   },
-  "framework_hash": "7cab2c0365f6763b",
+  "framework_hash": "1c8bb32e32e2cc49",
   "versions": {
     "assets": "1.1.1",
     "blueprints": "1.1.0",
     "competencies": "1.0.0",
     "decomposition": "1.1.0",
     "ingestion": "1.0.2",
-    "lifecycle": "1.0.0",
+    "lifecycle": "1.1.0",
     "ontology": "1.2.0",
     "pronunciation": "1.0.0",
     "scoring": "1.0.0",

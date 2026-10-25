@@ -8,7 +8,7 @@
 // It never replaces a newer row with an older one (objects keep whichever 'updated' is later; versions, edges, content and table rows are
 // inserted only when absent), so it is safe on an empty database and on a live one. Resumable: prog keeps the file and row position.
 // Learner state is not part of canonical knowledge: it is rebuilt from each account's own record by the engine's learner jobs.
-import { J, nowIso, audit, TABLES } from './db.js';
+import { J, nowIso, audit, TABLES, setSetting } from './db.js';
 import { contentHash, indexAliases, norm } from './kb.js';
 import { queue } from './ingest.js';
 import { fileHash, configDoc, CONFIG_MOVING, CENTRAL } from './mirror.js';
@@ -100,8 +100,8 @@ export async function restoreStep(env, deps, root, prog, { mode = 'restore', row
       prog.at++; prog.row = 0; rows += 200; continue;
     }
     if (k === 'registries/lifecycle') {
-      // Lifecycle records: inserted, or replacing an older record (never a newer one). The relevance graph is derived: the lifecycle
-      // sweep rebuilds it from the restored objects and edges.
+      // Lifecycle records: inserted, or replacing an older record (never a newer one). The relevance graph is derived: a backfill of
+      // the dirty queue rebuilds it from the restored objects and edges.
       const recs = (doc && doc.records) || [];
       await insertAll(env, (r) => r && r.source_id ? env.DB.prepare(`INSERT INTO mk_lifecycle (source_id, stage, stages_json, status, source_v, cycle, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)
         ON CONFLICT (source_id) DO UPDATE SET stage = excluded.stage, stages_json = excluded.stages_json, status = excluded.status, source_v = excluded.source_v, cycle = excluded.cycle, updated_at = excluded.updated_at
@@ -124,6 +124,9 @@ export async function restoreStep(env, deps, root, prog, { mode = 'restore', row
   if (done && mode === 'restore') {
     await audit(env, 'restore', 'restore_from_drive', null, null, prog.manifest_written, prog.counts);
     await queue(env, 'classify', 'all', {}, 5); await queue(env, 'reconcile', 'restore:' + nowIso(), {}, 3);
+    // Derived layers are rebuilt from the restored objects, edges and rules: the relevance graph by a backfill of the dirty queue
+    // (lifecycle.js; lc_rel is run state), and penetration, layers, confidence, coverage and gaps by their own daily passes.
+    await setSetting(env, 'lc_rel', null); await setSetting(env, 'lc_derived', null);
   }
   return { done, mode, file: prog.at, of: prog.files.length, counts: prog.counts };
 }

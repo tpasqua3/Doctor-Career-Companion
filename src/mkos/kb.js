@@ -4,6 +4,7 @@ import { FRAMEWORK } from './framework.js';
 import { validate } from './validate.js';
 import { J, nowIso, audit, overrides } from './db.js';
 import { scoreSource, scoreDerived, knowledgeConfidence } from './scoring.js';
+import { seedsForObject, dirtyStmts } from './dirty.js';
 
 const O = FRAMEWORK.frameworks.ontology, SCHEMAS = FRAMEWORK.schemas;
 export const TYPE = Object.fromEntries(O.object_types.map((t) => [t.type, t]));
@@ -92,6 +93,8 @@ export async function putObject(env, input, { actor = 'system', event_id = null,
       trust=excluded.trust, conf=excluded.conf, hash=excluded.hash, body=excluded.body, updated=excluded.updated`)
       .bind(o.id, o.type, String(o.name).slice(0, 300), norm(o.name).slice(0, 300), spec, o.status, o.governance_status, o.version, o.scores.trust_score, o.confidence.confidence_score, hash, body, o.created, now),
     env.DB.prepare('INSERT OR REPLACE INTO mk_versions (id, version, hash, body, at, event_id, actor) VALUES (?,?,?,?,?,?,?)').bind(o.id, o.version, hash, body, now, event_id, actor),
+    // Relevance dirty flag (dirty.js): only a creation or a status, type or governance change alters relevance; one small insert.
+    ...dirtyStmts(env, seedsForObject(prev, o)),
   ]);
   // Derived objects (objectives, teaching points, criteria) are not names a concept can be found by.
   if (aliases) await indexAliases(env, o);

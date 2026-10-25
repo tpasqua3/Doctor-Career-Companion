@@ -261,3 +261,91 @@ test('lifecycle records are durable: mirrored to Drive and restored; the relevan
   const b = (await env2.DB.prepare('SELECT object_id, objective_id, score FROM mk_relevance ORDER BY object_id, objective_id').all()).results;
   assert.deepEqual(b, a, 'rebuilt from the restored objects and edges');
 });
+
+/* ---------- Step 2: relevance is event driven (dirty flags) ---------- */
+import { processDirty, recomputeConcepts, recomputeObjects, objectiveSet, dirtyCount } from '../src/mkos/relevance.js';
+import { setStatus } from '../src/mkos/kb.js';
+import { getSetting, setSetting } from '../src/mkos/db.js';
+const all = () => true;
+async function built(env) { await corpus(env); await importBlueprint(env, abim, 'cert'); await projectBlueprint(env, 'bp.abim_im_cert.2026'); await settle(env, 8); return env; }
+const relRows = async (env) => (await env.DB.prepare('SELECT object_id, objective_id, score, band, basis_json FROM mk_relevance ORDER BY object_id, objective_id').all()).results;
+
+test('relevance: an unchanged recompute writes nothing (0 changes), no full sweep, nothing left dirty', async () => {
+  const env = await built(await fresh());
+  assert.equal(await dirtyCount(env), 0);
+  const before = await relRows(env); assert.ok(before.length > 10);
+  const objs = await objectiveSet(env);
+  const cons = (await env.DB.prepare("SELECT id FROM mk_objects WHERE type = 'Concept'").all()).results.map((r) => r.id);
+  const others = (await env.DB.prepare("SELECT id FROM mk_objects WHERE type IN ('Recommendation','Claim','EvidenceObject')").all()).results.map((r) => r.id);
+  assert.equal((await recomputeConcepts(env, cons, objs)).writes, 0);
+  assert.equal((await recomputeObjects(env, others)).writes, 0);
+  // Every object marked dirty and processed: still zero row writes.
+  await env.DB.prepare("INSERT INTO mk_relevance_dirty (object_id, radius, reason, marked_at) SELECT id, -1, 't', 'x' FROM mk_objects WHERE type IN ('Concept','Recommendation','Claim','EvidenceObject')").run();
+  const d = await processDirty(env, objs, all);
+  assert.equal(d.writes, 0); assert.ok(d.concepts >= cons.length); assert.equal(await dirtyCount(env), 0);
+  assert.deepEqual(await relRows(env), before);
+  const rel = JSON.parse(await getSetting(env, 'lc_rel')); assert.equal(rel.mode, 'dirty'); assert.equal(rel.sweep, undefined, 'no sweep counter');
+  // Later engine runs with nothing dirty write no relevance rows.
+  const r = await lifecycleStep(env, {}, {}); assert.equal(r.relevance, 0);
+});
+
+test('relevance: a new guideline touching concepts recomputes only those and their hop radius; stale pairs go', async () => {
+  const env = await built(await fresh());
+  const objs = await objectiveSet(env), trace = { concepts: [], objects: [] };
+  // A new drug that treats CKD, and a new guideline recommending it.
+  await concept(env, 'c.medication.finerenone', 'Finerenone', 'medication');
+  await addEdges(env, [edge('c.medication.finerenone', 'treats', 'c.disease.chronic_kidney_disease')]);
+  await putObject(env, { id: 'src.ada2025', type: 'Source', name: 'ADA 2025', title: 'ADA Standards of Care 2025', source_class: 'clinical_practice_guideline', spec_source_type: 'Guidelines', drive_file_id: 'ada', drive_path: 'Endocrinology', ingest_state: 'extracted', responsible_orgs: ['ADA'], year: 2025, specialty: ['spec.endocrinology'], status: 'current', governance_status: 'pending_validation', provenance: P() }, { audited: false });
+  await putObject(env, { id: 'rec.ada2025.1', type: 'Recommendation', name: 'Finerenone in CKD with T2D', statement: 'Use finerenone in CKD with type 2 diabetes and albuminuria.', source_id: 'src.ada2025', strength: 'strong', evidence_level: 'A', grading_system: 'ADA', status: 'current', governance_status: 'validated', provenance: P() }, { audited: false });
+  await addEdges(env, [edge('rec.ada2025.1', 'derived_from', 'src.ada2025', 95), edge('c.medication.finerenone', 'recommended_by', 'rec.ada2025.1')]);
+  const seeds = (await env.DB.prepare('SELECT object_id FROM mk_relevance_dirty ORDER BY object_id').all()).results.map((r) => r.object_id);
+  assert.ok(seeds.includes('c.medication.finerenone') && seeds.includes('rec.ada2025.1') && seeds.includes('c.disease.chronic_kidney_disease'));
+  await processDirty(env, objs, all, { trace });
+  const touched = new Set(trace.concepts);
+  // Within the radius: finerenone, CKD and CKD's neighbours. Heart failure is three hops from finerenone: untouched.
+  for (const c of ['c.medication.finerenone', 'c.disease.chronic_kidney_disease', 'c.biomarker.albuminuria', 'c.medication.sglt2_inhibitor']) assert.ok(touched.has(c), c);
+  assert.ok(!touched.has('c.disease.heart_failure'), 'outside the hop radius');
+  assert.ok(trace.objects.includes('rec.ada2025.1'));
+  assert.ok(!trace.objects.includes('rec.kdigo2024.a2'), 'an object whose concept rows did not change is not recomputed: ' + trace.objects.join(','));
+  const r = await env.DB.prepare("SELECT score FROM mk_relevance WHERE object_id = 'rec.ada2025.1' AND objective_id = ?").bind(objectiveOf('c.disease.chronic_kidney_disease')).first();
+  assert.equal(r.score, Math.round(0.95 * 0.7 * 10000) / 10000);
+  // Stale pairs: retiring diabetes removes its rows and CKD's row to the diabetes objective (the causes path is gone); nothing else changes.
+  const dm = objectiveOf('c.disease.diabetes_mellitus');
+  assert.ok(await env.DB.prepare("SELECT 1 AS x FROM mk_relevance WHERE object_id = 'c.disease.chronic_kidney_disease' AND objective_id = ?").bind(dm).first());
+  const keep = (await relRows(env)).filter((x) => x.objective_id !== dm && x.object_id !== 'c.disease.diabetes_mellitus');
+  await setStatus(env, 'c.disease.diabetes_mellitus', 'retired', { force: true });
+  await processDirty(env, objs, all);
+  assert.equal(await env.DB.prepare("SELECT 1 AS x FROM mk_relevance WHERE object_id = 'c.disease.chronic_kidney_disease' AND objective_id = ?").bind(dm).first(), null);
+  assert.equal((await env.DB.prepare("SELECT COUNT(*) AS n FROM mk_relevance WHERE object_id = 'c.disease.diabetes_mellitus'").first()).n, 0);
+  const after = new Map((await relRows(env)).map((x) => [x.object_id + '|' + x.objective_id, x]));
+  for (const x of keep) assert.deepEqual(after.get(x.object_id + '|' + x.objective_id), x, x.object_id + ' ' + x.objective_id);
+});
+
+test('relevance: a superseded source dirties its recommendations and what derives from them', async () => {
+  const env = await built(await fresh()), trace = { concepts: [], objects: [] };
+  await setStatus(env, 'src.kdigo2024', 'superseded', { force: true });
+  assert.ok(await env.DB.prepare("SELECT 1 AS x FROM mk_relevance_dirty WHERE object_id = 'src.kdigo2024'").first());
+  await processDirty(env, await objectiveSet(env), all, { trace });
+  for (const id of ['rec.kdigo2024.a1', 'rec.kdigo2024.a2', 'rec.kdigo2024.a3', 'claim.kdigo2024.a1.x']) assert.ok(trace.objects.includes(id), id);
+  assert.equal(await dirtyCount(env), 0);
+});
+
+test('relevance: a rules-version change re-backfills every object once; rows are rebuilt identically', async () => {
+  const env = await built(await fresh()), before = await relRows(env);
+  const rel = JSON.parse(await getSetting(env, 'lc_rel')); rel.v = 'r0.old'; await setSetting(env, 'lc_rel', JSON.stringify(rel));
+  await env.DB.prepare('DELETE FROM mk_relevance WHERE object_id LIKE ?').bind('rec.%').run();   // and a damaged table
+  await lifecycleStep(env, {}, {});
+  const st = JSON.parse(await getSetting(env, 'lc_rel'));
+  assert.ok(st.backfilled, 'backfill finished'); assert.equal(st.v, FRAMEWORK.frameworks.lifecycle.relevance.rules_version);
+  await settle(env, 4);
+  assert.deepEqual(await relRows(env), before);
+});
+
+test('relevance: the read-only audit finds drift and marks it, without rewriting unchanged rows', async () => {
+  const { auditStep } = await import('../src/mkos/relevance.js');
+  const env = await built(await fresh());
+  await env.DB.prepare("UPDATE mk_relevance SET score = 0.11 WHERE object_id = 'rec.kdigo2024.a2'").run();   // a change no write path marked
+  const prog = {}; let done = false; for (let i = 0; i < 10 && !done; i++) done = await auditStep(env, prog, await objectiveSet(env), all);
+  assert.ok(done); assert.ok(prog.drifted >= 1);
+  assert.deepEqual((await env.DB.prepare('SELECT object_id FROM mk_relevance_dirty').all()).results.map((r) => r.object_id), ['rec.kdigo2024.a2']);
+});

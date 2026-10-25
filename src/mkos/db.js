@@ -99,6 +99,34 @@ export const TABLES = [
   // Which concepts the relevance sweep has computed at which rules version and sweep (derived, like mk_relevance).
   `CREATE TABLE IF NOT EXISTS mk_relevance_marks (object_id TEXT PRIMARY KEY, computed_v TEXT NOT NULL, n INTEGER NOT NULL, at TEXT NOT NULL)`,
   // The exam projection view mk_exam_relevance is created by relevance.js (best effort: the projection is a function first).
+  // Relevance dirty flags (dirty.js): the objects whose relevance rows a change touched, and the frontier of the hop-radius expansion
+  // (radius >= 0: a seed still to expand; -1: recompute). Derived run state, never mirrored: a restore re-marks everything (backfill).
+  `CREATE TABLE IF NOT EXISTS mk_relevance_dirty (object_id TEXT PRIMARY KEY, radius INTEGER NOT NULL, reason TEXT NOT NULL, marked_at TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS mk_relevance_dirty_r ON mk_relevance_dirty (radius)`,
+  // Lesson and curriculum penetration (impact.js computePenetration, lifecycle stage 5): what a changed knowledge object (or a source,
+  // over its objects) reaches, target kinds objective | lesson | curriculum | board_curriculum | exam, score 0..1 with its band.
+  // Derived (from mk_relevance, asset links, curriculum nodes and blueprints); the queue holds subjects whose rows just changed.
+  `CREATE TABLE IF NOT EXISTS mk_penetration (subject_id TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL, score REAL NOT NULL, band TEXT NOT NULL,
+     basis_json TEXT NOT NULL, computed_at TEXT NOT NULL, PRIMARY KEY (subject_id, target_kind, target_id))`,
+  `CREATE INDEX IF NOT EXISTS mk_penetration_target ON mk_penetration (target_kind, target_id, score DESC)`,
+  `CREATE TABLE IF NOT EXISTS mk_penetration_queue (subject_id TEXT PRIMARY KEY, reason TEXT NOT NULL, marked_at TEXT NOT NULL)`,
+  // Lesson enhancements (enrich.js, lifecycle stage 6): what was added to an existing lesson instead of regenerating it (recommendation,
+  // evidence, trial lineage, citation, pearl), with the asset version it produced. Durable: mirrored (registries/enhancements) and restored.
+  `CREATE TABLE IF NOT EXISTS mk_enhancements (asset_id TEXT NOT NULL, object_id TEXT NOT NULL, kind TEXT NOT NULL, asset_version TEXT NOT NULL, payload_json TEXT NOT NULL,
+     score REAL NOT NULL, at TEXT NOT NULL, PRIMARY KEY (asset_id, object_id))`,
+  // Lesson content layers per canonical objective (layers.js, stage 7): core | adjacent | advanced | frontier. Derived.
+  `CREATE TABLE IF NOT EXISTS mk_layers (objective_id TEXT NOT NULL, layer TEXT NOT NULL, n INTEGER NOT NULL, top_json TEXT NOT NULL, computed_at TEXT NOT NULL, PRIMARY KEY (objective_id, layer))`,
+  // The three confidence domains (confidence.js, stage 8): evidence | relevance | lesson, 0..1 with the factors. Derived; never changes
+  // mk_objects.conf or trust.
+  `CREATE TABLE IF NOT EXISTS mk_confidence (object_id TEXT NOT NULL, domain TEXT NOT NULL, score REAL NOT NULL, factors_json TEXT NOT NULL, computed_at TEXT NOT NULL, PRIMARY KEY (object_id, domain))`,
+  `CREATE INDEX IF NOT EXISTS mk_confidence_domain ON mk_confidence (domain, score)`,
+  // Coverage snapshots (coverage.js, stage 9): one row per day, dimension and key. Derived; the last coverage.keep_days are kept.
+  `CREATE TABLE IF NOT EXISTS mk_coverage (day TEXT NOT NULL, dimension TEXT NOT NULL, key TEXT NOT NULL, num INTEGER NOT NULL, den INTEGER NOT NULL, pct REAL NOT NULL, PRIMARY KEY (day, dimension, key))`,
+  // Gaps (coverage.js, stage 10): rules over coverage and confidence, each with its recommended action. Derived (recomputed daily; an
+  // owner acts by adding a source, which closes the gap on the next run), so not mirrored.
+  `CREATE TABLE IF NOT EXISTS mk_gaps (gap_id TEXT PRIMARY KEY, kind TEXT NOT NULL, key TEXT NOT NULL, severity REAL NOT NULL, detail_json TEXT NOT NULL, action_json TEXT NOT NULL,
+     status TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS mk_gaps_kind ON mk_gaps (status, kind, severity DESC)`,
 ];
 
 let ready = '';

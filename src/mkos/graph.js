@@ -2,6 +2,7 @@
 // RELATIONSHIPS plus the structural ones that connect the layers); an undeclared relationship is refused.
 import { FRAMEWORK } from './framework.js';
 import { J, nowIso } from './db.js';
+import { seedsForEdges, dirtyStmts } from './dirty.js';
 
 const O = FRAMEWORK.frameworks.ontology;
 export const RELS = Object.fromEntries([...O.relationships, ...O.structural_relationships].map((r) => [r.key, r]));
@@ -18,7 +19,9 @@ export async function addEdges(env, edges) {
     await env.DB.batch(ok.slice(i, i + 80).map((e) => env.DB.prepare(`INSERT INTO mk_edges (src, rel, dst, status, conf, prov, created, updated) VALUES (?, ?, ?, 'current', ?, ?, ?, ?)
       ON CONFLICT (src, rel, dst) DO UPDATE SET conf = MAX(mk_edges.conf, excluded.conf), updated = excluded.updated,
       prov = CASE WHEN instr(mk_edges.prov, ?) > 0 THEN mk_edges.prov ELSE substr(mk_edges.prov, 1, length(mk_edges.prov) - 1) || ',' || substr(excluded.prov, 2) END`)
-      .bind(e.src, e.rel, e.dst, e.conf ?? 50, JSON.stringify([e.prov || { method: 'derived', at: now }]), now, now, (e.prov && e.prov.source_id) || '"method":"derived"')));
+      .bind(e.src, e.rel, e.dst, e.conf ?? 50, JSON.stringify([e.prov || { method: 'derived', at: now }]), now, now, (e.prov && e.prov.source_id) || '"method":"derived"'))
+      // Relevance dirty flags for the hop, attachment and derived_from edges among them (dirty.js), in the same batch.
+      .concat(dirtyStmts(env, seedsForEdges(ok.slice(i, i + 80)))));
   }
   return { added: ok.length, refused: bad.map((e) => `${e.src} -${e.rel}-> ${e.dst}`) };
 }

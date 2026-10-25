@@ -263,9 +263,22 @@ objectives and exam projections, and `exam_relevance {ids, family}` shows the pr
 | `exam_projected` | Projection edges, and its recommendations' relevance on every current blueprint. |
 | `lesson_penetration`, `curriculum_penetration`, `confidence`, `gaps` | `pending_engine` (step 2: the penetration score, enrichment, lesson layers, the three confidence domains, coverage and gaps). |
 
-Global passes do the bulk for the existing corpus, and each restarts daily for what is new: concept classes, canonical objectives,
-projection edges (every run, so a new blueprint projects at once), and the relevance sweep (every 24 hours, or immediately when the
-rule table's version changes). Between sweeps, concepts that are new or near a new objective catch up.
+Global passes do the bulk for the existing corpus, and each restarts daily for what is new: concept classes, canonical objectives and
+projection edges (every run, so a new blueprint projects at once).
+
+**Relevance is event driven** (`src/mkos/dirty.js`, `relevance.js processDirty`; owner principle: determine once, store the result,
+update only when reality changes). There is no periodic sweep. The write paths mark what changed in `mk_relevance_dirty` with one
+small insert: `kb.js putObject` when a relevance object or source is created or changes status, type or excluded governance (a
+canonical objective marks its anchor concept), `graph.js addEdges` for hop, attachment and `derived_from` edges, and `kb.js setStatus`
+through putObject (a superseded or retired source, concept or recommendation). The table is also the frontier: a seed (`radius` >= 0)
+marks its neighbours with one radius less (concepts over the hop relations, any edge status, up to `max_hops`; a hop edge marks both
+ends with `max_hops - 1`; sources and recommendations mark what is derived from them) and becomes `-1` (recompute). Each run then
+recomputes dirty concepts, marks the objects attached to concepts whose rows changed, and recomputes those objects once no concept is
+dirty. Every recompute compares the rows it computes with the stored ones: new pairs are inserted, rows whose score, band or basis
+differ are updated (the upsert repeats the check in its `WHERE`), pairs no longer produced are deleted, unchanged rows are not written,
+and the flag is cleared. `computed_v` is `relevance.rules_version`, stamped when a row last changed. Bumping `rules_version`, a restore
+(`lc_rel` is run state) or the first run marks every object once (a resumable backfill). A read-only audit pass runs every
+`relevance.dirty.audit_hours` (720) when nothing is dirty: it recomputes rows in memory, compares, and marks only what drifted.
 
 **Source Metadata Object.** `source_metadata` is a typed sub-object of the Source (`source.schema.json`). It holds the source
 organization, publication date, version date, review date (from the owner registry or a "reaffirmed/reviewed" title), specialty
@@ -326,7 +339,8 @@ before.
 
 **Durable or derived.** Durable, so mirrored (`registries/lifecycle.json`) and restored: `mk_lifecycle`, the canonical objectives,
 the ConceptClass nodes, and the `classified_as`, `anchored_on`, `projects_objective` and `cites` edges (with the graph). Derived, so
-not mirrored and rebuilt by the relevance sweep after a restore: `mk_relevance` and `mk_relevance_marks`. The lifecycle's cursors
+not mirrored and rebuilt by the backfill after a restore: `mk_relevance`, `mk_relevance_dirty` and `mk_relevance_marks` (now only the
+concept class marks). The lifecycle's cursors
 (`lc_*` settings) are run state.
 
 ## Testing locally

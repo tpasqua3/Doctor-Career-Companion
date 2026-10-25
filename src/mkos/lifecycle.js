@@ -14,7 +14,7 @@ import { addEdges } from './graph.js';
 import { sourceClass } from './scoring.js';
 import { refineClass, refines, orgsOf } from './ingest.js';
 import { LC, STAGES, readRecord, writeRecord, freshStages, enterLifecycle } from './lifecycle_state.js';
-import { RULES_V, objectiveOf, objectiveSet, computeConceptRows, computeObjectRows, ensureProjectionEdges, ensureView, marked, mark, examProjection, hopEdges as hopEdgesOf } from './relevance.js';
+import { RULES_V, objectiveOf, objectiveSet, ensureProjectionEdges, ensureView, marked, mark, examProjection, processDirty, backfillStep, auditStep, dirtyCount } from './relevance.js';
 
 const O = LC.orchestrator, M = LC.metadata, OBJ = LC.objectives, CLASSES = LC.concept_classes;
 const CLASS_V = 'class' + LC.version, META_V = String(M.version);
@@ -146,22 +146,10 @@ export async function ensureObjectives(env, conceptIds, objectives) {
     await addEdges(env, [{ src: id, rel: OBJ.anchor_relation, dst: c, conf: 100, prov }]);
     objectives.add(id); n++; made.push(c);
   }
-  // A new objective changes the rows of every concept within max_hops of its anchor: those are recomputed (catch-up), nothing else.
-  if (made.length) await invalidateAround(env, made);
+  // A new objective changes the rows of every concept within max_hops of its anchor: putObject marked the anchor as a dirty seed over
+  // that radius (dirty.js), so exactly those are recomputed, nothing else.
   return n;
 }
-export async function invalidateAround(env, anchors) {
-  let ring = [...anchors]; const all = new Set(anchors);
-  for (let h = 0; h < (Number(LC.relevance.max_hops) || 1) && ring.length; h++) {
-    const next = [];
-    for (const e of await hopEdgesOf(env, ring.slice(0, 400))) for (const x of [e.src, e.dst]) if (!all.has(x)) { all.add(x); next.push(x); }
-    ring = next;
-  }
-  const list = [...all];
-  for (let i = 0; i < list.length; i += 90) { const part = list.slice(i, i + 90); await env.DB.prepare(`DELETE FROM mk_relevance_marks WHERE object_id IN (${ph(part.length)})`).bind(...part).run(); }
-  return list.length;
-}
-
 /* ---------- A source's own stages ---------- */
 async function sourceConcepts(env, sid) {
   const a = (await env.DB.prepare("SELECT DISTINCT dst AS c FROM mk_edges WHERE src = ? AND rel = 'covers' AND status = 'current' AND dst LIKE 'c.%' LIMIT 3000").bind(sid).all()).results.map((r) => r.c);
@@ -172,6 +160,14 @@ async function sourceConcepts(env, sid) {
 async function unmarked(env, ids, tag, prefix = '') {
   const keys = ids.map((i) => prefix + i), done = await marked(env, keys, tag);
   return ids.filter((i) => !done.has(prefix + i));
+}
+// Is anything this source touches still waiting in the relevance dirty queue? One query.
+export async function dirtyFor(env, sid) {
+  return !!(await env.DB.prepare(`SELECT 1 AS x FROM mk_relevance_dirty WHERE object_id = ?1
+    OR object_id IN (SELECT src FROM mk_edges WHERE dst = ?1 AND rel IN ('derived_from','part_of'))
+    OR object_id IN (SELECT dst FROM mk_edges WHERE src = ?1 AND rel = 'covers')
+    OR object_id IN (SELECT e.src FROM mk_edges d JOIN mk_edges e ON e.dst = d.src AND e.rel = 'recommended_by' WHERE d.dst = ?1 AND d.rel = 'derived_from')
+    OR object_id IN (SELECT c.src FROM mk_edges d JOIN mk_edges c ON c.dst = d.src AND c.rel = 'derived_from' WHERE d.dst = ?1 AND d.rel = 'derived_from') LIMIT 1`).bind(sid).first());
 }
 const done = (detail = {}, v = null) => ({ state: 'done', at: nowIso(), ...(v ? { v } : {}), detail });
 
@@ -209,25 +205,17 @@ export async function advanceSource(env, sid, ctx) {
     if (todo.length) { await classifyConcepts(env, todo.slice(0, O.class_batch)); if (todo.length > O.class_batch) return 'continues'; }
     S.ontology_mapped = done({ concepts: concepts.length }, src.version); await save(); return 'advanced';
   }
-  // 4. Relevance mapped: canonical objectives for its concepts, then their concept rows and the rows of every object attached to them.
+  // 4. Relevance mapped: canonical objectives for its concepts (each new one marks its anchor's neighbourhood dirty), then the source is
+  // mapped once nothing it touches is still dirty: its concepts, its recommendations and what was derived from them (dirty.js).
   if (S.relevance_mapped.state !== 'done') {
     if (!ctx.objectivesReady) return 'waiting';
-    const tag = ctx.tag, todo = await unmarked(env, concepts, tag);
-    if (todo.length) {
-      const part = todo.slice(0, O.concept_batch);
-      await ensureObjectives(env, part, ctx.objectives);
-      await computeConceptRows(env, part, tag, ctx.objectives);
-      if (todo.length > part.length) return 'continues';
-    }
-    // The rows of the source's own objects (its recommendations and what was derived from them), over every concept they attach to:
-    // concepts computed earlier keep their rows, but the objects this source just added need theirs. Resumable by position.
     const pos = Number(S.relevance_mapped.pos) || 0;
     if (pos < concepts.length) {
       const part = concepts.slice(pos, pos + O.concept_batch);
-      await computeObjectRows(env, part, tag);
-      S.relevance_mapped = { state: 'pending', pos: pos + part.length, at: nowIso() };
-      if (pos + part.length < concepts.length) { await save(); return 'continues'; }
+      await ensureObjectives(env, part, ctx.objectives);
+      S.relevance_mapped = { state: 'pending', pos: pos + part.length, at: nowIso() }; await save(); return 'continues';
     }
+    if (await dirtyFor(env, sid)) return 'waiting';
     const n = (await env.DB.prepare(`SELECT COUNT(*) AS n, COUNT(DISTINCT r.object_id) AS o FROM mk_relevance r JOIN mk_edges d ON d.src = r.object_id AND d.rel = 'derived_from' AND d.dst = ?`).bind(sid).first());
     S.relevance_mapped = done({ concepts: concepts.length, rows_for_recommendations: n.n, recommendations_related: n.o, rules: RULES_V }, src.version); await save(); return 'advanced';
   }
@@ -256,8 +244,16 @@ export async function lifecycleStep(env, deps, { meter = null, cap = Infinity } 
     SELECT o.id, 'ingested', ?, 'waiting', o.version, 1, ?, ? FROM mk_objects o WHERE o.type = 'Source' AND o.status != 'retired' AND NOT EXISTS (SELECT 1 FROM mk_lifecycle l WHERE l.source_id = o.id) LIMIT 300`).bind(fresh, at, at).run();
   out.entered = (ins.meta && ins.meta.changes) || 0;
   const obj = J(await getSetting(env, 'lc_obj'), {}) || {}, rel = J(await getSetting(env, 'lc_rel'), {}) || {};
-  if (rel.v !== RULES_V) { rel.v = RULES_V; rel.sweep = (rel.sweep || 0) + 1; rel.cursor = ''; rel.started = nowIso(); rel.phase = 'compute'; await setSetting(env, 'lc_rel', JSON.stringify(rel)); }
-  const ctx = { tag: rel.v + '.' + rel.sweep, objectives: await objectiveSet(env), objectivesReady: !!obj.passes, concepts: {}, projected: false };
+  // Relevance is event driven (dirty.js): there is no periodic sweep. The first run, a restore (lc_rel is run state, so it is absent) and
+  // a rules-version change mark everything once (backfill); a store built by the earlier sweep keeps its rows and gets a read-only audit.
+  const saveRel = () => setSetting(env, 'lc_rel', JSON.stringify(rel));
+  if (rel.mode !== 'dirty') {
+    const migrated = rel.v === RULES_V && rel.sweep;
+    for (const k of ['sweep', 'cursor', 'phase', 'finished']) delete rel[k];
+    Object.assign(rel, { mode: 'dirty', v: RULES_V, started: nowIso() }, migrated ? { audit: { phase: 'concepts', started: nowIso() } } : { backfill: { cursor: '', started: nowIso() } });
+    await saveRel();
+  } else if (rel.v !== RULES_V) { rel.v = RULES_V; rel.backfill = { cursor: '', started: nowIso(), reason: 'rules_version' }; delete rel.audit; await saveRel(); }
+  const ctx = { objectives: await objectiveSet(env), objectivesReady: !!obj.passes, concepts: {}, projected: false };
   // 1. Sources, round robin.
   const cur = (await getSetting(env, 'lc_src')) || '';
   let list = (await env.DB.prepare("SELECT source_id FROM mk_lifecycle WHERE status IN ('waiting','in_progress','blocked') AND source_id > ? ORDER BY source_id LIMIT ?").bind(cur, O.sources_per_run).all()).results.map((r) => r.source_id);
@@ -296,30 +292,22 @@ export async function lifecycleStep(env, deps, { meter = null, cap = Infinity } 
     if (anchors.length) out.objectives += await ensureObjectives(env, anchors, ctx.objectives);
     if (room()) out.projection = await ensureProjectionEdges(env);
   }
-  // 5. The relevance sweep: every concept's rows and the rows of the objects attached to it, then the rows of the previous sweep go.
+  // 5. Relevance, event driven: mark everything once if a backfill is due, then recompute only the dirty objects (dirty.js), writing only
+  // rows that changed. When nothing is dirty, a rotating read-only audit compares stored rows with the rules and marks any drift.
   if (ctx.objectivesReady && room(40)) {
-    const due = rel.phase === 'compute' || rel.phase === 'cleanup' || (rel.phase === 'idle' && Date.now() - Date.parse(rel.started || 0) > (Number(LC.relevance.sweep_hours) || 24) * 3600e3);
-    if (due && rel.phase === 'idle') { rel.sweep++; rel.cursor = ''; rel.started = nowIso(); rel.phase = 'compute'; ctx.tag = rel.v + '.' + rel.sweep; await setSetting(env, 'lc_rel', JSON.stringify(rel)); }
-    while (rel.phase === 'compute' && room(40)) {
-      const ids = (await env.DB.prepare("SELECT id FROM mk_objects WHERE type = 'Concept' AND status IN ('current','modified') AND gov NOT IN ('rejected') AND id > ? ORDER BY id LIMIT ?").bind(rel.cursor || '', O.concept_batch).all()).results.map((r) => r.id);
-      const todo = await unmarked(env, ids, ctx.tag);
-      if (todo.length) { await computeConceptRows(env, todo, ctx.tag, ctx.objectives); out.relevance += await computeObjectRows(env, todo, ctx.tag); }
-      if (ids.length < O.concept_batch) { rel.phase = 'cleanup'; rel.cursor = ''; } else rel.cursor = ids[ids.length - 1];
-      await setSetting(env, 'lc_rel', JSON.stringify(rel));
-    }
-    // Between sweeps: concepts not computed at this sweep's tag (new, or near a new objective) catch up.
-    while (rel.phase === 'idle' && room(40)) {
-      const ids = (await env.DB.prepare(`SELECT o.id FROM mk_objects o WHERE o.type = 'Concept' AND o.status IN ('current','modified') AND o.gov NOT IN ('rejected')
-        AND NOT EXISTS (SELECT 1 FROM mk_relevance_marks m WHERE m.object_id = o.id AND m.computed_v = ?) ORDER BY o.id LIMIT ?`).bind(ctx.tag, O.concept_batch).all()).results.map((r) => r.id);
-      if (!ids.length) break;
-      await computeConceptRows(env, ids, ctx.tag, ctx.objectives); out.relevance += await computeObjectRows(env, ids, ctx.tag);
-      if (ids.length < O.concept_batch) break;
-    }
-    while (rel.phase === 'cleanup' && room(10)) {
-      const a = await env.DB.prepare('DELETE FROM mk_relevance WHERE rowid IN (SELECT rowid FROM mk_relevance WHERE computed_v != ? LIMIT 2000)').bind(ctx.tag).run();
-      const b = await env.DB.prepare('DELETE FROM mk_relevance_marks WHERE rowid IN (SELECT rowid FROM mk_relevance_marks WHERE computed_v != ? AND object_id NOT LIKE ? LIMIT 2000)').bind(ctx.tag, 'class:%').run();
-      if (!((a.meta && a.meta.changes) || 0) && !((b.meta && b.meta.changes) || 0)) { rel.phase = 'idle'; rel.finished = nowIso(); }
-      await setSetting(env, 'lc_rel', JSON.stringify(rel));
+    const AUD = Number((LC.relevance.dirty || {}).audit_hours) || 720;
+    if (rel.backfill) { if (await backfillStep(env, rel.backfill, () => room(40))) { delete rel.backfill; rel.backfilled = nowIso(); } await saveRel(); }
+    if (!rel.backfill) {
+      const d = await processDirty(env, ctx.objectives, () => room(40));
+      out.relevance += d.writes; out.dirty = d;
+      if (room(40) && !(await dirtyCount(env))) {
+        const last = Date.parse((rel.audit && rel.audit.finished) || rel.backfilled || rel.started || 0);
+        if ((rel.audit && rel.audit.phase !== 'done') || Date.now() - last > AUD * 3600e3) {
+          if (!rel.audit || rel.audit.phase === 'done') rel.audit = { phase: 'concepts', started: nowIso() };
+          if (await auditStep(env, rel.audit, ctx.objectives, () => room(40))) rel.audit.finished = nowIso();
+          await saveRel();
+        }
+      }
     }
   }
   return out;
@@ -339,7 +327,7 @@ export async function lifecycleStatus(env, { light = false } = {}) {
     concept_classes: Object.fromEntries((await q("SELECT dst, COUNT(*) AS n FROM mk_edges WHERE rel = 'classified_as' AND status = 'current' GROUP BY dst")).map((r) => [r.dst.replace(/^cls\./, ''), r.n])),
     canonical_objectives: await one("SELECT COUNT(*) AS n FROM mk_objects WHERE type = 'Objective' AND id LIKE ?", OBJ.id_prefix + '%'),
     projection_edges: await one(`SELECT COUNT(*) AS n FROM mk_edges WHERE rel = '${OBJ.projection_relation}' AND status = 'current'`),
-    relevance: { rows: await one('SELECT COUNT(*) AS n FROM mk_relevance'), objects: await one('SELECT COUNT(DISTINCT object_id) AS n FROM mk_relevance'),
+    relevance: { rows: await one('SELECT COUNT(*) AS n FROM mk_relevance'), objects: await one('SELECT COUNT(DISTINCT object_id) AS n FROM mk_relevance'), dirty: await one('SELECT COUNT(*) AS n FROM mk_relevance_dirty'),
       by_band: Object.fromEntries((await q('SELECT band, COUNT(*) AS n FROM mk_relevance GROUP BY band')).map((r) => [r.band, r.n])), rules: RULES_V },
     passes: { classes: J(await getSetting(env, 'lc_cls'), null), objectives: J(await getSetting(env, 'lc_obj'), null), relevance: J(await getSetting(env, 'lc_rel'), null) },
   };
