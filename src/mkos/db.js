@@ -95,7 +95,8 @@ export const TABLES = [
   `CREATE TABLE IF NOT EXISTS mk_relevance (object_id TEXT NOT NULL, objective_id TEXT NOT NULL, score REAL NOT NULL, band TEXT NOT NULL, basis_json TEXT NOT NULL,
      computed_v TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (object_id, objective_id))`,
   `CREATE INDEX IF NOT EXISTS mk_relevance_objective ON mk_relevance (objective_id, score DESC)`,
-  `CREATE INDEX IF NOT EXISTS mk_relevance_v ON mk_relevance (computed_v)`,
+  // computed_v is only stamped now (event-driven recompute, no per-sweep cleanup by tag), so its index would only add a write per row.
+  `DROP INDEX IF EXISTS mk_relevance_v`,
   // Which concepts the relevance sweep has computed at which rules version and sweep (derived, like mk_relevance).
   `CREATE TABLE IF NOT EXISTS mk_relevance_marks (object_id TEXT PRIMARY KEY, computed_v TEXT NOT NULL, n INTEGER NOT NULL, at TEXT NOT NULL)`,
   // The exam projection view mk_exam_relevance is created by relevance.js (best effort: the projection is a function first).

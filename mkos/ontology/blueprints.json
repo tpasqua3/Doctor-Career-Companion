@@ -2,10 +2,10 @@
   "id": "framework.blueprints",
   "type": "Framework",
   "name": "Board blueprint governance",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "status": "current",
   "created_date": "2026-10-17",
-  "updated_date": "2026-10-24",
+  "updated_date": "2026-10-25",
   "supersedes": null,
   "replaced_by": null,
   "source_attribution": [
@@ -22,6 +22,11 @@
       "version": "1.1.0",
       "date": "2026-10-24",
       "summary": "Exam data comes from the blueprint registry data: exam_key, blueprint name, curriculum folder and counterpart per family; any registry may declare its own family (blueprint_family, board_name, board_type) without a code change."
+    },
+    {
+      "version": "1.2.0",
+      "date": "2026-10-25",
+      "summary": "Prompt wording is family data (wording, specialty), so prompts follow the learner's or blueprint's family; ABIM internal medicine wording unchanged."
     }
   ],
   "principle": [
@@ -65,7 +70,18 @@
         "exam_key": "lka",
         "ref_field": "lka_ref"
       },
-      "legacy_concept_weight_field": "abim_weight"
+      "legacy_concept_weight_field": "abim_weight",
+      "wording": {
+        "audience": "internal medicine physicians",
+        "learner": "an internal medicine physician preparing for the ABIM examinations and practising general internal medicine",
+        "section_default": "Internal Medicine",
+        "board": "the ABIM examinations",
+        "board_exam": "the ABIM examination",
+        "certification": "the ABIM certification examination",
+        "typical_question": "a typical ABIM certification examination question",
+        "knowledge_base": "an internal medicine knowledge base"
+      },
+      "specialty": "spec.hospital_medicine"
     },
     {
       "id": "abim_im_lka",
@@ -87,7 +103,18 @@
       "registry_find": "title contains 'LKA_blueprint_registry' and title contains 'CURRENT'",
       "curriculum_folder": "LKA",
       "curriculum_folder_match": "^lka$",
-      "legacy_concept_weight_field": "lka_weight"
+      "legacy_concept_weight_field": "lka_weight",
+      "wording": {
+        "audience": "internal medicine physicians",
+        "learner": "an internal medicine physician preparing for the ABIM examinations and practising general internal medicine",
+        "section_default": "Internal Medicine",
+        "board": "the ABIM examinations",
+        "board_exam": "the ABIM examination",
+        "certification": "the ABIM certification examination",
+        "typical_question": "a typical ABIM certification examination question",
+        "knowledge_base": "an internal medicine knowledge base"
+      },
+      "specialty": "spec.hospital_medicine"
     },
     {
       "id": "abim_cardiology",
@@ -99,7 +126,8 @@
       ],
       "requires": [
         "abim|blueprint|exam"
-      ]
+      ],
+      "specialty": "spec.cardiology"
     },
     {
       "id": "abim_pulmonary",
@@ -110,7 +138,8 @@
       ],
       "requires": [
         "abim|blueprint|exam"
-      ]
+      ],
+      "specialty": "spec.pulmonology"
     },
     {
       "id": "abim_critical_care",
@@ -121,7 +150,8 @@
       ],
       "requires": [
         "abim|blueprint|exam"
-      ]
+      ],
+      "specialty": "spec.critical_care"
     },
     {
       "id": "abim_gastroenterology",
@@ -132,7 +162,8 @@
       ],
       "requires": [
         "abim|blueprint|exam"
-      ]
+      ],
+      "specialty": "spec.gastroenterology"
     },
     {
       "id": "abim_nephrology",
@@ -143,7 +174,8 @@
       ],
       "requires": [
         "abim|blueprint|exam"
-      ]
+      ],
+      "specialty": "spec.nephrology"
     },
     {
       "id": "usmle",
@@ -304,5 +336,19 @@
       "curriculum_folder",
       "specialty"
     ]
+  },
+  "wording": {
+    "note": "How generation prompts name the learner, the board and the field (wording.js). A family's own `wording` is used as written; a family without one is worded from its board_name and specialty with these templates. The default family's wording reproduces the earlier fixed ABIM internal medicine text exactly.",
+    "templates": {
+      "audience": "physicians in {field}",
+      "learner": "a physician preparing for the {board_name} and practising {field}",
+      "section_default": "{Field}",
+      "board": "the {board_name}",
+      "board_exam": "the {board_name}",
+      "certification": "the {board_name}",
+      "typical_question": "a typical {board_name} question",
+      "knowledge_base": "a medical knowledge base"
+    },
+    "field_default": "medicine"
   }
 }

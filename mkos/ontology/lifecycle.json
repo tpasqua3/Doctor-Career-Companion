@@ -2,7 +2,7 @@
   "id": "framework.lifecycle",
   "type": "Framework",
   "name": "MKOS Continuous Knowledge Lifecycle",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "status": "current",
   "created_date": "2026-10-24",
   "updated_date": "2026-10-25",
@@ -22,6 +22,11 @@
       "version": "1.1.0",
       "date": "2026-10-25",
       "summary": "Relevance is event driven: dirty flags from the write paths, recompute of only what changed, writes only for rows whose score, band or basis differ; the periodic full sweep is removed (backfill on a rules_version change, read-only audit)."
+    },
+    {
+      "version": "1.2.0",
+      "date": "2026-10-25",
+      "summary": "Step 2: lesson and curriculum penetration, lesson enrichment, content layers, the three confidence domains, coverage, gaps; every stage implemented."
     }
   ],
   "doctrine": "No knowledge asset may stop at ingestion. Every source passes through every stage below as one workflow. Every stage is deterministic (rules only, no AI).",
@@ -65,29 +70,29 @@
       "key": "lesson_penetration",
       "spec_stage": 5,
       "name": "Lesson penetration score",
-      "engine": null,
-      "implemented": false
+      "engine": "impact.js computePenetration + enrich.js",
+      "implemented": true
     },
     {
       "key": "curriculum_penetration",
       "spec_stage": 5,
       "name": "Curriculum penetration",
-      "engine": null,
-      "implemented": false
+      "engine": "impact.js computePenetration (curricula) + layers.js",
+      "implemented": true
     },
     {
       "key": "confidence",
       "spec_stage": 8,
       "name": "Confidence recalculation (evidence, relevance, lesson)",
-      "engine": null,
-      "implemented": false
+      "engine": "confidence.js",
+      "implemented": true
     },
     {
       "key": "gaps",
       "spec_stage": 10,
       "name": "Coverage and gap analysis",
-      "engine": null,
-      "implemented": false
+      "engine": "coverage.js",
+      "implemented": true
     }
   ],
   "orchestrator": {
@@ -404,5 +409,193 @@
   },
   "non_propagating_relations": [
     "classified_as"
-  ]
+  ],
+  "penetration": {
+    "rule": "For a subject (a changed knowledge object, or a source over its recommendations and what derives from them): objective score = max relevance of the subject's objects to that canonical objective; lesson score = max over the lesson's objectives (canonical objectives of the concepts it teaches, and the objectives its blueprint objective projects onto); curriculum node score = max over the objectives of the concepts it covers; board curriculum (blueprint topic) score = max over the objectives it projects onto; exam score = max over its topics of (objective score x topic priority / 100). Scores below min_score are pruned; at most max_per_kind per kind are kept (a storage ceiling, highest first).",
+    "kinds": [
+      "objective",
+      "lesson",
+      "curriculum",
+      "board_curriculum",
+      "exam"
+    ],
+    "min_score": 0.25,
+    "max_per_kind": 200,
+    "queue_batch": 3,
+    "triggers": "Computed from change events only: the relevance dirty queue records every subject whose relevance rows changed (mk_penetration_queue), the lifecycle stage computes it for a source, and impact analysis computes it for the subject of a change event. Never by scanning."
+  },
+  "enrichment": {
+    "rule": "A lesson the subject penetrates at min_penetration or more is enhanced instead of regenerated: recommendations on the concepts it teaches created after the lesson was written, the evidence and landmark trials (trial lineage) supporting them, the citation of a guideline family the lesson did not have, and validated clinical pearls created since, each recorded once (mk_enhancements) and listed with the lesson; the asset gets a new minor version (1.4.0 -> 1.5.0) with a content row in mk_asset_store. The asset's basis fingerprint is never touched.",
+    "min_penetration": 0.7,
+    "max_additions_per_lesson": 12,
+    "max_lessons_per_subject": 40,
+    "version_part": "minor",
+    "kinds": {
+      "recommendation": "New recommendation",
+      "evidence": "New evidence",
+      "trial_lineage": "Trial lineage",
+      "citation": "New citation",
+      "pearl": "New clinical pearl"
+    },
+    "absorbs": [
+      "coverage_expanded",
+      "new_guideline_family"
+    ],
+    "absorbs_note": "assets.js judge: a lesson whose only reason to regenerate is that more recommendations now cover the topic, or that a new guideline family speaks to it, is enhanced instead. Every other reason (an edition changed or superseded, a recommendation changed, flagged, unvalidated, blueprint weighting, objectives, competencies or relationships changed) still regenerates."
+  },
+  "layers": {
+    "rule": "Each knowledge object relevant to a canonical objective falls in one layer, first match: advanced (evidence objects: landmark trials and evidence deep dives; objects whose specialty differs from the objective's; high relevance with low confidence: emerging), core (relevance >= core.min_relevance and confidence >= core.min_confidence, on an exam-relevant objective or any objective when core.allow_unprojected), adjacent (relevance >= adjacent.min_relevance), frontier (the rest down to the relevance threshold). Confidence is the evidence confidence domain when computed, else the object's confidence score / 100.",
+    "core": {
+      "min_relevance": 0.85,
+      "min_confidence": 0.7,
+      "allow_unprojected": true
+    },
+    "adjacent": {
+      "min_relevance": 0.5
+    },
+    "advanced": {
+      "min_relevance": 0.25,
+      "emerging_below_confidence": 0.5
+    },
+    "frontier": {
+      "min_relevance": 0.1
+    },
+    "names": {
+      "core": "Required core",
+      "adjacent": "Adjacent knowledge",
+      "advanced": "Advanced expansion",
+      "frontier": "Frontier"
+    },
+    "top_n": 12,
+    "outline_items_per_layer": 6,
+    "batch": 20
+  },
+  "confidence": {
+    "note": "Three separate domains, 0..1, in mk_confidence. They never change mk_objects.conf or trust.",
+    "evidence": {
+      "applies_to": [
+        "Recommendation",
+        "Claim",
+        "EvidenceObject"
+      ],
+      "weights": {
+        "evidence_level": 0.4,
+        "authority": 0.3,
+        "agreement": 0.15,
+        "recency": 0.15
+      },
+      "agreement_full_at": 3,
+      "recency_half_life_years": 8,
+      "design_scores": {
+        "meta_analysis": 0.95,
+        "systematic_review": 0.9,
+        "rct": 0.9,
+        "landmark_trial": 0.9,
+        "cohort": 0.65,
+        "observational": 0.6,
+        "case_control": 0.55,
+        "case_series": 0.4,
+        "expert_opinion": 0.35,
+        "default": 0.5
+      }
+    },
+    "relevance": {
+      "weights": {
+        "strength": 0.5,
+        "paths": 0.3,
+        "exam": 0.2
+      },
+      "path_min": 0.5,
+      "paths_full_at": 8
+    },
+    "lesson": {
+      "weights": {
+        "sources": 0.2,
+        "coverage": 0.25,
+        "evidence": 0.2,
+        "objectives": 0.15,
+        "recency": 0.2
+      },
+      "sources_full_at": 4,
+      "recency_half_life_days": 365
+    },
+    "batch": 40,
+    "precision": 2,
+    "precision_note": "Scores and factors are rounded to 2 decimals, so the rotating pass rewrites a row only when its rounded value moves."
+  },
+  "coverage": {
+    "dimensions": [
+      "specialty",
+      "objective",
+      "exam",
+      "evidence",
+      "source",
+      "lesson",
+      "penetration"
+    ],
+    "supporting_min": 0.7,
+    "evidence_min": 0.5,
+    "keep_days": 30,
+    "utc_hour": 5,
+    "knowledge_penetration_pct": "100 x current knowledge objects (recommendations, claims, evidence, educational objects) related at supporting_min or more to an objective that a current shared lesson or a curriculum node reaches / all current knowledge objects. Sent to USAP as knowledge_penetration_pct.",
+    "runs_per_day_max": 4,
+    "schedule": "Once a day after utc_hour, and again (at most runs_per_day_max runs a day in all) while sources wait at the gaps stage."
+  },
+  "gaps": {
+    "rules": [
+      {
+        "kind": "objective",
+        "when": "a canonical objective with no knowledge object at coverage.supporting_min",
+        "action": "recommended_acquisition",
+        "severity": "its highest exam weight (topic priority / 100), or 0.3 off any blueprint"
+      },
+      {
+        "kind": "exam",
+        "when": "a current blueprint objective that projects onto no canonical objective with supporting knowledge",
+        "action": "recommended_acquisition",
+        "severity": "topic priority / 100"
+      },
+      {
+        "kind": "lesson",
+        "when": "an exam-relevant canonical objective with supporting knowledge and no current shared lesson",
+        "action": "recommended_lesson",
+        "severity": "its exam weight"
+      },
+      {
+        "kind": "evidence",
+        "when": "a canonical objective with recommendations at supporting_min and no evidence object at coverage.evidence_min",
+        "action": "recommended_trial",
+        "severity": "0.5 + exam weight / 2"
+      },
+      {
+        "kind": "specialty",
+        "when": "a specialty of the taxonomy whose concept coverage is below specialty_min_pct, or with no current source",
+        "action": "recommended_acquisition",
+        "severity": "1 - coverage"
+      },
+      {
+        "kind": "update",
+        "when": "a current source past its review date, a current guideline older than stale_years, or a superseded source still cited by a current lesson",
+        "action": "recommended_update",
+        "severity": "0.6 (review date), 0.4 (age), 0.8 (superseded and cited)"
+      },
+      {
+        "kind": "confidence",
+        "when": "a current shared lesson whose lesson confidence is below lesson_confidence_min",
+        "action": "recommended_update",
+        "severity": "1 - lesson confidence"
+      }
+    ],
+    "specialty_min_pct": 20,
+    "stale_years": 8,
+    "lesson_confidence_min": 0.5,
+    "max_per_kind": 300,
+    "acquisition_class": "clinical_practice_guideline",
+    "durable": false,
+    "durable_note": "Derived: every gap is a deterministic function of objects, edges, blueprints, coverage and confidence, recomputed daily. Owners act by adding or replacing a source in the library, which closes the gap on the next run; no owner state is kept on a gap, so nothing needs mirroring or restoring."
+  },
+  "derived": {
+    "pass_hours": 168,
+    "note": "A rotating write-on-diff pass over layers and confidence (so recency ages) every pass_hours; changes reach them sooner through the penetration queue and the lifecycle stages."
+  }
 }

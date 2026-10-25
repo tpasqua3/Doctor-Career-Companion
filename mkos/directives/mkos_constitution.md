@@ -73,7 +73,9 @@ Every source entering MKOS completes one workflow. The stages are not independen
 | 8 | `confidence` | Confidence recalculation | Evidence confidence, relevance confidence and lesson confidence are recalculated as separate domains. |
 | 9 | `gaps` | Coverage and gap analysis | The coverage and gap maps include it. |
 
-A stage whose engine does not exist yet is recorded as `pending_engine`. It is never skipped. Storage is not success. Utilization
+Every stage has its engine (step 1, 2026-10-24: stages 1-5; step 2, 2026-10-25: stages 6-9 in `impact.js`, `enrich.js`, `layers.js`,
+`confidence.js` and `coverage.js`), so a source that passes them all is `complete`. A stage added later whose engine does not exist yet
+is recorded as `pending_engine`. It is never skipped. Storage is not success. Utilization
 is success: knowledge must be extracted, mapped, linked, used and audited.
 
 ## Article 9. No binary mapping
@@ -117,6 +119,9 @@ core, adjacent knowledge, advanced expansion and a frontier layer, so board prep
 
 - Drive is the system of record. Durable lifecycle state is mirrored and restored (`registries/lifecycle.json`). Derived state (the
   relevance graph) is rebuilt from objects, edges and the rule table.
+- Derived state is updated only when reality changes: write paths mark what changed (relevance dirty flags), engines recompute only
+  that and write only rows whose values differ. There is no periodic full rewrite.
+- Lessons are enhanced, never regenerated in bulk; an asset's basis fingerprint changes only when it is regenerated.
 - New scores live in new tables or volatile fields. They are never written into versioned object bodies, so no mass rewrite or
   regeneration happens.
 - Nothing extracted from the library enters the repository. The repository holds code, the framework and synthetic test fixtures only.

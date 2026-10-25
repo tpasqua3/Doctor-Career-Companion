@@ -14,6 +14,8 @@
 //
 // The writing prompts below mirror genLesson(), auditLesson(), genQuestions() and genCards() in app/companion.html: a lesson written on
 // the server reads exactly like one written in the page. Change them together.
+import { wordingFor, defaultFamily, learnerFamily, familyOfBlueprint } from './wording.js';
+import { layerPlan, layeredOutline } from './layers.js';
 import { FRAMEWORK } from './framework.js';
 import { J, nowIso, getSetting, setSetting, audit } from './db.js';
 import { getObject } from './kb.js';
@@ -78,17 +80,18 @@ function reviewPrompt(sp, st, g) {
 
 /* ---------- Server-built prompts for objective seeding (no page involved). They follow rules() in the app with a neutral learner,
    because a seeded lesson is shared by every account. ---------- */
-function seedRules(bt, name, specialties) {
-  return `You are the teaching engine of a continuing medical education app for internal medicine physicians.
-Learner: an internal medicine physician preparing for the ABIM examinations and practising general internal medicine.
+// W: the family's prompt wording (wording.js); the default family (ABIM internal medicine) gives exactly the text used before.
+export function seedRules(bt, name, specialties, W = wordingFor(defaultFamily())) {
+  return `You are the teaching engine of a continuing medical education app for ${W.audience}.
+Learner: ${W.learner}.
 Practice setting to emphasize: Mixed.
-Section: ${bt.category || 'Internal Medicine'} — ${bt.subcategory || ''}. Topic: ${name}.
+Section: ${bt.category || W.section_default} — ${bt.subcategory || ''}. Topic: ${name}.
 Rules:
 - Attending level. No basic-science padding. Favor the decisions that change management and the points examiners test.
 - Base every clinical statement on the current guidelines of the major societies${specialties ? ' (for this section: ' + specialties + ')' : ''} and on the MKOS knowledge supplied below. Name the guideline body and year when you state a recommendation.
 - Recency: for anything time-sensitive (guideline recommendations, treatment thresholds and targets, drug choices and approvals, screening intervals) the most recent authoritative source wins; where a newer guideline you are confident of differs from an older text, follow the newer guidance and say that the older text has been superseded.
 - Order of authority: the current guideline or statement of the governing professional society; then landmark trials and major secondary sources. Never fill a gap with a guess.
-- This is board preparation for the ABIM examinations, and the published blueprint decides what matters. Blueprint objective: "${name}" under ${bt.category || ''}${bt.subcategory ? ', ' + bt.subcategory : ''}${bt.est_pct ? ' (about ' + Math.round(bt.est_pct * 100) / 100 + '% of the exam)' : ''}${bt.importance ? ', importance ' + bt.importance : ''}${bt.low_frequency ? '; the blueprint marks it low frequency' : ''}. Most examination questions are set in outpatient encounters; for conditions usually managed by other specialists, test recognition rather than management.
+- This is board preparation for ${W.board}, and the published blueprint decides what matters. Blueprint objective: "${name}" under ${bt.category || ''}${bt.subcategory ? ', ' + bt.subcategory : ''}${bt.est_pct ? ' (about ' + Math.round(bt.est_pct * 100) / 100 + '% of the exam)' : ''}${bt.importance ? ', importance ' + bt.importance : ''}${bt.low_frequency ? '; the blueprint marks it low frequency' : ''}. Most examination questions are set in outpatient encounters; for conditions usually managed by other specialists, test recognition rather than management.
 - Never invent a citation, trial, statistic, dose or threshold. Do not state a number you are unsure of as fact. Wherever the evidence is weak, societies disagree, guidance changed recently, or you are not certain your information is current, flag it: say so in plain words at that point in the text, and fill the flag field.
 - Where societies disagree, say so and name both positions.`;
 }
@@ -98,10 +101,12 @@ It will be read aloud by a speech voice while the physician drives or rests afte
 Shape: open with a two or three sentence patient case that makes the topic matter; teach the concept and the reasoning; come back to the case and work through the decision; finish with what to do differently in clinic. Do not repeat a point in different words. Go deeper into the reasoning, the exceptions, and the evidence behind the recommendation.
 Tables: whenever a segment teaches something graded or laid out in levels (a staging or severity classification with numeric cut-offs, a risk score, diagnostic criteria, dose steps, screening intervals by group, or a side-by-side comparison of options), give that segment a table with the levels as rows. The table is a visual aid shown on screen and is never read aloud, so the spoken text must still carry the same content in fluent sentences for a listener who is not looking. Put a value in a table only if you are sure of it; if a cut-off is uncertain or differs between guidelines, say so in the flag. Use null when a segment has nothing tabular. Set "figure" to null in every segment.`;
 }
-const QSPEC = `Each question: a clinical vignette (age, setting, history, examination, relevant results with units), a clear lead-in, and five options A to E that are parallel and plausible, with exactly one best answer under current guidelines. Test the next step in management, the diagnosis, or the interpretation of a result, at the difficulty of the ABIM certification examination. Do not test trivia. Vary which letter is correct. The explanation says why the answer is right, naming the guideline, then gives one line on why each other option is wrong. Write original questions; never reuse one from a question bank.`;
+export const qspec = (W = wordingFor(defaultFamily())) => `Each question: a clinical vignette (age, setting, history, examination, relevant results with units), a clear lead-in, and five options A to E that are parallel and plausible, with exactly one best answer under current guidelines. Test the next step in management, the diagnosis, or the interpretation of a result, at the difficulty of ${W.certification}. Do not test trivia. Vary which letter is correct. The explanation says why the answer is right, naming the guideline, then gives one line on why each other option is wrong. Write original questions; never reuse one from a question bank.`;
+const QSPEC = qspec();
 const QJSON = `{"stem":"","options":["","","","",""],"answer":"A","explanation":"","objective":"one-sentence educational objective","caveat":"empty unless the keyed answer rests on guidance that is uncertain, disputed or recently changed; then one sentence saying so","sources":["Organization. Guideline or statement title. Year."]}`;
 const CSPEC = `Each card tests one high-yield fact: a threshold, a first-line choice, a next step, a classic association, a screening interval, a contraindication, a coding rule or a technique step. "front" is a short prompt or question on one line. "back" is the answer in one to three short sentences with the reason or the guideline behind it. Write both to be read aloud: plain words, no symbols, abbreviations spelled out.`;
-const BOARD_LEVEL = 'Difficulty for this set: level 3 of 5, board level. The difficulty of a typical ABIM certification examination question. Hold every question in the set to this level. Difficulty comes from clinical reasoning, never from ambiguity, trick wording or rare facts.';
+export const boardLevel = (W = wordingFor(defaultFamily())) => `Difficulty for this set: level 3 of 5, board level. The difficulty of ${W.typical_question}. Hold every question in the set to this level. Difficulty comes from clinical reasoning, never from ambiguity, trick wording or rare facts.`;
+const BOARD_LEVEL = boardLevel();
 
 /* A question as the app stores it in an asset (qOut in the page). */
 function qFromAI(q) {
@@ -228,6 +233,8 @@ async function ask(deps, job, input, aiJob, { strict = true, avoid = '', gov = '
 /* One step: one AI call (or the final store). Progress is saved after every step, so nothing is lost when a run ends. */
 async function step(env, deps, job) {
   const sp = J(job.spec, {}) || {}; let st = J(job.state, {}) || {};
+  // The prompt wording follows the job's blueprint family, else the learner's selected family, else the default (wording.js).
+  const W = wordingFor(sp.family || await learnerFamily(env, job.user_id).catch(() => null) || defaultFamily());
   if (sp.seed && !sp.head) { Object.assign(sp, await seedSpec(env, deps, job, sp)); await save(env, job.id, { spec: sp }); }
   if (!st.ph) {
     const words = Number(sp.words) || 1300, N = words <= 1900 ? 1 : Math.ceil(words / LPART);
@@ -285,7 +292,7 @@ async function step(env, deps, job) {
   if (st.ph === 'qwrite') {
     const n = sp.checks == null ? 2 : Number(sp.checks); if (!n) { st.ph = 'cwrite'; return put(); }
     const basis = `These questions follow a lesson the physician has studied: ${lessonGist(L())}\nTest whether what that lesson taught can be applied to new patients. Every question must rest on something the lesson covered, in a case the lesson did not use.`;
-    const r = await ask(deps, job, `${sp.qhead || sp.rhead}\n\nTASK: Write ${n} board-style questions on this topic. ${QSPEC}\n${basis}\n${sp.qlevel || BOARD_LEVEL}\n\nReply with JSON only: {"questions":[${QJSON}]}`, 'questions', { gov: 'gen_questions_write' });
+    const r = await ask(deps, job, `${sp.qhead || sp.rhead}\n\nTASK: Write ${n} board-style questions on this topic. ${qspec(W)}\n${basis}\n${sp.qlevel || boardLevel(W)}\n\nReply with JSON only: {"questions":[${QJSON}]}`, 'questions', { gov: 'gen_questions_write' });
     const x = r.ok ? parseJ(r.text) : null; if (!x && r.cap) return miss(r, 'the check questions');
     st.checks = A(x && x.questions).map(qFromAI).filter(Boolean).slice(0, n); st.ph = st.checks.length && (sp.audit || sp.seed) ? 'qreview' : 'cwrite'; return put();
   }
@@ -298,7 +305,7 @@ async function step(env, deps, job) {
   if (st.ph === 'cwrite') {
     const n = sp.cards == null ? 4 : Number(sp.cards); if (!n) { st.ph = 'store'; return put(); }
     const basis = `These cards follow a lesson the physician has just studied: ${lessonGist(L())}\nTake every card from what that lesson taught, on its highest-yield facts, and keep each one consistent with it.`;
-    const r = await ask(deps, job, `${sp.qhead || sp.rhead}\n\nTASK: Write ${n} flashcards on this topic. ${CSPEC}\n${basis}\n Cover different facts across the topic, favoring what is tested on the ABIM examination and what changes management in clinic.\n\nReply with JSON only: {"cards":[{"front":"","back":"","source":"Organization and year, if a guideline backs it","caveat":"empty unless the answer is uncertain, disputed or recently changed; then one sentence"}]}`, 'cards', { gov: 'gen_cards_write' });
+    const r = await ask(deps, job, `${sp.qhead || sp.rhead}\n\nTASK: Write ${n} flashcards on this topic. ${CSPEC}\n${basis}\n Cover different facts across the topic, favoring what is tested on ${W.board_exam} and what changes management in clinic.\n\nReply with JSON only: {"cards":[{"front":"","back":"","source":"Organization and year, if a guideline backs it","caveat":"empty unless the answer is uncertain, disputed or recently changed; then one sentence"}]}`, 'cards', { gov: 'gen_cards_write' });
     const x = r.ok ? parseJ(r.text) : null; if (!x && r.cap) return miss(r, 'the flashcards');
     st.cards = A(x && x.cards).filter((c) => c && c.front && c.back).slice(0, n).map((c) => ({ f: String(c.front), b: String(c.back), src: String(c.source || ''), cav: String(c.caveat || '').trim(), ref: '', fig: null }));
     st.ph = st.cards.length ? 'creview' : 'store'; return put();
@@ -356,9 +363,12 @@ async function seedSpec(env, deps, job, sp) {
   const owner = { id: job.user_id, email: '' };
   const ctx = await topicContext(env, owner, sp.tid, { name: sp.name }).catch(() => null);
   const block = ctx && ctx.prompt_block_shared != null ? '\n\n' + ctx.prompt_block_shared : ctx && ctx.prompt_block ? '\n\n' + ctx.prompt_block : '';
-  const rules = seedRules(bt, sp.name, (ctx && ctx.guidelines || []).map((g) => g.current).filter(Boolean).slice(0, 3).join('; '));
+  const family = await familyOfBlueprint(env, bt.blueprint).catch(() => null) || defaultFamily();
+  const rules = seedRules(bt, sp.name, (ctx && ctx.guidelines || []).map((g) => g.current).filter(Boolean).slice(0, 3).join('; '), wordingFor(family));
+  // The objective's content layers (layers.js) as a layered outline: structure only; nothing is added when no plan exists yet.
+  const outline = layeredOutline(await layerPlan(env, { objectives: (await env.DB.prepare("SELECT dst FROM mk_edges WHERE src = ? AND rel = 'projects_objective' AND status = 'current'").bind(sp.objective || '').all()).results.map((r) => r.dst) }).catch(() => null));
   const words = Number(sp.words) || QP().seed.length_words;
-  return { head: lessonHead(rules, block, words, '', { kindName: 'foundational (first-pass, coverage)', basis: `This is the foundational first-pass lesson for the blueprint objective "${sp.name}". Teach the objective completely enough to stand on its own: the diagnosis and the management decisions the examination tests, with the reasoning. Leave advanced edge cases, rare variants and subspecialty depth for later enrichment passes; do not pad.` }),
+  return { family, head: lessonHead(rules, block + outline, words, '', { kindName: 'foundational (first-pass, coverage)', basis: `This is the foundational first-pass lesson for the blueprint objective "${sp.name}". Teach the objective completely enough to stand on its own: the diagnosis and the management decisions the examination tests, with the reasoning. Leave advanced edge cases, rare variants and subspecialty depth for later enrichment passes; do not pad.` }),
     rhead: rules + block, qhead: rules + block, words, hasRef: false, audit: true, share: true, ljob: 'lesson', blueprint_source: bt.provenance && bt.provenance[0] ? S(bt.provenance[0].note, 200) : null };
 }
 /* seed_start {limit, words, model}: queue a pass-1 lesson for every current blueprint objective that has none (CERT, plus LKA-only

@@ -36,7 +36,7 @@ licensed). The server reads the library from Drive itself.
 | `resolve.js` | Ontology protection: name -> concept (alias, variants, trigram), free-text citation -> guideline family and edition |
 | `ingest.js` | Library scanner (change detection by md5 / modified time / path), classification, source registration, guideline families and supersession, owner registry import |
 | `extract.js` | Extraction: text -> chunks -> rules first (ACC/AHA COR/LOE rows, KDIGO grades) -> AI only where needed -> recommendations, concepts, facet claims, evidence, relations |
-| `impact.js` | Automatic impact analysis and learner-state reconciliation; rescoring of affected objects only |
+| `impact.js` | Automatic impact analysis and learner-state reconciliation; rescoring of affected objects only; lesson and curriculum penetration (stage 5) |
 | `education.js` | Framework seeding, blueprint import (Blueprint, Domain, BlueprintTopic, concepts), curriculum tree with the app's own topic ids, mapping of existing lessons/questions/cards |
 | `learner.js` | Learner Intelligence: mastery, confidence, retention, calibration and priority per concept, blueprint topic, curriculum node, domain, specialty and competency; misconceptions |
 | `adaptive.js` | Adaptive curriculum (teach, review, assess, reinforce, remediate, prioritize, delay); the governed concept context package; deterministic-first routing |
@@ -55,7 +55,12 @@ licensed). The server reads the library from Drive itself.
 | `objmap.js` | Objective mapping: as many knowledge objects as possible mapped to the ABIM CERT and LKA objectives |
 | `curstore.js` | The Dynamic Board Objective Curriculum in Drive: one file per objective, by exam and discipline |
 | `lifecycle.js`, `lifecycle_state.js` | The Continuous Knowledge Lifecycle orchestrator and the per-source lifecycle record (below) |
-| `relevance.js` | The weighted relevance graph, canonical objectives and the exam projection (below) |
+| `relevance.js`, `dirty.js` | The weighted relevance graph, canonical objectives and the exam projection; the dirty-flag queue that keeps it current (below) |
+| `enrich.js` | Dynamic lesson enrichment: enhancements instead of regeneration (stage 6) |
+| `layers.js` | Lesson content weighting: required core, adjacent, advanced, frontier (stage 7) |
+| `confidence.js` | The three confidence domains: evidence, relevance, lesson (stage 8) |
+| `coverage.js` | The coverage engine and gap detection (stages 9-10) |
+| `wording.js` | Prompt wording from the learner's or blueprint's family (specialty independence) |
 | `routes.js` | `/api/mkos/<op>` and the connector tool `mkos` |
 
 The cron gives MKOS its turn in each 5-minute run in which no account records were waiting to be copied to Drive. Each run:
@@ -74,10 +79,10 @@ Files over 25 MB cannot be read by the server; split them into chapters or keep 
 
 ## Operations (`/api/mkos/<op>` or the connector tool `mkos` with `{op, args}`)
 
-Everyone: `status`, `lifecycle`, `relevance`, `exam_relevance`, `search`, `object/<id>`, `context/<concept id>`, `route?q=`, `learner`, `plan`, `refresh_me`, `framework`,
+Everyone: `status`, `lifecycle`, `relevance`, `exam_relevance`, `penetration`, `layers`, `confidence`, `coverage`, `gaps`, `enhancements`, `lesson_view`, `knowledge_map`, `specialty_proposals`, `search`, `object/<id>`, `context/<concept id>`, `route?q=`, `learner`, `plan`, `refresh_me`, `framework`,
 `app_bundle`, `topic_context`, `check_citations`, `asset_flags`, `asset_find`, `asset_put`, `asset_flag`, `asset_stats`, `blueprints`,
 `board-review`, `select_blueprint`, `pronunciation`.
-Owner: `events`, `jobs`, `audit`, `review {id, result, note}`, `edit {object}`, `set_status`, `settings {path, value}` (for example
+Owner: `specialty_review {id, result: approve | merge | reject, into}`, `events`, `jobs`, `audit`, `review {id, result, note}`, `edit {object}`, `set_status`, `settings {path, value}` (for example
 `ingestion.extraction.daily_ai_budget_default`), `rescan`, `requeue`, `tick`, `graph_validation`, `compat_registry`,
 `cutover_validate`, `cutover_retire {confirm: true}`, `cutover_rollback`, `asset_review`, the `pron_*` operations.
 
@@ -254,14 +259,17 @@ yet), `in_progress`, `blocked` (extraction failed), `pending_engine` (every buil
 objectives and exam projections, and `exam_relevance {ids, family}` shows the projection for one exam. Variable `lifecycle=off` in
 `mk_settings` pauses it.
 
-| Stage | Step 1 (built, rules only) |
+| Stage | Engine (rules only) |
 |---|---|
 | `ingested` | The source has been read, indexed or mapped by title. Its Metadata Object is computed, a refined class is applied if one exists, and `cites` edges are added. |
 | `knowledge_objects` | Counts of what it produced, once its extraction and decomposition jobs are finished. |
 | `ontology_mapped` | Its concepts carry `classified_as` edges to the eleven ConceptClass nodes (`cls.*`). |
-| `relevance_mapped` | Canonical objectives for its concepts, their relevance rows, and the rows of its own objects. |
+| `relevance_mapped` | Canonical objectives for its concepts; done once nothing it touches is still in the relevance dirty queue. |
 | `exam_projected` | Projection edges, and its recommendations' relevance on every current blueprint. |
-| `lesson_penetration`, `curriculum_penetration`, `confidence`, `gaps` | `pending_engine` (step 2: the penetration score, enrichment, lesson layers, the three confidence domains, coverage and gaps). |
+| `lesson_penetration` | `impact.js computePenetration`: the objectives, lessons, curricula, board curricula and exams it reaches, each scored; the change event's `impact` carries it. Lessons it reaches at `enrichment.min_penetration` are enhanced (`enrich.js`). |
+| `curriculum_penetration` | The curriculum nodes and blueprint topics it reaches; the content layers of the objectives it reaches are recomputed. |
+| `confidence` | Evidence and relevance confidence of its objects; lesson confidence of the lessons it reaches. |
+| `gaps` | Done once a coverage and gap run has followed its confidence stage. A source then reaches `complete`. |
 
 Global passes do the bulk for the existing corpus, and each restarts daily for what is new: concept classes, canonical objectives and
 projection edges (every run, so a new blueprint projects at once).
@@ -279,6 +287,54 @@ differ are updated (the upsert repeats the check in its `WHERE`), pairs no longe
 and the flag is cleared. `computed_v` is `relevance.rules_version`, stamped when a row last changed. Bumping `rules_version`, a restore
 (`lc_rel` is run state) or the first run marks every object once (a resumable backfill). A read-only audit pass runs every
 `relevance.dirty.audit_hours` (720) when nothing is dirty: it recomputes rows in memory, compares, and marks only what drifted.
+
+**Lesson and curriculum penetration** (stage 5, `impact.js`, `lifecycle.json penetration`). For a subject (a changed knowledge object,
+or a source over its recommendations and what derives from them): an objective's score is the subject's best relevance to it; a
+lesson's is the best over its objectives (the canonical objectives of the concepts it teaches, and those its blueprint objective
+projects onto); a curriculum node's the best over the concepts it covers; a blueprint topic's the best over the objectives it projects
+onto; an exam's the best over its topics of objective score x topic priority / 100. Below 0.25 is pruned; at most 200 per kind are
+kept. Stored in `mk_penetration`, rewritten only where a score changed. It is computed from change events, never by scanning: the
+relevance queue records each subject whose rows changed (`mk_penetration_queue`, a source aggregating its recommendations), the
+lifecycle stage computes it for a source, and `analyzeImpact` computes it for the subject of every change event (`impact.penetration`).
+Operation `penetration {id | target}`.
+
+**Dynamic lesson enrichment** (stage 6, `enrich.js`). A lesson a subject reaches at 0.7 or more gets what is new since it was written:
+recommendations on its concepts (created after it and not in its basis), the evidence and trial lineage supporting them, the citation of a
+guideline family it did not have, and validated pearls. Each is recorded once in `mk_enhancements` with the asset version it produced; the
+asset gets a new minor version (1.4.0 -> 1.5.0) and a content row in `mk_asset_store` carrying the enhancements (version history kept).
+The basis fingerprint is never touched; an `enrichment` summary on the asset lets `judge()` count what was absorbed: a new guideline
+family an enhancement cites, and recommendations added as enhancements towards `coverage_expanded`. Before regenerating for one of
+those two reasons, the asset is enriched and judged again (`judgeLesson`). Every other reason (edition changed or superseded, a
+recommendation changed, flagged, unvalidated, blueprint weighting, objectives, competencies or relationships) still regenerates. Nothing
+is ever regenerated in bulk. Operations `enhancements {asset}`, `lesson_view {asset}`.
+
+**Lesson content weighting** (stage 7, `layers.js`). Per canonical objective, each related object falls in one layer, first match:
+advanced (evidence objects, landmark trials; objects of another specialty; high relevance with confidence below 0.5), core (relevance
+0.85+, confidence 0.7+), adjacent (0.5+), frontier (down to 0.1). Plans are in `mk_layers` (written on change). Seeded lesson prompts
+get the plan as a layered outline appended to their MKOS block (structure only; with no plan the prompt is exactly as before).
+Operation `layers {asset | objective}`.
+
+**Confidence engine** (stage 8, `confidence.js`). Three domains in `mk_confidence`, 0..1 to two decimals with their factors, written on
+change: evidence (evidence level or study design 0.4, source class authority 0.3, agreement of distinct current sources on the same
+concepts 0.15, recency 0.15), relevance (strongest relevance 0.5, strong paths 0.3, on an exam 0.2), lesson (source count 0.2,
+coverage of current recommendations 0.25, evidence support 0.2, objective support 0.15, update recency 0.2). `mk_objects.conf` and
+`trust` keep their meaning. Operation `confidence {id}`.
+
+**Coverage and gaps** (stages 9-10, `coverage.js`). A daily snapshot (`mk_coverage`, 30 days kept; again, at most four runs a day, while
+sources wait at the gaps stage) of specialty, objective, exam, evidence, source, lesson and knowledge-penetration coverage
+(numerator, denominator, pct). `knowledge_penetration_pct` (current knowledge objects related at 0.7+ to an objective a lesson or
+curriculum node reaches) is sent to USAP. Gap rules (`lifecycle.json gaps`): objective, exam and specialty gaps recommend an
+acquisition (guideline class, the organizations that already publish in that specialty); lesson gaps a lesson; evidence gaps the trials;
+update gaps a source past its review date, an old guideline or a superseded source still cited by lessons; confidence gaps a low lesson
+confidence. Operations `coverage`, `gaps {kind}`, `knowledge_map` (the Knowledge tab).
+
+A rotating write-on-diff pass over layers and confidence runs weekly (`derived.pass_hours`), so time-dependent factors age.
+
+**Specialty independence.** The taxonomy includes Primary Care, Pediatrics and a separate Critical Care Medicine. An unknown top-level
+library folder becomes a proposed specialty (status `modified`, `proposed`), listed with its sources and never assigned until the owner
+approves, merges or rejects it (`specialty_review`); approved folders then resolve. Generation prompts take their wording from the
+learner's or blueprint's family (`blueprints.json wording`, `wording.js`); the ABIM internal medicine families carry the earlier text, so
+their prompts are byte-identical.
 
 **Source Metadata Object.** `source_metadata` is a typed sub-object of the Source (`source.schema.json`). It holds the source
 organization, publication date, version date, review date (from the owner registry or a "reaffirmed/reviewed" title), specialty
@@ -337,10 +393,13 @@ curriculum read the family from that data, so a future exam needs only its bluep
 blueprint tables, and `learner.js` and the concept context read them there, falling back to the old fields of concepts written
 before.
 
-**Durable or derived.** Durable, so mirrored (`registries/lifecycle.json`) and restored: `mk_lifecycle`, the canonical objectives,
+**Durable or derived.** Durable, so mirrored (`registries/lifecycle.json`, `registries/enhancements.json`) and restored: `mk_lifecycle`,
+`mk_enhancements` (lesson version history, not derivable), the canonical objectives,
 the ConceptClass nodes, and the `classified_as`, `anchored_on`, `projects_objective` and `cites` edges (with the graph). Derived, so
 not mirrored and rebuilt by the backfill after a restore: `mk_relevance`, `mk_relevance_dirty` and `mk_relevance_marks` (now only the
-concept class marks). The lifecycle's cursors
+concept class marks), and `mk_penetration`, `mk_penetration_queue`, `mk_layers`, `mk_confidence`, `mk_coverage` and `mk_gaps`, rebuilt by
+their passes. Gaps are derived on purpose: each is a function of objects, edges, blueprints, coverage and confidence; the owner acts by
+adding or replacing a source, which closes the gap on the next run, and no owner state is kept on a gap. The lifecycle's cursors
 (`lc_*` settings) are run state.
 
 ## Testing locally

@@ -15,6 +15,11 @@ import { sourceClass } from './scoring.js';
 import { refineClass, refines, orgsOf } from './ingest.js';
 import { LC, STAGES, readRecord, writeRecord, freshStages, enterLifecycle } from './lifecycle_state.js';
 import { RULES_V, objectiveOf, objectiveSet, ensureProjectionEdges, ensureView, marked, mark, examProjection, processDirty, backfillStep, auditStep, dirtyCount } from './relevance.js';
+import { computePenetration } from './impact.js';
+import { enrichFromPenetration } from './enrich.js';
+import { computeLayers } from './layers.js';
+import { computeObjectConfidence, computeLessonConfidence } from './confidence.js';
+import { coverageAndGaps } from './coverage.js';
 
 const O = LC.orchestrator, M = LC.metadata, OBJ = LC.objectives, CLASSES = LC.concept_classes;
 const CLASS_V = 'class' + LC.version, META_V = String(M.version);
@@ -72,6 +77,18 @@ export async function maybeReclassify(env, src) {
 
 /* ---------- Stage 2: the eleven mappable classes as classified_as edges to ConceptClass nodes ---------- */
 export const classId = (key) => 'cls.' + key;
+// Taxonomy specialties added after the store was seeded (specialties.json versions) become Specialty objects; unchanged ones are no-ops.
+export async function seedSpecialties(env) {
+  const SP = FRAMEWORK.frameworks.specialties, v = 'spec' + SP.version;
+  if ((await getSetting(env, 'lc_spec')) === v) return 0;
+  let n = 0;
+  for (const s of SP.specialties) { const cur = await getObject(env, s.id);
+    const r = await putObject(env, { ...(cur || {}), ...s, type: 'Specialty', status: s.status || 'current', governance_status: 'approved',
+      provenance: (cur && cur.provenance && cur.provenance.length) ? cur.provenance : [{ source_id: 'src.framework', method: 'derived', at: nowIso(), note: 'mkos/ontology/specialties.json v' + SP.version }] }, { actor: 'lifecycle', summary: 'specialty taxonomy v' + SP.version, audited: false });
+    if (r.changed) n++; }
+  await setSetting(env, 'lc_spec', v);
+  return n;
+}
 export async function seedClasses(env) {
   if ((await getSetting(env, 'lc_classes')) === CLASS_V) return 0;
   let n = 0;
@@ -228,6 +245,54 @@ export async function advanceSource(env, sid, ctx) {
       exams[b.blueprint_family] = { recommendations: p.length, max: p.length ? Math.max(...p.map((x) => x.relevance)) : 0, mean: p.length ? Math.round(10000 * p.reduce((a, x) => a + x.relevance, 0) / p.length) / 10000 : 0 }; }
     S.exam_projected = done({ exams, recommendations: recs.length }, src.version); await save(); return 'advanced';
   }
+  const room = ctx.room || (() => true);
+  // 6. Lesson penetration: what the source reaches (objectives, lessons, curricula, exams, with scores), then the lessons it penetrates
+  // strongly are enhanced, never regenerated (enrich.js). The change event carries the penetration as its impact.
+  if (S.lesson_penetration.state !== 'done') {
+    const st = S.lesson_penetration;
+    if (!st.summary) {
+      const p = await computePenetration(env, sid);
+      st.state = 'pending'; st.summary = { counts: p.summary.counts, exams: p.summary.exams, top: p.summary.top }; st.at = nowIso();
+      await env.DB.prepare('DELETE FROM mk_penetration_queue WHERE subject_id = ?').bind(sid).run();
+      await env.DB.prepare("UPDATE mk_events SET impact = ?, stage = CASE WHEN stage = 'created' THEN 'impact_determined' ELSE stage END, updated = ? WHERE subject = ? AND kind IN ('source_added','source_modified') AND impact IS NULL")
+        .bind(JSON.stringify({ penetration: p.summary }).slice(0, 60000), nowIso(), sid).run();
+      await save(); return 'continues';
+    }
+    const prog = st.enrich || (st.enrich = {});
+    const r = await enrichFromPenetration(env, sid, { prog, room });
+    st.enriched = (st.enriched || 0) + r.enriched; st.added = (st.added || 0) + r.added;
+    if (!r.finished) { await save(); return 'continues'; }
+    S.lesson_penetration = done({ ...st.summary, lessons_enhanced: st.enriched, enhancements: st.added }, src.version); await save(); return 'advanced';
+  }
+  // 7. Curriculum penetration: the curriculum nodes and board curriculum (blueprint topics) it reaches, and the content layers of the
+  // objectives it reaches are brought up to date (the Drive board curriculum follows by content hash, curstore.js).
+  if (S.curriculum_penetration.state !== 'done') {
+    const st = S.curriculum_penetration, B = Number(LC.layers.batch) || 20;
+    const obs = (await env.DB.prepare("SELECT target_id FROM mk_penetration WHERE subject_id = ? AND target_kind = 'objective' ORDER BY score DESC, target_id LIMIT 200").bind(sid).all()).results.map((r) => r.target_id);
+    const pos = Number(st.pos) || 0;
+    if (pos < obs.length) { await computeLayers(env, obs.slice(pos, pos + B)); S.curriculum_penetration = { state: 'pending', pos: pos + B, at: nowIso() }; await save(); return 'continues'; }
+    const c = Object.fromEntries((await env.DB.prepare("SELECT target_kind AS k, COUNT(*) AS n, MAX(score) AS mx FROM mk_penetration WHERE subject_id = ? AND target_kind IN ('curriculum','board_curriculum') GROUP BY target_kind").bind(sid).all()).results.map((r) => [r.k, { n: r.n, max: r.mx }]));
+    S.curriculum_penetration = done({ ...c, objectives_layered: obs.length }, src.version); await save(); return 'advanced';
+  }
+  // 8. Confidence: the evidence and relevance domains of its objects, and the lesson domain of the lessons it reaches.
+  if (S.confidence.state !== 'done') {
+    const st = S.confidence, B = Number(LC.confidence.batch) || 40;
+    const ids = (await env.DB.prepare(`SELECT src AS id FROM mk_edges WHERE dst = ?1 AND rel IN ('derived_from','part_of') AND src NOT LIKE 'sec.%'
+      UNION SELECT c.src FROM mk_edges d JOIN mk_edges c ON c.dst = d.src AND c.rel = 'derived_from' WHERE d.dst = ?1 AND d.rel = 'derived_from' AND d.src LIKE 'rec.%' ORDER BY 1 LIMIT 4000`).bind(sid).all()).results.map((r) => r.id);
+    const pos = Number(st.pos) || 0;
+    if (pos < ids.length) { await computeObjectConfidence(env, ids.slice(pos, pos + B)); S.confidence = { state: 'pending', pos: pos + B, at: nowIso() }; await save(); return 'continues'; }
+    const lessons = (await env.DB.prepare("SELECT target_id FROM mk_penetration WHERE subject_id = ? AND target_kind = 'lesson' ORDER BY score DESC LIMIT 40").bind(sid).all()).results.map((r) => r.target_id);
+    if (lessons.length) await computeLessonConfidence(env, lessons);
+    const m = (await env.DB.prepare(`SELECT domain, COUNT(*) AS n, AVG(score) AS a FROM mk_confidence WHERE object_id IN (SELECT value FROM json_each(?)) GROUP BY domain`).bind(JSON.stringify(ids.slice(0, 2000))).all()).results;
+    S.confidence = done({ objects: ids.length, lessons: lessons.length, ...Object.fromEntries(m.map((r) => [r.domain, { n: r.n, mean: Math.round(r.a * 1000) / 1000 }])) }, src.version); await save(); return 'advanced';
+  }
+  // 9. Gaps: complete once a coverage and gap run has taken this source into account (the run is scheduled when sources wait here).
+  if (S.gaps.state !== 'done') {
+    const cov = J(await getSetting(env, 'lc_cov'), {}) || {};
+    if (!cov.at || cov.at < (S.confidence.at || '')) { ctx.coverageWanted = true; return 'waiting'; }
+    const g = (await env.DB.prepare("SELECT kind, COUNT(*) AS n FROM mk_gaps WHERE status = 'open' AND (key = ? OR json_extract(action_json, '$.source') = ?) GROUP BY kind").bind(sid, sid).all()).results;
+    S.gaps = done({ coverage_day: cov.day, gaps_for_source: Object.fromEntries(g.map((r) => [r.kind, r.n])) }, src.version); await save(); return 'advanced';
+  }
   return 'finished';
 }
 
@@ -238,6 +303,7 @@ export async function lifecycleStep(env, deps, { meter = null, cap = Infinity } 
   const out = { entered: 0, advanced: 0, classes: 0, objectives: 0, relevance: 0 };
   await ensureView(env);
   await seedClasses(env);
+  await seedSpecialties(env);
   // Every source has a record: existing sources enter once (new and changed ones enter from the scanner, ingest.js).
   const fresh = JSON.stringify({ started: nowIso(), event: 'backfill', stages: freshStages(), history: [] }), at = nowIso();
   const ins = await env.DB.prepare(`INSERT OR IGNORE INTO mk_lifecycle (source_id, stage, stages_json, status, source_v, cycle, created_at, updated_at)
@@ -248,16 +314,17 @@ export async function lifecycleStep(env, deps, { meter = null, cap = Infinity } 
   // a rules-version change mark everything once (backfill); a store built by the earlier sweep keeps its rows and gets a read-only audit.
   const saveRel = () => setSetting(env, 'lc_rel', JSON.stringify(rel));
   if (rel.mode !== 'dirty') {
-    const migrated = rel.v === RULES_V && rel.sweep;
+    // Only a finished sweep left complete rows to audit; anything else (production's first sweep never finished) is backfilled.
+    const migrated = rel.v === RULES_V && rel.sweep && rel.finished && rel.phase === 'idle';
     for (const k of ['sweep', 'cursor', 'phase', 'finished']) delete rel[k];
     Object.assign(rel, { mode: 'dirty', v: RULES_V, started: nowIso() }, migrated ? { audit: { phase: 'concepts', started: nowIso() } } : { backfill: { cursor: '', started: nowIso() } });
     await saveRel();
   } else if (rel.v !== RULES_V) { rel.v = RULES_V; rel.backfill = { cursor: '', started: nowIso(), reason: 'rules_version' }; delete rel.audit; await saveRel(); }
-  const ctx = { objectives: await objectiveSet(env), objectivesReady: !!obj.passes, concepts: {}, projected: false };
+  const ctx = { objectives: await objectiveSet(env), objectivesReady: !!obj.passes, concepts: {}, projected: false, room: () => room() };
   // 1. Sources, round robin.
   const cur = (await getSetting(env, 'lc_src')) || '';
-  let list = (await env.DB.prepare("SELECT source_id FROM mk_lifecycle WHERE status IN ('waiting','in_progress','blocked') AND source_id > ? ORDER BY source_id LIMIT ?").bind(cur, O.sources_per_run).all()).results.map((r) => r.source_id);
-  if (list.length < O.sources_per_run) list = [...list, ...(await env.DB.prepare("SELECT source_id FROM mk_lifecycle WHERE status IN ('waiting','in_progress','blocked') AND source_id <= ? ORDER BY source_id LIMIT ?").bind(cur, O.sources_per_run - list.length).all()).results.map((r) => r.source_id)];
+  let list = (await env.DB.prepare("SELECT source_id FROM mk_lifecycle WHERE status IN ('waiting','in_progress','blocked','pending_engine') AND source_id > ? ORDER BY source_id LIMIT ?").bind(cur, O.sources_per_run).all()).results.map((r) => r.source_id);
+  if (list.length < O.sources_per_run) list = [...list, ...(await env.DB.prepare("SELECT source_id FROM mk_lifecycle WHERE status IN ('waiting','in_progress','blocked','pending_engine') AND source_id <= ? ORDER BY source_id LIMIT ?").bind(cur, O.sources_per_run - list.length).all()).results.map((r) => r.source_id)];
   for (const sid of [...new Set(list)]) {
     if (!room()) break;
     for (let k = 0; k < STAGES.length && room(); k++) { const r = await advanceSource(env, sid, ctx); if (r === 'advanced') { out.advanced++; continue; } break; }
@@ -307,6 +374,58 @@ export async function lifecycleStep(env, deps, { meter = null, cap = Infinity } 
           if (await auditStep(env, rel.audit, ctx.objectives, () => room(40))) rel.audit.finished = nowIso();
           await saveRel();
         }
+      }
+    }
+  }
+  // 6. Penetration from change events: subjects whose relevance rows just changed (the dirty queue recorded them). A source still in
+  // its own lifecycle is left to its stages; anything else gets its penetration, lesson enhancements, confidence and layers now.
+  if (room(40)) {
+    const PQ = Number(LC.penetration.queue_batch) || 3;
+    const subs = (await env.DB.prepare('SELECT subject_id FROM mk_penetration_queue ORDER BY marked_at LIMIT ?').bind(PQ).all()).results.map((r) => r.subject_id);
+    for (const sub of subs) {
+      if (!room(40)) break;
+      const rec = await env.DB.prepare('SELECT stages_json FROM mk_lifecycle WHERE source_id = ?').bind(sub).first();
+      const inStage = rec && ((J(rec.stages_json, {}) || {}).stages || {}).lesson_penetration?.state !== 'done';
+      if (!inStage) {
+        const p = await computePenetration(env, sub);
+        await enrichFromPenetration(env, sub, { room: () => room(40) });
+        if (!rec) await computeObjectConfidence(env, [sub]);
+        const obs = (p.rows || []).filter((r) => r.target_kind === 'objective').slice(0, Number(LC.layers.batch) || 20).map((r) => r.target_id);
+        if (obs.length) await computeLayers(env, obs);
+        const les = (p.rows || []).filter((r) => r.target_kind === 'lesson').slice(0, 10).map((r) => r.target_id);
+        if (les.length) await computeLessonConfidence(env, les);
+        out.penetration = (out.penetration || 0) + 1;
+      }
+      await env.DB.prepare('DELETE FROM mk_penetration_queue WHERE subject_id = ?').bind(sub).run();
+    }
+  }
+  // 7. Coverage and gaps: daily, and again (at most every coverage.refresh_hours) while sources wait at the gaps stage.
+  if (room(60)) {
+    const cov = J(await getSetting(env, 'lc_cov'), {}) || {}, hour = new Date().getUTCHours();
+    const daily = cov.day !== day && hour >= (Number(LC.coverage.utc_hour) || 0);
+    const runs = cov.day === day ? Number(cov.runs) || 0 : 0;
+    const wanted = ctx.coverageWanted && runs < (Number(LC.coverage.runs_per_day_max) || 4);
+    if (!cov.at || daily || wanted) {
+      const r = await coverageAndGaps(env);
+      await setSetting(env, 'lc_cov', JSON.stringify({ day: r.day, at: nowIso(), runs: (r.day === cov.day ? runs : 0) + 1, gaps: r.gaps, opened: r.opened, resolved: r.resolved, writes: r.coverage_writes + r.writes }));
+      out.coverage = r.day;
+    }
+  }
+  // 8. A rotating write-on-diff pass over layers and confidence, so time-dependent factors age (derived.pass_hours).
+  if (room(40)) {
+    const dv = J(await getSetting(env, 'lc_derived'), {}) || {};
+    if (dv.phase && dv.phase !== 'done' || Date.now() - Date.parse(dv.finished || 0) > (Number((LC.derived || {}).pass_hours) || 168) * 3600e3) {
+      if (!dv.phase || dv.phase === 'done') Object.assign(dv, { phase: 'layers', cursor: '', started: nowIso() });
+      const B = dv.phase === 'layers' ? Number(LC.layers.batch) || 20 : Number(LC.confidence.batch) || 40;
+      while (room(40) && dv.phase !== 'done') {
+        const sql = dv.phase === 'layers' ? `SELECT id FROM mk_objects WHERE type = 'Objective' AND id LIKE '${OBJ.id_prefix}%' AND status IN ('current','modified') AND id > ? ORDER BY id LIMIT ?`
+          : dv.phase === 'confidence' ? `SELECT id FROM mk_objects WHERE type IN ('Recommendation','Claim','EvidenceObject','EducationalObject') AND status IN ('current','modified') AND id > ? ORDER BY id LIMIT ?`
+          : `SELECT id FROM mk_objects WHERE type = 'EducationalAsset' AND id LIKE 'ea.s.%' AND status = 'current' AND id > ? ORDER BY id LIMIT ?`;
+        const ids = (await env.DB.prepare(sql).bind(dv.cursor || '', B).all()).results.map((r) => r.id);
+        if (dv.phase === 'layers') await computeLayers(env, ids); else if (dv.phase === 'confidence') await computeObjectConfidence(env, ids); else await computeLessonConfidence(env, ids);
+        if (ids.length < B) { dv.cursor = ''; dv.phase = dv.phase === 'layers' ? 'confidence' : dv.phase === 'confidence' ? 'lessons' : 'done'; if (dv.phase === 'done') dv.finished = nowIso(); }
+        else dv.cursor = ids[ids.length - 1];
+        await setSetting(env, 'lc_derived', JSON.stringify(dv));
       }
     }
   }

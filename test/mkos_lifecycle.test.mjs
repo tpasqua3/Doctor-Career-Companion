@@ -116,17 +116,16 @@ test('registerFile: a classified source changes class only by a more specific ru
   assert.ok(await readRecord(env, 'src.filetrial1')); assert.equal((await readRecord(env, 'src.filetrial1')).cycle, 1);
 });
 
-test('lifecycle: a source moves through every implemented stage; later stages wait as pending_engine; metadata is volatile', async () => {
+test('lifecycle: a source moves through every stage to complete; metadata is volatile', async () => {
   const env = await fresh(); await corpus(env);
   await importBlueprint(env, abim, 'cert'); await projectBlueprint(env, 'bp.abim_im_cert.2026');
   const before = await env.DB.prepare("SELECT version, hash FROM mk_objects WHERE id = 'src.kdigo2024'").first();
   const edgesBefore = (await env.DB.prepare('SELECT src, rel, dst, conf, status FROM mk_edges ORDER BY src, rel, dst').all()).results;
   const objsBefore = (await env.DB.prepare('SELECT id, version, hash FROM mk_objects ORDER BY id').all()).results;
-  await settle(env);
+  await settle(env, 12);
   const rec = await readRecord(env, 'src.kdigo2024');
-  assert.equal(rec.status, 'pending_engine', JSON.stringify(rec.doc.stages));
-  for (const k of ['ingested', 'knowledge_objects', 'ontology_mapped', 'relevance_mapped', 'exam_projected']) assert.equal(rec.doc.stages[k].state, 'done', k);
-  for (const k of ['lesson_penetration', 'curriculum_penetration', 'confidence', 'gaps']) assert.equal(rec.doc.stages[k].state, 'pending_engine', k);
+  assert.equal(rec.status, 'complete', JSON.stringify(rec.doc.stages));
+  for (const k of ['ingested', 'knowledge_objects', 'ontology_mapped', 'relevance_mapped', 'exam_projected', 'lesson_penetration', 'curriculum_penetration', 'confidence', 'gaps']) assert.equal(rec.doc.stages[k].state, 'done', k);
   assert.equal(rec.doc.stages.knowledge_objects.detail.Recommendation, 3);
   // Stage 1 metadata: grading system, referenced trials (cites edges), dates; no new version.
   const src = await getObject(env, 'src.kdigo2024'), md = src.source_metadata;
@@ -145,8 +144,8 @@ test('lifecycle: a source moves through every implemented stage; later stages wa
   assert.ok(added.length > 0);
   for (const e of added) { assert.ok(!CLINICAL.has(e.rel), 'no new clinical edge ' + e.rel); assert.ok(['classified_as', 'anchored_on', 'projects_objective', 'cites'].includes(e.rel), e.rel); }
   const st = await lifecycleStatus(env);
-  assert.equal(st.by_status.pending_engine, 1); assert.ok(st.canonical_objectives >= 2, 'blueprint anchors (CKD, diabetes)'); assert.ok(st.relevance.rows > 0);
-  assert.deepEqual(st.pending_engine, ['lesson_penetration', 'curriculum_penetration', 'confidence', 'gaps']);
+  assert.equal(st.by_status.complete, 1); assert.ok(st.canonical_objectives >= 2, 'blueprint anchors (CKD, diabetes)'); assert.ok(st.relevance.rows > 0);
+  assert.deepEqual(st.pending_engine, []);
 });
 
 test('ontology mapping: eleven classes as classified_as edges; impact reach does not follow them', async () => {
@@ -236,15 +235,15 @@ test('lifecycle re-entry keeps history; trial tokens skip organizations', async 
   const env = await fresh(); await corpus(env); await settle(env);
   await enterLifecycle(env, 'src.kdigo2024', { event: 'source_modified' });
   const r = await readRecord(env, 'src.kdigo2024');
-  assert.equal(r.cycle, 2); assert.equal(r.status, 'waiting'); assert.equal(r.doc.stages.ingested.state, 'pending'); assert.equal(r.doc.history.length, 1); assert.equal(r.doc.history[0].status, 'pending_engine');
-  await settle(env); assert.equal((await readRecord(env, 'src.kdigo2024')).status, 'pending_engine');
+  assert.equal(r.cycle, 2); assert.equal(r.status, 'waiting'); assert.equal(r.doc.stages.ingested.state, 'pending'); assert.equal(r.doc.history.length, 1); assert.equal(r.doc.history[0].status, 'complete');
+  await settle(env, 12); assert.equal((await readRecord(env, 'src.kdigo2024')).status, 'complete');
   assert.deepEqual(trialTokens(['In the SPRINT and ACCORD trials (ACC/AHA), DAPA-HF and DAPA-HF showed']), ['DAPA-HF', 'ACCORD', 'SPRINT']);
 });
 
 test('lifecycle records are durable: mirrored to Drive and restored; the relevance graph is derived and rebuilt', async () => {
   const { mirrorStep } = await import('../src/mkos/mirror.js');
   const { restoreStep } = await import('../src/mkos/restore.js');
-  const env = await fresh(); await corpus(env); await settle(env);
+  const env = await fresh(); await corpus(env); await settle(env, 12);
   const files = new Map(); let n = 0;
   const deps = { upload: async (o) => { const id = o.id || 'f' + (++n); files.set(id, { ...o, id }); return id; }, mkdir: async (name, parent) => { const id = 'd' + (++n); files.set(id, { name, parent, id, dir: true }); return id; },
     list: async (parent) => ({ files: [...files.values()].filter((f) => f.parent === parent).map((f) => ({ id: f.id, title: f.name })) }), readMine: async (id) => JSON.parse(files.get(id).text) };
@@ -254,7 +253,7 @@ test('lifecycle records are durable: mirrored to Drive and restored; the relevan
   assert.ok(![...files.values()].some((f) => /relevance/.test(f.name || '')), 'the derived relevance graph is not written');
   const env2 = await fresh(), prog = {};
   for (let i = 0; i < 20; i++) { const r = await restoreStep(env2, deps, 'root', prog, { rowsPerStep: 5000 }); if (r.done) break; }
-  const back = await readRecord(env2, 'src.kdigo2024'); assert.equal(back.status, 'pending_engine'); assert.equal(back.doc.stages.exam_projected.state, 'done');
+  const back = await readRecord(env2, 'src.kdigo2024'); assert.equal(back.status, 'complete'); assert.equal(back.doc.stages.exam_projected.state, 'done');
   assert.equal((await env2.DB.prepare('SELECT COUNT(*) AS n FROM mk_relevance').first()).n, 0);
   await settle(env2);
   const a = (await env.DB.prepare('SELECT object_id, objective_id, score FROM mk_relevance ORDER BY object_id, objective_id').all()).results;
@@ -348,4 +347,200 @@ test('relevance: the read-only audit finds drift and marks it, without rewriting
   const prog = {}; let done = false; for (let i = 0; i < 10 && !done; i++) done = await auditStep(env, prog, await objectiveSet(env), all);
   assert.ok(done); assert.ok(prog.drifted >= 1);
   assert.deepEqual((await env.DB.prepare('SELECT object_id FROM mk_relevance_dirty').all()).results.map((r) => r.object_id), ['rec.kdigo2024.a2']);
+});
+
+/* ---------- Step 2: penetration, enrichment, layers, confidence, coverage, gaps, specialties, prompt wording ---------- */
+import { computePenetration, penetrationRows } from '../src/mkos/impact.js';
+import { enrichLesson, enhancementsOf, newAdditions } from '../src/mkos/enrich.js';
+import { judgeWhy } from '../src/mkos/assets.js';
+import { layerOf, planOf, layerPlan, layeredOutline, computeLayers } from '../src/mkos/layers.js';
+import { evidenceFactors, relevanceFactors, lessonFactors, confidenceOf } from '../src/mkos/confidence.js';
+import { coverageRows, gapRules, coverageLatest, gapsList } from '../src/mkos/coverage.js';
+import { reviewSpecialty, resetSpecialtyCache, specialtyOf } from '../src/mkos/ingest.js';
+import { seedRules, qspec, boardLevel } from '../src/mkos/genjobs.js';
+import { PEARL_PROMPT } from '../src/mkos/decompose.js';
+import { wordingFor, examKeyOf } from '../src/mkos/wording.js';
+import { createHash } from 'node:crypto';
+
+const LES = 'ea.s.les.chronic_kidney_disease.std.h';
+async function lesson(env) {
+  const basis = { families: {}, recs: { 'rec.kdigo2024.a1': 'sig1' }, priority: 90, band: 'h', cov: 2, objs: [], comps: [], rels: [] };
+  await putObject(env, { id: LES, type: 'EducationalAsset', name: 'Lesson: Chronic kidney disease', asset_kind: 'long_form_lesson', app_topic: 'neph.ckd', variant: 'std', teaches: ['c.disease.chronic_kidney_disease'],
+    store: { kind: 'mkos', user_scope: 'central', path: 'mk_asset_store', item_id: LES }, basis, review_status: 'validated', needs: [], status: 'current', governance_status: 'validated', version: '1.4.0',
+    generation: { generated_at: '2026-01-01T00:00:00Z' }, provenance: P() }, { audited: false });
+  await env.DB.batch([env.DB.prepare("INSERT INTO mk_asset_links (asset_id, user_id, path, item, object_id, rel, at) VALUES (?, 'central', 'mkos', ?, 'c.disease.chronic_kidney_disease', 'teaches', 'x')").bind(LES, LES),
+    env.DB.prepare("INSERT INTO mk_asset_store (asset_id, version, content, bytes, at) VALUES (?, '1.4.0', ?, 10, '2026-01-01T00:00:00Z')").bind(LES, JSON.stringify({ title: 'CKD', segs: [{ heading: 'One', text: 'Text' }] }))]);
+  await env.DB.prepare("UPDATE mk_objects SET created = '2026-01-01T00:00:00Z' WHERE id LIKE 'rec.kdigo2024.%' OR id = 'ev.empa_kidney'").run();
+  await addEdges(env, [edge('cn.neph.ckd', 'covers', 'c.disease.chronic_kidney_disease')]);
+}
+async function newGuideline(env) {
+  await putObject(env, { id: 'src.ada2025', type: 'Source', name: 'ADA 2025', title: 'ADA Standards of Care in Diabetes 2025', source_class: 'clinical_practice_guideline', spec_source_type: 'Guidelines', drive_file_id: 'ada', drive_path: 'Endocrinology', ingest_state: 'extracted', responsible_orgs: ['ADA'], year: 2025, guideline_family: 'gl.ada_standards_diabetes', specialty: ['spec.endocrinology'], status: 'current', governance_status: 'pending_validation', provenance: P() }, { audited: false });
+  await putObject(env, { id: 'rec.ada2025.1', type: 'Recommendation', name: 'Finerenone in CKD with T2D', statement: 'Use finerenone in CKD with type 2 diabetes and albuminuria.', source_id: 'src.ada2025', strength: 'strong', evidence_level: 'A', grading_system: 'ADA', status: 'current', governance_status: 'validated', provenance: P() }, { audited: false });
+  await addEdges(env, [edge('rec.ada2025.1', 'derived_from', 'src.ada2025', 95), edge('c.disease.chronic_kidney_disease', 'recommended_by', 'rec.ada2025.1'), edge('src.ada2025', 'covers', 'c.disease.chronic_kidney_disease', 65)]);
+  await env.DB.prepare("INSERT INTO mk_events (id, kind, subject, stage, detail, created, updated) VALUES ('evt.ada', 'source_added', 'src.ada2025', 'created', '{}', 'x', 'x')").run();
+  await enterLifecycle(env, 'src.ada2025', { event: 'source_added' });
+}
+
+test('penetration: a newly added source reaches objectives, lessons, curricula and exams with scores; the event carries it', async () => {
+  const env = await built(await fresh()); await lesson(env); await newGuideline(env); await settle(env, 14);
+  const rec = await readRecord(env, 'src.ada2025'); assert.equal(rec.status, 'complete', JSON.stringify(rec.doc.stages));
+  const pen = Object.fromEntries((await env.DB.prepare("SELECT target_kind || '|' || target_id AS k, score, band FROM mk_penetration WHERE subject_id = 'src.ada2025'").all()).results.map((r) => [r.k, r]));
+  const ckd = objectiveOf('c.disease.chronic_kidney_disease');
+  assert.equal(pen['objective|' + ckd].score, 0.95);
+  assert.equal(pen['lesson|' + LES].score, 0.95); assert.equal(pen['lesson|' + LES].band, 'directly_tested');
+  assert.equal(pen['curriculum|cn.neph.ckd'].score, 0.95);
+  assert.equal(pen['board_curriculum|bpt.cert.neph_001'].score, 0.95);
+  assert.ok(pen['exam|abim_im_cert'].score > 0 && pen['exam|abim_im_cert'].score <= 0.95);
+  assert.ok(pen['objective|' + objectiveOf('c.disease.diabetes_mellitus')].score < 0.95, 'graded, not binary');
+  const ev = await env.DB.prepare("SELECT stage, impact FROM mk_events WHERE id = 'evt.ada'").first();
+  assert.equal(ev.stage, 'impact_determined'); assert.ok(JSON.parse(ev.impact).penetration.counts.lesson >= 1);
+  // Pure rule: lesson score = max over its objectives; exam = objective score x priority / 100; below 0.25 pruned.
+  const rows = penetrationRows(new Map([['obj.c.a', 0.9], ['obj.c.b', 0.2]]), { lesson: [['L', 'obj.c.a'], ['L', 'obj.c.b'], ['M', 'obj.c.b']] }, [['t1', 'fam', 50, 'obj.c.a']]);
+  assert.deepEqual(rows.map((r) => [r.target_kind, r.target_id, r.score]), [['objective', 'obj.c.a', 0.9], ['lesson', 'L', 0.9], ['exam', 'fam', 0.45]]);
+});
+
+test('enrichment: the lesson is enhanced, not regenerated; v1.4.0 + additions = v1.5.0; basis fingerprint untouched', async () => {
+  const env = await built(await fresh()); await lesson(env);
+  const before = await getObject(env, LES);
+  await newGuideline(env); await settle(env, 14);
+  const after = await getObject(env, LES);
+  assert.equal(after.version, '1.5.0'); assert.deepEqual(after.basis, before.basis, 'basis fingerprint unchanged');
+  assert.deepEqual(after.needs, []); assert.equal(after.review_status, 'validated');
+  const en = await enhancementsOf(env, LES), kinds = en.map((x) => x.kind).sort();
+  assert.deepEqual(kinds, ['citation', 'recommendation']); assert.ok(en.every((x) => x.asset_version === '1.5.0'));
+  assert.equal(en.find((x) => x.kind === 'recommendation').object_id, 'rec.ada2025.1');
+  const store = (await env.DB.prepare('SELECT version, content FROM mk_asset_store WHERE asset_id = ? ORDER BY at').bind(LES).all()).results;
+  assert.deepEqual(store.map((r) => r.version), ['1.4.0', '1.5.0'], 'version history kept');
+  assert.equal(JSON.parse(store[1].content).enhancements.length, 2); assert.equal(JSON.parse(store[1].content).title, 'CKD');
+  // Idempotent: nothing new, no new version.
+  assert.equal((await enrichLesson(env, LES)).added, 0); assert.equal((await getObject(env, LES)).version, '1.5.0');
+  // judge: what enrichment absorbed no longer regenerates; a changed edition still does.
+  const pol = { unreviewed: false, delta: 20 }, live = { 'rec.kdigo2024.a1': await getObject(env, 'rec.kdigo2024.a1') };
+  const now = { families: { 'gl.ada_standards_diabetes': 'src.ada2025' }, cov: 6 };
+  const raw = { ...after, enrichment: undefined, basis: { ...after.basis, recs: {} } };
+  assert.deepEqual(await judgeWhy(raw, now, live, pol, false), ['guideline_changed', 'new_guideline_family']);
+  const absorbed = { ...after, basis: { ...after.basis, recs: {} }, enrichment: { ...after.enrichment, recs: 2 } };
+  assert.deepEqual(await judgeWhy(absorbed, now, live, pol, false), [null, null]);
+  assert.deepEqual(await judgeWhy({ ...absorbed, basis: { ...absorbed.basis, families: { 'gl.ada_standards_diabetes': 'src.ada2019' } } }, now, live, pol, false), ['guideline_changed', 'edition_changed']);
+  assert.deepEqual(await judgeWhy({ ...absorbed, enrichment: { ...absorbed.enrichment, recs: 0 } }, now, live, pol, false), ['coverage_expanded', 'coverage_expanded']);
+  assert.equal(newAdditions(after, { recs: [{ id: 'rec.kdigo2024.a1', statement: 'x' }] }).length, 0, 'a recommendation in the basis is not an enhancement');
+});
+
+test('layers: rules place knowledge in core, adjacent, advanced and frontier; the outline is structure only', async () => {
+  assert.equal(layerOf({ score: 0.95, conf: 0.8, type: 'Recommendation' }, { projected: true }), 'core');
+  assert.equal(layerOf({ score: 0.95, conf: 0.6, type: 'Recommendation' }, { projected: true }), 'adjacent', 'high relevance, middling confidence');
+  assert.equal(layerOf({ score: 0.95, conf: 0.3, type: 'Recommendation' }, {}), 'advanced', 'emerging');
+  assert.equal(layerOf({ score: 0.85, conf: 0.9, type: 'EvidenceObject' }, {}), 'advanced', 'landmark trial');
+  assert.equal(layerOf({ score: 0.9, conf: 0.9, type: 'Recommendation', specialty: 'spec.cardiology' }, { specialty: 'spec.nephrology' }), 'advanced', 'subspecialty');
+  assert.equal(layerOf({ score: 0.6, conf: 0.9, type: 'Claim' }, {}), 'adjacent');
+  assert.equal(layerOf({ score: 0.2, conf: 0.9, type: 'Claim' }, {}), 'frontier');
+  assert.equal(layerOf({ score: 0.05, conf: 0.9, type: 'Claim' }, {}), null);
+  const env = await built(await fresh()); await lesson(env);
+  const ckd = objectiveOf('c.disease.chronic_kidney_disease');
+  await computeLayers(env, [ckd]);
+  const plan = await layerPlan(env, { asset: LES });
+  assert.ok(plan.layers.core.top.some((x) => x.id === 'rec.kdigo2024.a1'), JSON.stringify(plan.layers));
+  assert.ok(plan.layers.advanced.top.some((x) => x.id === 'ev.empa_kidney' && x.landmark));
+  const w = await computeLayers(env, [ckd]); assert.equal(w, 0, 'unchanged plan writes nothing');
+  const out = layeredOutline(plan); assert.match(out, /Required core: /); assert.match(out, /Advanced expansion: EMPA-KIDNEY/);
+  assert.equal(layeredOutline({ layers: {} }), '');
+});
+
+test('confidence: three separate domains; mk_objects conf and trust keep their meaning', async () => {
+  const e = evidenceFactors({ type: 'Recommendation', evidence_level: 'A' }, { source_class: 'clinical_practice_guideline', year: 2024 }, 3);
+  assert.equal(e.factors.authority, 0.98); assert.equal(e.factors.agreement, 1); assert.ok(e.score > 0.8 && e.score <= 1);
+  const weak = evidenceFactors({ type: 'Recommendation', evidence_level: 'C-EO' }, { source_class: 'review_article', year: 2001 }, 1);
+  assert.ok(weak.score < e.score);
+  assert.equal(evidenceFactors({ type: 'EvidenceObject', design: 'RCT' }, null, 0).factors.evidence_level, 0.9);
+  const r = relevanceFactors({ max: 0.95, strong: 8, exam: 1 }); assert.ok(Math.abs(r.score - (0.5 * 0.95 + 0.3 + 0.2)) <= 0.0051, String(r.score));
+  const l = lessonFactors({ sources: 2, recs_total: 4, recs_covered: 3, evidence: 0.8, objectives: 1, objectives_supported: 1, age_days: 0 });
+  assert.equal(l.factors.coverage, 0.75); assert.equal(l.factors.recency, 1);
+  const env = await built(await fresh()); await lesson(env);
+  const trustBefore = (await env.DB.prepare('SELECT id, trust, conf FROM mk_objects ORDER BY id').all()).results;
+  await newGuideline(env); await settle(env, 14);
+  const c = await confidenceOf(env, 'rec.ada2025.1'); assert.ok(c.evidence && c.relevance, JSON.stringify(c));
+  assert.equal(c.evidence.factors.agreeing_sources, 2, 'KDIGO and ADA both recommend on CKD');
+  assert.ok((await confidenceOf(env, LES)).lesson);
+  const after = Object.fromEntries((await env.DB.prepare('SELECT id, trust, conf FROM mk_objects').all()).results.map((x) => [x.id, x]));
+  for (const o of trustBefore) if (o.id !== LES) assert.deepEqual(after[o.id], o, o.id);
+});
+
+test('coverage: numbers by dimension; knowledge penetration; the snapshot is stored', async () => {
+  const x = { canon: [{ id: 'obj.c.a' }, { id: 'obj.c.b' }, { id: 'obj.c.c' }, { id: 'obj.c.d' }], supported: new Set(['obj.c.a', 'obj.c.b', 'obj.c.c']), recObj: new Set(['obj.c.a', 'obj.c.b']), evObj: new Set(['obj.c.a']),
+    lessonObj: new Set(['obj.c.a']), curObj: new Set(), topics: [{ t: 't1', f: 'fam', p: 90 }, { t: 't2', f: 'fam', p: 40 }], topicObjs: new Map([['t1', ['obj.c.a']], ['t2', ['obj.c.d']]]), objPri: new Map(), topicLessons: new Set() };
+  const rows = Object.fromEntries(coverageRows(x, { specialties: [{ key: 'spec.nephrology', num: 3, den: 4 }], lifecycle: [{ status: 'complete', stages_json: '{}' }, { status: 'in_progress', stages_json: '{}' }], knowledge: { num: 1, den: 4 } }).map((r) => [r.dimension + '|' + r.key, r]));
+  assert.equal(rows['objective|supported'].pct, 75); assert.equal(rows['exam|fam'].pct, 50); assert.equal(rows['lesson|fam'].pct, 50);
+  assert.equal(rows['evidence|objectives_with_recommendations'].pct, 50); assert.equal(rows['source|lifecycle_complete'].pct, 50);
+  assert.equal(rows['specialty|spec.nephrology'].pct, 75); assert.equal(rows['lesson|objectives'].pct, 25); assert.equal(rows['penetration|knowledge'].pct, 25);
+  const env = await built(await fresh()); await lesson(env); await setSetting(env, 'lc_cov', null); await settle(env, 4);
+  const c = await coverageLatest(env); assert.ok(c.day); for (const d of ['specialty', 'objective', 'exam', 'evidence', 'source', 'lesson', 'penetration']) assert.ok(c.dimensions[d], d);
+  assert.ok(c.dimensions.penetration[0].pct > 0, 'the lesson reaches CKD knowledge');
+});
+
+test('gaps: each rule with its recommended action', () => {
+  const x = { canon: [{ id: 'obj.c.a', name: 'A', c: 'c.a', specialty: 'spec.nephrology' }, { id: 'obj.c.b', name: 'B', c: 'c.b' }, { id: 'obj.c.e', name: 'E', c: 'c.e' }], supported: new Set(['obj.c.b', 'obj.c.e']),
+    recObj: new Set(['obj.c.e']), evObj: new Set(), lessonObj: new Set(['obj.c.e']), curObj: new Set(), topics: [{ t: 'bpt.x', f: 'fam', p: 80, name: 'X', b: 'bp' }],
+    topicObjs: new Map([['bpt.x', ['obj.c.a']]]), objPri: new Map([['obj.c.a', 80], ['obj.c.b', 60]]), topicLessons: new Set() };
+  const g = Object.fromEntries(gapRules(x, { specialtyRows: [{ key: 'spec.pediatrics', num: 0, den: 0, sources: 0 }], orgsBySpecialty: { 'spec.nephrology': ['KDIGO'] }, today: '2026-10-25',
+    sources: [{ id: 'src.old', name: 'Old', spec: 'Guidelines', year: 2010, md: { version_date: '2010' } }, { id: 'src.rev', name: 'Rev', spec: 'Guidelines', md: { version_date: '2024', review_date: '2025-01-01' } }],
+    citedSuperseded: [{ id: 'src.sup', name: 'Sup', n: 2, replaced_by: 'src.new' }], lowLessons: [{ id: 'ea.s.les.x', name: 'L', score: 0.3 }] }).map((r) => [r.gap_id, r]));
+  assert.equal(g['objective:obj.c.a'].action.type, 'recommended_acquisition'); assert.deepEqual(g['objective:obj.c.a'].action.organizations, ['KDIGO']); assert.equal(g['objective:obj.c.a'].severity, 0.8);
+  assert.equal(g['exam:bpt.x'].action.type, 'recommended_acquisition');
+  assert.equal(g['lesson:obj.c.b'].action.type, 'recommended_lesson');
+  assert.equal(g['evidence:obj.c.e'].action.type, 'recommended_trial');
+  assert.equal(g['specialty:spec.pediatrics'].action.type, 'recommended_acquisition');
+  assert.equal(g['update:src.old'].action.reason, 'older than 8 years'); assert.equal(g['update:src.rev'].action.reason, 'past its review date');
+  assert.equal(g['update:src.sup'].action.replaced_by, 'src.new'); assert.equal(g['confidence:ea.s.les.x'].action.type, 'recommended_update');
+});
+
+test('specialties: Primary Care, Pediatrics and Critical Care; an unknown folder is a proposal awaiting review, never silent', async () => {
+  assert.equal(specialtyOf(['Critical Care']), 'spec.critical_care'); assert.equal(specialtyOf(['Pulmonary']), 'spec.pulmonology');
+  assert.equal(specialtyOf(['Pediatrics']), 'spec.pediatrics'); assert.equal(specialtyOf(['Family Medicine']), 'spec.primary_care');
+  const env = await fresh(); resetSpecialtyCache();
+  const f = { id: 'fileSleep1', title: 'AASM Guideline on insomnia 2025.pdf', mimeType: 'application/pdf', md5: 'a', modifiedTime: '2026-01-01', fileSize: '10' };
+  await registerFile(env, f, ['Sleep Medicine']);
+  const p = await getObject(env, 'spec.sleep_medicine');
+  assert.equal(p.status, 'modified'); assert.equal(p.governance_status, 'pending_validation'); assert.deepEqual(p.proposed.sources, ['src.filesleep1']);
+  assert.deepEqual((await getObject(env, 'src.filesleep1')).specialty, [], 'not assigned before review');
+  assert.ok(await env.DB.prepare("SELECT 1 AS x FROM mk_audit WHERE action = 'specialty_proposed'").first());
+  const r = await reviewSpecialty(env, { email: 'owner' }, { id: 'spec.sleep_medicine', result: 'approve' });
+  assert.equal(r.sources_assigned, 1); assert.deepEqual((await getObject(env, 'src.filesleep1')).specialty, ['spec.sleep_medicine']);
+  await registerFile(env, { ...f, id: 'fileSleep2', title: 'Sleep apnea guideline 2024.pdf' }, ['Sleep Medicine']);
+  assert.deepEqual((await getObject(env, 'src.filesleep2')).specialty, ['spec.sleep_medicine'], 'approved folders resolve');
+  await registerFile(env, { ...f, id: 'fileX', title: 'Notes.pdf' }, ['Wellness Coaching']);
+  assert.equal((await reviewSpecialty(env, { email: 'owner' }, { id: 'spec.wellness_coaching', result: 'reject' })).sources_assigned, 0);
+  assert.equal((await getObject(env, 'spec.wellness_coaching')).status, 'retired');
+});
+
+test('prompt wording: ABIM internal medicine prompts are byte-identical to before; other families are worded from their data', () => {
+  const H = (s) => createHash('sha256').update(s).digest('hex');
+  const bt = { category: 'Nephrology', subcategory: 'Chronic kidney disease', est_pct: 1.2, importance: 'HHMM', low_frequency: false };
+  const before = { seed: '153dd619ff96681f04568fcdf04ab213dc1100ff2ba090e9fce74c9dd5dbbfac', seed0: '5d1f2b43ff1d9280251b0baae330bebf360283677ed8579826dd11e3c983e622', qspec: '5dfe8183fa0bb7c44d40f32a7a78aefab57d3d4a461e13d128d1a7291c36324a',
+    board: 'f0ede39d7c2bcbffa53f4eaba32371fa9e9d411b856d83628b2f99213a583665', pearl: 'a4b6cd535ca6433e389ee4a8efb028cd80e92f4a95347987eb82c9c5235f9b36' };
+  for (const fam of [undefined, 'abim_im_cert', 'abim_im_lka']) {
+    const W = fam ? wordingFor(fam) : undefined;
+    assert.equal(H(seedRules(bt, 'Chronic kidney disease', 'KDIGO 2024', W)), before.seed, 'seed rules ' + fam);
+    assert.equal(H(seedRules({}, 'X', '', W)), before.seed0); assert.equal(H(qspec(W)), before.qspec); assert.equal(H(boardLevel(W)), before.board);
+  }
+  assert.equal(H(PEARL_PROMPT({ name: 'Albuminuria' }, [{ statement: 'Measure ACR yearly.', strength_original: '1', loe_original: 'B' }])), before.pearl);
+  const cv = wordingFor('abim_cardiology');
+  assert.match(seedRules(bt, 'Heart failure', '', cv), /for physicians in cardiovascular disease\./); assert.match(qspec(cv), /the ABIM Cardiovascular Disease Certification\./);
+  assert.ok(!/internal medicine/i.test(seedRules({}, 'X', '', cv)));
+  assert.equal(examKeyOf('abim_im_lka'), 'lka'); assert.equal(examKeyOf('abim_im_cert'), 'cert'); assert.equal(examKeyOf('abim_cardiology'), 'cert');
+});
+
+test('enhancements are durable: mirrored to Drive and restored', async () => {
+  const { mirrorStep } = await import('../src/mkos/mirror.js');
+  const { restoreStep } = await import('../src/mkos/restore.js');
+  const env = await built(await fresh()); await lesson(env); await newGuideline(env); await settle(env, 14);
+  const files = new Map(); let n = 0;
+  const deps = { upload: async (o) => { const id = o.id || 'f' + (++n); files.set(id, { ...o, id }); return id; }, mkdir: async (name, parent) => { const id = 'd' + (++n); files.set(id, { name, parent, id, dir: true }); return id; },
+    list: async (parent) => ({ files: [...files.values()].filter((f) => f.parent === parent).map((f) => ({ id: f.id, title: f.name })) }), readMine: async (id) => JSON.parse(files.get(id).text) };
+  for (let i = 0; i < 8; i++) await mirrorStep(env, deps, 'root', { max: 80 });
+  const ef = [...files.values()].find((f) => f.name === 'enhancements.json'); assert.ok(ef); assert.equal(JSON.parse(ef.text).count, 2);
+  assert.ok(![...files.values()].some((f) => /penetration|coverage|gaps|layers|confidence/.test(f.name || '')), 'derived tables are not written');
+  const env2 = await fresh(), prog = {};
+  for (let i = 0; i < 30; i++) { const r = await restoreStep(env2, deps, 'root', prog, { rowsPerStep: 5000 }); if (r.done) break; }
+  assert.deepEqual((await env2.DB.prepare('SELECT asset_id, object_id, kind, asset_version FROM mk_enhancements ORDER BY object_id').all()).results,
+    (await env.DB.prepare('SELECT asset_id, object_id, kind, asset_version FROM mk_enhancements ORDER BY object_id').all()).results);
 });

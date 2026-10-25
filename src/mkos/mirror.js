@@ -13,6 +13,7 @@
 //   assets/<asset kind>/<specialty>.json                        shared educational assets (lessons, questions, flashcards) with content
 //   registries/sources_registry.json, blueprints.json           readable sources registry; blueprint execution tables and mappings
 //   registries/lifecycle.json                                   every source's Continuous Knowledge Lifecycle record (stages, history)
+//   registries/enhancements.json                                every lesson enhancement (enrich.js) with the asset version it made
 //   registries/guidelines_registry_vN_MKOS_STAGED.json          the compatibility registry (cutover step 2)
 //   governance/events_YYYY-MM.json, audit_YYYY-MM.json, reviews.json, reconciliation.json
 //   config/configuration.json                                   configuration: the AI order of operations (built-in and the owner's
@@ -52,7 +53,7 @@ history/         every version of every object (version history).
 graph/           the knowledge graph: typed relationships between all of the above.
 assets/          the shared library of educational assets (lessons, questions, flashcards) with their content.
 registries/      the readable sources registry, the board blueprint tables, the staged compatibility registry, and each source's
-                 knowledge lifecycle record (lifecycle.json).
+                 knowledge lifecycle record (lifecycle.json), and the enhancements added to lessons (enhancements.json).
 governance/      change events, audit records, reviews and the daily reconciliation report.
 snapshot/        one bundled file holding the knowledge base, as a restore point.
 ontology/        the ontology, frameworks and schemas the knowledge base follows.
@@ -112,6 +113,9 @@ async function fingerprints(env, deps) {
   // The lifecycle records (durable: a source's lifecycle history is not derivable). The relevance graph is derived and not written.
   const lc = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM mk_lifecycle').first();
   out.push({ key: 'registries/lifecycle', fp: lc && lc.n ? `${lc.n}|${lc.u}` : '', n: lc ? lc.n : 0 });
+  // Lesson enhancements (durable: lesson version history). Penetration, layers, confidence, coverage and gaps are derived and not written.
+  const en = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(at) AS u FROM mk_enhancements').first();
+  if (en && en.n) out.push({ key: 'registries/enhancements', fp: `${en.n}|${en.u}`, n: en.n });
   const month = nowIso().slice(0, 7);
   const ev = await env.DB.prepare('SELECT COUNT(*) AS n, MAX(updated) AS u FROM mk_events WHERE created LIKE ?').bind(month + '%').first();
   out.push({ key: 'governance/events_' + month, fp: `${ev.n}|${ev.u}` });
@@ -157,6 +161,10 @@ async function content(env, key, deps) {
   if (key === 'registries/lifecycle') {
     const rows = (await env.DB.prepare('SELECT * FROM mk_lifecycle ORDER BY source_id').all()).results.map((r) => ({ ...r, stages_json: J(r.stages_json, {}) }));
     return { name: 'lifecycle.json', folder: 'registries', text: JSON.stringify({ kind: 'mkos-lifecycle', count: rows.length, records: rows }), n: rows.length };
+  }
+  if (key === 'registries/enhancements') {
+    const rows = (await env.DB.prepare('SELECT * FROM mk_enhancements ORDER BY asset_id, object_id').all()).results.map((r) => ({ ...r, payload_json: J(r.payload_json, {}) }));
+    return { name: 'enhancements.json', folder: 'registries', text: JSON.stringify({ kind: 'mkos-enhancements', count: rows.length, records: rows }), n: rows.length };
   }
   let m = /^governance\/(events|audit)_(\d{4}-\d{2})$/.exec(key);
   if (m) {

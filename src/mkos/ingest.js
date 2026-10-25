@@ -33,9 +33,61 @@ export async function queue(env, kind, subject, payload = {}, priority = 5, dela
 }
 
 // ---------- Classification (deterministic) ----------
-export function specialtyOf(pathParts) {
+// A folder name resolves through the taxonomy's folder_aliases, then through specialties the owner approved from proposals (dyn).
+export function specialtyOf(pathParts, dyn = null) {
   for (let i = pathParts.length - 1; i >= 0; i--) { const s = SPEC_BY_ALIAS.get(String(pathParts[i]).toLowerCase().trim()); if (s) return s; }
+  if (dyn) for (let i = pathParts.length - 1; i >= 0; i--) { const s = dyn.get(String(pathParts[i]).toLowerCase().trim()); if (s) return s; }
   return null;
+}
+/* SPECIALTY INDEPENDENCE (specialties.json note): an unknown top-level folder becomes a proposed specialty awaiting the owner's review,
+   never silently. The proposal is a Specialty object (status 'modified', pending_validation, `proposed`), its sources are listed on
+   it, and nothing is assigned to it until the owner approves it (specialty_review). Approved and merged proposals resolve folders. */
+let DYN = { t: 0, m: new Map() };
+export async function dynamicSpecialties(env) {
+  if (Date.now() - DYN.t < 60000) return DYN.m;
+  const m = new Map();
+  for (const r of (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'Specialty' AND json_extract(body, '$.proposed') IS NOT NULL").all()).results) {
+    const o = J(r.body, {}), p = o.proposed || {}, to = o.status === 'current' && o.governance_status === 'approved' ? o.id : p.merged_into || null;
+    if (to) for (const a of [p.folder, ...(o.folder_aliases || [])].filter(Boolean)) m.set(String(a).toLowerCase().trim(), to);
+  }
+  DYN = { t: Date.now(), m }; return m;
+}
+export const resetSpecialtyCache = () => { DYN = { t: 0, m: new Map() }; };
+export async function proposeSpecialty(env, folder, sourceId, { actor = 'scanner' } = {}) {
+  const name = String(folder || '').trim(); if (!name || name.length > 80) return null;
+  const id = 'spec.' + slug(name, 40), cur = await getObject(env, id);
+  if (cur && !cur.proposed) return null;                                  // a taxonomy specialty: never a proposal
+  if (cur) {
+    if (cur.status !== 'modified' || (cur.proposed.sources || []).includes(sourceId) || (cur.proposed.sources || []).length >= 50) return id;
+    await putObject(env, { ...cur, proposed: { ...cur.proposed, sources: [...cur.proposed.sources, sourceId] } }, { actor, summary: 'proposed specialty: another source', audited: false, aliases: false });
+    return id;
+  }
+  await putObject(env, { id, type: 'Specialty', name, abim_code: null, folder_aliases: [name], kind: 'proposed', status: 'modified', governance_status: 'pending_validation',
+    proposed: { folder: name, at: nowIso(), sources: [sourceId], state: 'awaiting_review' },
+    provenance: [{ source_id: sourceId, method: 'derived', at: nowIso(), agent: actor, note: 'unknown library folder, proposed as a specialty for owner review' }] }, { actor, summary: 'specialty proposed from the library folder ' + name, aliases: false });
+  await audit(env, actor, 'specialty_proposed', id, null, null, { folder: name, source: sourceId });
+  return id;
+}
+/* specialty_review {id, result: approve | reject | merge, into} (owner). Approve: the specialty becomes current and its sources get it;
+   merge: its folder resolves to an existing specialty and its sources get that one; reject: retired, nothing assigned. */
+export async function reviewSpecialty(env, u, a) {
+  const o = await getObject(env, String(a.id || '')); if (!o || o.type !== 'Specialty' || !o.proposed) return { error: 'not a proposed specialty' };
+  const actor = 'owner:' + (u && u.email || 'owner'), res = String(a.result || '');
+  let to = null;
+  if (res === 'approve') { await putObject(env, { ...o, status: 'current', governance_status: 'approved', kind: a.kind ? String(a.kind).slice(0, 40) : 'specialty', proposed: { ...o.proposed, state: 'approved', reviewed: nowIso() } }, { actor, summary: 'proposed specialty approved', part: 'minor' }); to = o.id; }
+  else if (res === 'merge') { const into = await getObject(env, String(a.into || '')); if (!into || into.type !== 'Specialty') return { error: 'into: an existing specialty id' };
+    await putObject(env, { ...o, status: 'retired', governance_status: 'approved', proposed: { ...o.proposed, state: 'merged', merged_into: into.id, reviewed: nowIso() } }, { actor, summary: 'proposed specialty merged into ' + into.id, part: 'minor' }); to = into.id; }
+  else if (res === 'reject') { await putObject(env, { ...o, status: 'retired', governance_status: 'rejected', proposed: { ...o.proposed, state: 'rejected', reviewed: nowIso() } }, { actor, summary: 'proposed specialty rejected', part: 'minor' }); }
+  else return { error: 'result must be approve, merge or reject' };
+  let assigned = 0;
+  if (to) for (const sid of o.proposed.sources || []) { const s = await getObject(env, sid); if (s && !(s.specialty || []).length) { await putObject(env, { ...s, specialty: [to] }, { actor, summary: 'specialty ' + to + ' (reviewed proposal)' }); assigned++; } }
+  await audit(env, actor, 'specialty_review', o.id, null, null, { result: res, into: to, assigned });
+  resetSpecialtyCache();
+  return { ok: true, id: o.id, result: res, specialty: to, sources_assigned: assigned };
+}
+export async function specialtyProposals(env) {
+  return (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'Specialty' AND json_extract(body, '$.proposed') IS NOT NULL ORDER BY updated DESC LIMIT 100").all()).results
+    .map((r) => { const o = J(r.body, {}); return { id: o.id, name: o.name, status: o.status, state: o.proposed.state, folder: o.proposed.folder, sources: (o.proposed.sources || []).length, at: o.proposed.at, merged_into: o.proposed.merged_into || null }; });
 }
 const YEAR = /\b(19[89]\d|20[0-4]\d)\b/g;
 export const yearOf = (...xs) => { for (const x of xs) { const m = String(x || '').match(YEAR); if (m) return Math.max(...m.map(Number)); } return null; };
@@ -141,7 +193,7 @@ export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep
   const orgs = old?.responsible_orgs?.length ? old.responsible_orgs : orgsOf(f.title, pathParts);
   const src = {
     ...(old || {}), id, type: 'Source', name: old?.short_label || cleanTitle(f.title).slice(0, 200) || f.title,
-    specialty: old?.specialty?.length ? old.specialty : [specialtyOf(pathParts)].filter(Boolean),
+    specialty: old?.specialty?.length ? old.specialty : [specialtyOf(pathParts, await dynamicSpecialties(env))].filter(Boolean),
     status: old?.status && old.status !== 'retired' ? old.status : 'current', governance_status: old?.governance_status || 'pending_validation',   // a file back in the library is current again
     source_class: old?.registry_ref_id ? old.source_class : cls, spec_source_type: c.spec_source_type, drive_file_id: f.id, drive_path: path, mime_type: f.mimeType || '',
     bytes: Number(f.fileSize) || 0, md5: f.md5 || '', drive_modified: f.modifiedTime || '', title: old?.title || f.title,
@@ -154,6 +206,8 @@ export async function registerFile(env, f, pathParts, { actor = 'scanner', sweep
   const ev = await event(env, changed, id, { title: f.title, path, md5: f.md5 || '', prev: prev ? { md5: prev.md5, path: prev.path, title: prev.title } : null });
   await putObject(env, src, { actor, event_id: ev, summary: changed.replace('source_', 'source ') + (reclassified ? `; reclassified ${reclassified.from} -> ${reclassified.to}` : '') });
   if (reclassified) await audit(env, actor, 'source_reclassified', id, null, null, reclassified);
+  // A source in a folder no specialty knows: the folder is proposed as a specialty for the owner's review (never assigned silently).
+  if (!src.specialty.length && pathParts.length && (changed === 'source_added' || changed === 'source_modified')) await proposeSpecialty(env, pathParts[0], id, { actor });
   // Every new or changed source enters the Continuous Knowledge Lifecycle (lifecycle.js): no knowledge asset may stop at ingestion.
   if (changed === 'source_added' || changed === 'source_modified') await enterLifecycle(env, id, { event: changed });
   if (old && old.status === 'retired') await setStatus(env, id, 'current', { actor, event_id: ev, force: true, reason: 'back in the library' });

@@ -9,6 +9,7 @@ import { nowIso, audit, fwGet, overrides } from './db.js';
 import { getObject, getObjects, putObject, setStatus, slug } from './kb.js';
 import { topicContext, checkCitations } from './bridge.js';
 import { nodeForTopic } from './education.js';
+import { enrichLesson } from './enrich.js';
 
 const U = (uid) => 'u' + String(uid).replace(/[^a-z0-9]/gi, '').slice(0, 10).toLowerCase();
 const enc = new TextEncoder();
@@ -83,31 +84,45 @@ async function basisNow(env, u, tid, name, pol) {
   return { ctx, basis: { families, recs, priority, band: band(priority, pol.bands), blueprint_family: (ctx.blueprint && ctx.blueprint.selection && ctx.blueprint.selection.family) || null, cov, objs, comps, rels } };
 }
 
-/* Why a stored asset may not be served (null = serve it). The order follows assets.json "regenerate_when". */
-async function judge(o, now, live, pol, pool) {
-  if (!o) return 'no_asset';
-  if (o.status !== 'current') return 'superseded';
+/* Why a stored asset may not be served (null = serve it). The order follows assets.json "regenerate_when". judgeWhy also says which
+   rule fired, so a lesson whose only reason is one enrichment absorbs (lifecycle.json enrichment.absorbs) is enhanced instead. */
+async function judge(o, now, live, pol, pool) { return (await judgeWhy(o, now, live, pol, pool))[0]; }
+export async function judgeWhy(o, now, live, pol, pool) {
+  if (!o) return ['no_asset', 'no_asset'];
+  if (o.status !== 'current') return ['superseded', 'superseded'];
   const needs = o.needs || [];
-  if (needs.includes('regenerate')) return 'superseded';
-  if (needs.length) return 'flagged';
-  if (o.review_status !== 'validated' && !(pol.unreviewed && o.review_status === 'unreviewed')) return 'unvalidated';
-  const b = o.basis || {};
-  for (const [fam, ed] of Object.entries(b.families || {})) if (now.families[fam] && now.families[fam] !== ed) return 'guideline_changed';
+  if (needs.includes('regenerate')) return ['superseded', 'needs_regenerate'];
+  if (needs.length) return ['flagged', 'flagged'];
+  if (o.review_status !== 'validated' && !(pol.unreviewed && o.review_status === 'unreviewed')) return ['unvalidated', 'unvalidated'];
+  const b = o.basis || {}, en = o.enrichment || {};
+  for (const [fam, ed] of Object.entries(b.families || {})) if (now.families[fam] && now.families[fam] !== ed) return ['guideline_changed', 'edition_changed'];
   // A guideline family that now speaks to the topic but did not when the asset was written (the library was indexed later, or a new
-  // guideline arrived): the asset was written without it, so it is regenerated.
-  for (const fam of Object.keys(now.families || {})) if (!(fam in (b.families || {}))) return 'guideline_changed';
+  // guideline arrived): the asset was written without it, so it is regenerated, unless an enhancement already cites that family.
+  for (const fam of Object.keys(now.families || {})) if (!(fam in (b.families || {})) && !(en.families || []).includes(fam)) return ['guideline_changed', 'new_guideline_family'];
   for (const [rid, sig] of Object.entries(b.recs || {})) {
     const r = live[rid];
-    if (!r || r.status === 'superseded' || r.status === 'retired' || (sig && (await recSig(r)) !== sig)) return 'guideline_changed';
+    if (!r || r.status === 'superseded' || r.status === 'retired' || (sig && (await recSig(r)) !== sig)) return ['guideline_changed', 'recommendation_changed'];
   }
-  if (pool && b.priority != null && now.priority != null && Math.abs(b.priority - now.priority) >= pol.delta) return 'blueprint_changed';
+  if (pool && b.priority != null && now.priority != null && Math.abs(b.priority - now.priority) >= pol.delta) return ['blueprint_changed', 'blueprint_changed'];
   // Structural change in the topic's knowledge (assets written before these fingerprints existed are judged on the rules above only).
-  const R = REGEN();
-  if (b.cov != null && now.cov != null && now.cov >= b.cov + Math.max(R.coverage_expanded.min_new, Math.ceil(b.cov * (R.coverage_expanded.min_ratio - 1)))) return 'coverage_expanded';
-  if (b.objs && now.objs && jac(b.objs, now.objs) < R.set_change_jaccard_below) return 'objectives_changed';
-  if (b.comps && b.comps.length && now.comps && jac(b.comps, now.comps) < 1) return 'competencies_changed';
-  if (b.rels && now.rels && jac(b.rels, now.rels) < R.set_change_jaccard_below) return 'relationships_changed';
-  return null;
+  // Recommendations added to the lesson as enhancements count as covered.
+  const R = REGEN(), cov0 = b.cov == null ? null : b.cov + (Number(en.recs) || 0);
+  if (cov0 != null && now.cov != null && now.cov >= cov0 + Math.max(R.coverage_expanded.min_new, Math.ceil(b.cov * (R.coverage_expanded.min_ratio - 1)))) return ['coverage_expanded', 'coverage_expanded'];
+  if (b.objs && now.objs && jac(b.objs, now.objs) < R.set_change_jaccard_below) return ['objectives_changed', 'objectives_changed'];
+  if (b.comps && b.comps.length && now.comps && jac(b.comps, now.comps) < 1) return ['competencies_changed', 'competencies_changed'];
+  if (b.rels && now.rels && jac(b.rels, now.rels) < R.set_change_jaccard_below) return ['relationships_changed', 'relationships_changed'];
+  return [null, null];
+}
+/* A lesson judged as needing regeneration for a reason enrichment absorbs is enhanced first (rules, no AI) and judged again; every other
+   reason still regenerates. Returns { reason, o } with the asset as it now stands. */
+const ABSORB = new Set(FRAMEWORK.frameworks.lifecycle.enrichment.absorbs || []);
+async function judgeLesson(env, o, now, live, pol) {
+  let [r, why] = await judgeWhy(o, now, live, pol, false);
+  if (r && o && ABSORB.has(why)) {
+    const e = await enrichLesson(env, o.id, { subject: 'judge:' + why });
+    if (e.added) { o = await getObject(env, o.id); [r] = await judgeWhy(o, now, live, pol, false); }
+  }
+  return { reason: r, o };
 }
 
 // The newest stored content of each asset. A version that changed only metadata (a flag, a review, a status) stores no new content,
@@ -147,8 +162,8 @@ async function objectiveLessonFor(env, u, tid, now, pol) {
   const node = await getObject(env, nodeForTopic(tid)); const bpts = (node && node.blueprint_topics) || []; if (!bpts.length) return null;
   const { results } = await env.DB.prepare(`SELECT body FROM mk_objects WHERE type = 'EducationalAsset' AND id LIKE 'ea.s.les.%' AND status = 'current' AND json_extract(body, '$.objective') IN (${bpts.slice(0, 60).map(() => '?').join(',')})`).bind(...bpts.slice(0, 60)).all();
   const list = results.map((r) => JSON.parse(r.body)).sort((x, y) => ((y.asset_confidence || {}).overall || 0) - ((x.asset_confidence || {}).overall || 0));
-  for (const o of list) {
-    if (await judge(o, now, await getObjects(env, Object.keys((o.basis || {}).recs || {})), pol, false)) continue;
+  for (let o of list) {
+    const jl = await judgeLesson(env, o, now, await getObjects(env, Object.keys((o.basis || {}).recs || {})), pol); if (jl.reason) continue; o = jl.o;
     const v = await reverify(env, o); if (!v.serve) continue;
     const c = (await loadContent(env, [o]))[o.id]; if (!c) continue;
     await served(env, u.id, 'lesson', [o.id]);
@@ -170,9 +185,9 @@ export async function objectiveLesson(env, u, a) {
   const pol = await policy(env);
   const rows = (await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'EducationalAsset' AND status = 'current' AND json_extract(body, '$.objective') = ? AND id LIKE 'ea.s.%'").bind(id).all()).results.map((r) => JSON.parse(r.body));
   if (!rows.length) return { reuse: false, reason: 'no_asset' };
-  const o = rows.sort((x, y) => ((y.asset_confidence || {}).overall || 0) - ((x.asset_confidence || {}).overall || 0))[0];
+  let o = rows.sort((x, y) => ((y.asset_confidence || {}).overall || 0) - ((x.asset_confidence || {}).overall || 0))[0];
   const { basis: now } = await basisNow(env, u, o.app_topic, '', pol);
-  const why = await judge(o, now, await getObjects(env, Object.keys((o.basis || {}).recs || {})), pol, false); if (why) return { reuse: false, reason: why, asset_id: o.id };
+  const jl = await judgeLesson(env, o, now, await getObjects(env, Object.keys((o.basis || {}).recs || {})), pol); o = jl.o || o; const why = jl.reason; if (why) return { reuse: false, reason: why, asset_id: o.id };
   const v = await reverify(env, o); if (!v.serve) return { reuse: false, reason: 'low_confidence', asset_id: o.id, confidence: v };
   const c = (await loadContent(env, [o]))[o.id]; if (!c) return { reuse: false, reason: 'no_asset' };
   await served(env, u.id, 'lesson', [o.id]);
@@ -189,8 +204,9 @@ export async function findAsset(env, u, a) {
   if (a.personal) return { reuse: false, reason: 'personalized', missing: n };
   const pol = await policy(env), { ctx, basis: now } = await basisNow(env, u, tid, String(a.name || ''), pol);
   if (!K.pool) {
-    const variant = String(a.len || a.variant || 'std'), id = lessonId(tid, variant, now.band), o = await getObject(env, id);
-    let reason = await judge(o, now, o ? await getObjects(env, Object.keys((o.basis || {}).recs || {})) : {}, pol, false);
+    const variant = String(a.len || a.variant || 'std'), id = lessonId(tid, variant, now.band);
+    let o = await getObject(env, id);
+    const jl = await judgeLesson(env, o, now, o ? await getObjects(env, Object.keys((o.basis || {}).recs || {})) : {}, pol); o = jl.o; let reason = jl.reason;
     if (reason === 'no_asset') for (const b of ['h', 'm', 'l', 'n']) if (b !== now.band) { const x = await getObject(env, lessonId(tid, variant, b)); if (x && x.status === 'current') { reason = 'blueprint_changed'; break; } }
     if (!reason) { const v = await reverify(env, o); if (!v.serve) reason = 'low_confidence'; }
     if (reason) {
@@ -331,9 +347,9 @@ export async function auditAssets(env, { prog = {}, limit = 40 } = {}) {
   for (const [tid, objs] of Object.entries(byTopic)) {
     const { basis: now } = await basisNow(env, sys, tid, '', pol);
     const live = await getObjects(env, [...new Set(objs.flatMap((o) => Object.keys((o.basis || {}).recs || {})))]);
-    for (const o of objs) {
+    for (let o of objs) {
       if ((o.needs || []).length || o.review_status !== 'validated') continue;
-      const r = await judge(o, now, live, pol, false);
+      const jl = await judgeLesson(env, o, now, live, pol), r = jl.reason; o = jl.o || o;
       if (r && r !== 'unvalidated' && r !== 'flagged') { reasons[r] = (reasons[r] || 0) + 1; flagged++;
         await putObject(env, { ...o, needs: ['regenerate'], review_status: 'needs_regenerate', data: { ...(o.data || {}), regenerate_reason: r, regenerate_at: nowIso() } }, { actor: 'reconcile', summary: 'regeneration queued: ' + r, audited: false }); }
       else if (!r) { const v = await reverify(env, o); if (!v.serve) { reasons.low_confidence = (reasons.low_confidence || 0) + 1; flagged++; } }

@@ -3,6 +3,7 @@
 //   topicContext  the governed package for one curriculum topic, including a prompt block the app hands to its AI (AI as teacher only)
 //   checkCitations  citations as written -> current / older edition / unmatched (Superseded Guideline Usage, stop-the-line)
 //   assetFlags    this learner's lessons, questions and cards that MKOS has flagged for review or regeneration
+import { examKeyOf } from './wording.js';
 import { progress } from './progress.js';
 import { FRAMEWORK } from './framework.js';
 import { J, nowIso } from './db.js';
@@ -66,7 +67,7 @@ export async function appBundle(env, u, { owner = false, app_kind = null } = {})
       calibration: concept.reduce((a, x) => { const c = x.calibration || {}; for (const k of Object.keys(c)) a[k] = (a[k] || 0) + c[k]; return a; }, {}) },
     specialty, competency, domain,
     misconceptions: mis.map((m) => ({ ...m, name: mn[m.object_id]?.name || m.object_id })), changed_knowledge: rec.map((r) => ({ ...r, name: mn[r.object_id]?.name || r.object_id })),
-    plan: (await curriculumPlan(env, u.id, { limit: 8, exam: sel.family === 'abim_im_lka' ? 'lka' : 'cert' })).plan,
+    plan: (await curriculumPlan(env, u.id, { limit: 8, exam: examKeyOf(sel.family) })).plan,
     board: await boardPlan(env, u.id, { limit: 8 }).catch((e) => ({ error: String(e.message || e) })),
     topics: await topicPriorities(env, u.id, sel.blueprint_id),
     flags: (await assetFlags(env, u)).flags, pronunciations: await ttsList(env),

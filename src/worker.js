@@ -1808,6 +1808,8 @@ async function usapStatus(env, event, ctx) {
   const objs = await one("SELECT COUNT(*) AS n FROM mk_objects WHERE id NOT LIKE 'ea.u%'"); if (objs) M('registry_object_count', objs.n || 0, {});
   const rec = await mkSet('reconcile_report'), concepts = await one("SELECT COUNT(*) AS n FROM mk_objects WHERE type = 'Concept'");
   if (rec && rec.orphans && typeof rec.orphans.unlinked_concepts === 'number' && concepts && concepts.n) M('knowledge_orphan_ratio', rec.orphans.unlinked_concepts / concepts.n, {});
+  // Knowledge penetration (MKOS coverage engine, lifecycle.json coverage): % of current knowledge objects that reach a lesson or curriculum.
+  const kp = await one("SELECT pct FROM mk_coverage WHERE dimension = 'penetration' AND key = 'knowledge' ORDER BY day DESC LIMIT 1"); if (kp) M('knowledge_penetration_pct', kp.pct, {});
   const routed = await one("SELECT COUNT(*) AS n, SUM(CASE WHEN decision != 'ai' THEN 1 ELSE 0 END) AS r FROM mk_routes WHERE at >= ?", new Date(now - 3600e3).toISOString());
   if (routed && routed.n) M('retrieval_satisfied_rate', (routed.r || 0) / routed.n, {});
   // The database's size, as D1 reports it after a statement.

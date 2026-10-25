@@ -6,6 +6,7 @@
 // and, per concept, lesson and review targets; per guideline section, a clinical pathway; per concept, clinical pearls by the free AI
 // (pending validation). DELTA PROCESSING: each recommendation records the fingerprint it was decomposed at, so only new or changed
 // recommendations are reprocessed, and objects a changed recommendation no longer yields are retired, never left behind.
+import { wordingFor, defaultFamily } from './wording.js';
 import { FRAMEWORK } from './framework.js';
 import { J, nowIso } from './db.js';
 import { getObject, getObjects, putObject, slug } from './kb.js';
@@ -180,7 +181,8 @@ export async function decomposeStep(env, scope, { prog = {}, limit = D.batch || 
 // validation status -> classification -> versioning -> pearl registry -> storage (Drive with everything else). Generate once, validate,
 // store, reuse: a pearl is regenerated only when its basis moved materially (recommendation, guideline edition, evidence level,
 // objectives, competencies, the concept's relationships), when it is rejected at review or sent back for regeneration, or superseded.
-export const PEARL_PROMPT = (con, recs) => `You write clinical pearls for an internal medicine knowledge base. Concept: ${con.name}.
+// Pearls are central records: worded for the default family (wording.js), which reproduces the earlier text exactly.
+export const PEARL_PROMPT = (con, recs, W = wordingFor(defaultFamily())) => `You write clinical pearls for ${W.knowledge_base}. Concept: ${con.name}.
 Current guideline recommendations (the only basis you may use):
 ${recs.map((r, i) => `${i + 1}. ${r.statement} (${[r.strength_original, r.loe_original].filter(Boolean).join(', ')})`).join('\n')}
 Write 1 to 3 clinical pearls: practical, board-relevant insights a senior physician would teach, each grounded in the recommendations above, in your own words (never copy more than 8 consecutive words), with exact numbers. Reply with JSON only: {"pearls":[{"text":"","based_on":[recommendation numbers]}]}`;

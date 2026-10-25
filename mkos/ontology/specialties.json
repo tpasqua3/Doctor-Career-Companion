@@ -2,10 +2,10 @@
   "id": "framework.specialties",
   "type": "Framework",
   "name": "Specialty and domain taxonomy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "current",
   "created_date": "2026-10-17",
-  "updated_date": "2026-10-17",
+  "updated_date": "2026-10-25",
   "supersedes": null,
   "replaced_by": null,
   "source_attribution": [
@@ -17,9 +17,14 @@
       "version": "1.0.0",
       "date": "2026-10-17",
       "summary": "Initial taxonomy: ABIM IM blueprint categories plus the app's tracks and planned ancillary specialties."
+    },
+    {
+      "version": "1.1.0",
+      "date": "2026-10-25",
+      "summary": "Specialty independence: Primary Care, Pediatrics and a separate Critical Care Medicine; unknown folders are proposed specialties awaiting owner review."
     }
   ],
-  "note": "Knowledge Granularity Model level 1-2 (Specialty > Domain). Domains are the ABIM blueprint subcategories, loaded from the blueprint registries at ingest (dom.<abim_code>.<slug>), plus domains added by ingestion. A Drive folder name resolves to a specialty through folder_aliases (case-insensitive); an unknown folder becomes a new specialty in status 'modified' awaiting owner review, never an error.",
+  "note": "Knowledge Granularity Model level 1-2 (Specialty > Domain). Domains are the ABIM blueprint subcategories, loaded from the blueprint registries at ingest (dom.<abim_code>.<slug>), plus domains added by ingestion. A Drive folder name resolves to a specialty through folder_aliases (case-insensitive); an unknown top-level folder becomes a proposed specialty (status 'modified', governance pending_validation, `proposed` record) awaiting owner review (`specialty_review`), never an error and never assigned silently: its sources keep no specialty until the owner approves it or merges it into an existing one.",
   "specialties": [
     {
       "id": "spec.allergy_immunology",
@@ -192,16 +197,16 @@
     },
     {
       "id": "spec.pulmonology",
-      "name": "Pulmonary and Critical Care Medicine",
+      "name": "Pulmonary Disease",
       "abim_code": "PULM",
       "folder_aliases": [
         "Pulmonology",
         "Pulmonary",
-        "Pulm",
-        "Critical Care"
+        "Pulm"
       ],
       "kind": "im_subspecialty",
-      "status": "current"
+      "status": "current",
+      "note": "Critical Care Medicine is its own specialty (spec.critical_care) since taxonomy 1.1.0; sources registered earlier keep their specialty."
     },
     {
       "id": "spec.rheumatology",
@@ -330,6 +335,45 @@
         "ACP"
       ],
       "kind": "reference",
+      "status": "current"
+    },
+    {
+      "id": "spec.primary_care",
+      "name": "Primary Care",
+      "abim_code": null,
+      "folder_aliases": [
+        "Primary Care",
+        "Family Medicine",
+        "Ambulatory Care",
+        "Outpatient Medicine"
+      ],
+      "kind": "primary_care",
+      "status": "current"
+    },
+    {
+      "id": "spec.pediatrics",
+      "name": "Pediatrics",
+      "abim_code": null,
+      "folder_aliases": [
+        "Pediatrics",
+        "Paediatrics",
+        "Peds",
+        "Pediatric Medicine"
+      ],
+      "kind": "specialty",
+      "status": "current"
+    },
+    {
+      "id": "spec.critical_care",
+      "name": "Critical Care Medicine",
+      "abim_code": null,
+      "folder_aliases": [
+        "Critical Care",
+        "Critical Care Medicine",
+        "Intensive Care",
+        "ICU"
+      ],
+      "kind": "im_subspecialty",
       "status": "current"
     }
   ]

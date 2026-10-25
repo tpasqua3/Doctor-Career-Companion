@@ -1,7 +1,7 @@
 // PROGRESS AND MILESTONES: how far the knowledge build has come, as percentages the owner can read at any time, and a milestone
 // event the first time each stage completes (ingestion complete is the last). Every number is counted from the database; nothing is
 // estimated by an AI. Stages and their weight in the overall figure:
-//   startup 15        framework, legacy registry, CERT and LKA blueprints, curriculum (bootstrap in tick.js)
+//   startup 15        framework, legacy registry, every blueprint family's registry (ABIM: CERT, LKA), curriculum (bootstrap in tick.js)
 //   library walk 10   the first full sweep of the Medical Knowledge Database (ingest.js scanStep)
 //   registration 5    every readable file registered as a Source and classified
 //   extraction 40     every source read: guidelines in full, index-only sources (MKSAP, textbooks) to their index parts
@@ -9,6 +9,7 @@
 // Complete means every stage is at 100% and no ingestion job is queued or running. A source whose reading failed for good (a file over
 // 25 MB, an unreadable file) counts as finished with an exception: it is listed in the report and the milestone, so the build can
 // complete and the exceptions are dealt with by the audit and remediation directives instead of holding everything back.
+import { FRAMEWORK } from './framework.js';
 import { J, nowIso, getSetting, setSetting } from './db.js';
 import { event } from './ingest.js';
 
@@ -20,7 +21,8 @@ const one = async (env, sql, ...b) => ((await env.DB.prepare(sql).bind(...b).fir
 export async function progress(env) {
   const st = J(await getSetting(env, 'bootstrap'), {}) || {};
   // Startup: five steps; a step in progress counts half.
-  const steps = ['framework', 'legacy', 'cert', 'lka', 'curriculum'];
+  // The bootstrap's steps: the blueprint families with a registry file, by exam key (blueprints.json), as tick.js imports them.
+  const steps = ['framework', 'legacy', ...FRAMEWORK.frameworks.blueprints.families.filter((f) => f.registry_find && f.exam_key).map((f) => f.exam_key), 'curriculum'];
   const doneStep = (k) => (k === 'framework' ? !!st.framework : !!(st[k] && st[k].done));
   const started = (k) => !!st[k];
   const startup = { percent: pct(steps.reduce((a, k) => a + (doneStep(k) ? 1 : started(k) ? 0.5 : 0), 0), steps.length),
