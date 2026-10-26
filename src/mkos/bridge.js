@@ -6,7 +6,7 @@
 import { examKeyOf } from './wording.js';
 import { progress } from './progress.js';
 import { FRAMEWORK } from './framework.js';
-import { J, nowIso } from './db.js';
+import { J, nowIso, objectsCached } from './db.js';
 import { getObject, getObjects, norm } from './kb.js';
 import { resolveName, AUTO, matchCitation } from './resolve.js';
 import { orgsOf, topicWords } from './ingest.js';
@@ -22,74 +22,97 @@ const clamp = (x) => Math.max(0, Math.min(100, Math.round(x * 10) / 10));
 // Per app topic id: [board priority, question, flashcard, lesson, recommendation] scores for the learner's selected blueprint.
 async function topicPriorities(env, uid, bpId) {
   if (!bpId) return {};
-  const { results } = await env.DB.prepare(`SELECT json_extract(n.body, '$.legacy_topic_id') AS tid, n.id AS nid, MAX(m.priority_score) AS p, MAX(m.frequency_score) AS f, MAX(m.relevance_score) AS i
+  const [{ results }, learner] = await Promise.all([env.DB.prepare(`SELECT json_extract(n.body, '$.legacy_topic_id') AS tid, n.id AS nid, MAX(m.priority_score) AS p, MAX(m.frequency_score) AS f, MAX(m.relevance_score) AS i
     FROM mk_objects n, json_each(n.body, '$.concepts') c JOIN mk_blueprint_concept_mappings m ON m.concept_id = c.value AND m.blueprint_id = ?
-    WHERE n.type = 'CurriculumNode' AND n.id LIKE 'cn.t.%' GROUP BY n.id`).bind(bpId).all();
-  const st = Object.fromEntries((await env.DB.prepare("SELECT object_id, body FROM mk_learner WHERE user_id = ? AND level = 'curriculum_node'").bind(uid).all()).results.map((r) => [r.object_id, J(r.body)]));
+    WHERE n.type = 'CurriculumNode' AND n.id LIKE 'cn.t.%' GROUP BY n.id`).bind(bpId).all(),
+    env.DB.prepare("SELECT object_id, body FROM mk_learner WHERE user_id = ? AND level = 'curriculum_node'").bind(uid).all()]);
+  const st = Object.fromEntries(learner.results.map((r) => [r.object_id, J(r.body)]));
   const out = {};
   for (const r of results) { const s = scoresFor({ frequency_score: r.f, importance_score: r.i, relevance_score: r.i, priority_score: r.p }, st[r.nid]); out[r.tid] = [s.board_priority, s.question, s.flashcard, s.lesson, s.recommendation, Math.round(r.p)]; }
   return out;
 }
 
 export async function assetFlags(env, u) {
-  const { results } = await env.DB.prepare("SELECT body FROM mk_objects WHERE id LIKE ? AND json_array_length(COALESCE(json_extract(body, '$.needs'), '[]')) > 0").bind('ea.' + U(u.id) + '.%').all();
+  // The learner's own flagged assets, and the shared library assets this learner was served that are now flagged (a guideline changed,
+  // or someone reported a problem): two reads, asked for together.
+  const [{ results }, sh] = await Promise.all([env.DB.prepare("SELECT body FROM mk_objects WHERE id LIKE ? AND json_array_length(COALESCE(json_extract(body, '$.needs'), '[]')) > 0").bind('ea.' + U(u.id) + '.%').all(),
+    env.DB.prepare("SELECT o.body FROM mk_asset_usage g JOIN mk_objects o ON o.id = g.asset_id WHERE g.user_id = ? AND json_array_length(COALESCE(json_extract(o.body, '$.needs'), '[]')) > 0 LIMIT 300").bind(String(u.id)).all().catch(() => ({ results: [] }))]);
   const out = {}; for (const r of results) { const o = J(r.body); out[o.store?.item_id || o.id] = { needs: o.needs, status: o.review_status, kind: o.asset_kind, path: o.store?.path }; }
-  // Shared library assets this learner was served that are now flagged (a guideline changed, or someone reported a problem).
-  const sh = await env.DB.prepare("SELECT o.body FROM mk_asset_usage g JOIN mk_objects o ON o.id = g.asset_id WHERE g.user_id = ? AND json_array_length(COALESCE(json_extract(o.body, '$.needs'), '[]')) > 0 LIMIT 300").bind(String(u.id)).all().catch(() => ({ results: [] }));
   // An item DADD-AI holds for review (or that someone reported) is not a knowledge change: it is left out of this list.
   for (const r of sh.results) { const o = J(r.body); if (heldByTriage(o)) continue; out[o.id] = { needs: o.needs, status: o.review_status, kind: o.asset_kind, path: 'mkos' }; }
   return { flags: out };
 }
 
 // The shared educational asset library at a glance, and how much of this learner's material came from it (retrieve-first progress).
+// The library counts come from mk_objects only, so they are reused until it changes (objectsCached); a failed read is not kept.
 async function assetSummary(env, u) {
-  const lib = (await env.DB.prepare("SELECT json_extract(body, '$.asset_kind') AS k, COUNT(*) AS n FROM mk_objects WHERE type = 'EducationalAsset' AND id LIKE 'ea.s.%' AND status = 'current' AND json_extract(body, '$.review_status') = 'validated' GROUP BY k").all().catch(() => ({ results: [] }))).results;
-  const mine = (await env.DB.prepare('SELECT kind, COUNT(*) AS n FROM mk_asset_usage WHERE user_id = ? GROUP BY kind').bind(String(u.id)).all().catch(() => ({ results: [] }))).results;
+  const libQ = async () => (await env.DB.prepare("SELECT json_extract(body, '$.asset_kind') AS k, COUNT(*) AS n FROM mk_objects WHERE type = 'EducationalAsset' AND id LIKE 'ea.s.%' AND status = 'current' AND json_extract(body, '$.review_status') = 'validated' GROUP BY k").all()).results;
+  const [lib, mine] = await Promise.all([objectsCached(env, 'bundle_library', libQ).catch(() => []),
+    env.DB.prepare('SELECT kind, COUNT(*) AS n FROM mk_asset_usage WHERE user_id = ? GROUP BY kind').bind(String(u.id)).all().then((r) => r.results).catch(() => [])]);
   return { library: Object.fromEntries(lib.map((r) => [r.k, r.n])), served: Object.fromEntries(mine.map((r) => [r.kind, r.n])) };
 }
 
 export async function appBundle(env, u, { owner = false, app_kind = null } = {}) {
   let sel = await selection(env, u.id);
   if (app_kind) { const fam = (FRAMEWORK.frameworks.blueprints.families.find((f) => f.app_kind === app_kind) || {}).id; if (fam && (fam !== sel.family || sel.source === 'default')) { await select(env, u.id, { app_kind, source: 'app' }); sel = await selection(env, u.id); } }
+  /* After the blueprint selection (which may write), every part below is a read of its own: they are asked for together, so the
+     bundle waits for the longest chain instead of the sum of ~40 round trips. The central counts and the sources registry depend on
+     mk_objects only and are reused until it changes (objectsCached, SR-44 change-driven). */
   const lv = async (level, limit = 40, order = 'priority DESC') => (await env.DB.prepare(`SELECT object_id, mastery, conf, priority, body FROM mk_learner WHERE user_id = ? AND level = ? ORDER BY ${order} LIMIT ?`).bind(u.id, level, limit).all()).results.map((r) => { const b = J(r.body, {}); return { id: r.object_id, mastery: r.mastery, confidence: r.conf, priority: r.priority, retention: b.retention || null, interactions: b.interactions || 0, state: b.knowledge_state, calibration: b.calibration || null }; });
-  const [specialty, competency, domain, concept] = [await lv('specialty', 30), await lv('competency', 12), await lv('domain', 15), await lv('concept', 400)];
-  const names = await getObjects(env, [...specialty, ...competency, ...domain].map((x) => x.id));
-  for (const x of [...specialty, ...competency, ...domain]) x.name = names[x.id]?.name || x.id;
-  const mis = (await env.DB.prepare("SELECT object_id, kind, n, last_seen FROM mk_misconceptions WHERE user_id = ? AND status != 'resolved' ORDER BY n DESC LIMIT 10").bind(u.id).all()).results;
-  const rec = (await env.DB.prepare("SELECT object_id, reason, at FROM mk_reconcile WHERE user_id = ? AND state = 'open' ORDER BY at DESC LIMIT 10").bind(u.id).all()).results;
-  const mn = await getObjects(env, [...mis.map((m) => m.object_id), ...rec.map((r) => r.object_id)]);
+  const levels = Promise.all([lv('specialty', 30), lv('competency', 12), lv('domain', 15), lv('concept', 400)]).then(async (ls) => {
+    const [specialty, competency, domain] = ls, names = await getObjects(env, [...specialty, ...competency, ...domain].map((x) => x.id));
+    for (const x of [...specialty, ...competency, ...domain]) x.name = names[x.id]?.name || x.id;
+    return ls; });
+  const open = Promise.all([env.DB.prepare("SELECT object_id, kind, n, last_seen FROM mk_misconceptions WHERE user_id = ? AND status != 'resolved' ORDER BY n DESC LIMIT 10").bind(u.id).all(),
+    env.DB.prepare("SELECT object_id, reason, at FROM mk_reconcile WHERE user_id = ? AND state = 'open' ORDER BY at DESC LIMIT 10").bind(u.id).all()]).then(async ([a, b]) => {
+    const mis = a.results, rec = b.results, mn = await getObjects(env, [...mis.map((m) => m.object_id), ...rec.map((r) => r.object_id)]);
+    return { mis, rec, mn }; });
+  const eventsP = env.DB.prepare('SELECT COUNT(*) AS n FROM mk_learner_events WHERE user_id = ? AND at >= ?').bind(u.id, new Date(Date.now() - 7 * 864e5).toISOString()).first();
+  const knP = objectsCached(env, 'bundle_kn', async () => Object.fromEntries((await env.DB.prepare("SELECT type, COUNT(*) AS n FROM mk_objects WHERE status IN ('current','modified') AND id NOT LIKE 'ea.u%' GROUP BY type").all()).results.map((r) => [r.type, r.n])));
+  const ingestP = objectsCached(env, 'bundle_ingest', async () => Object.fromEntries((await env.DB.prepare("SELECT json_extract(body, '$.ingest_state') AS s, COUNT(*) AS n FROM mk_objects WHERE type = 'Source' GROUP BY s").all()).results.map((r) => [r.s, r.n])));
+  const [[specialty, competency, domain, concept], { mis, rec, mn }, ev, kn, ingest, plan, board, topics, flags, pronunciations, assets, registry, build] = await Promise.all([
+    levels, open, eventsP, knP, ingestP,
+    curriculumPlan(env, u.id, { limit: 8, exam: examKeyOf(sel.family) }),
+    boardPlan(env, u.id, { limit: 8 }).catch((e) => ({ error: String(e.message || e) })),
+    topicPriorities(env, u.id, sel.blueprint_id),
+    assetFlags(env, u), ttsList(env), assetSummary(env, u), sourceRegistry(env),
+    // The owner sees the knowledge build's progress on the MKOS card (progress.js).
+    owner ? progress(env).catch(() => null) : null]);
+  const events = ev || { n: 0 };
   const avg = (k) => concept.length ? clamp(concept.reduce((a, x) => a + (x[k] || 0), 0) / concept.length) : null;
   const due = concept.filter((x) => x.retention && x.retention.next_review && x.retention.next_review <= nowIso().slice(0, 10)).length;
-  const events = (await env.DB.prepare('SELECT COUNT(*) AS n FROM mk_learner_events WHERE user_id = ? AND at >= ?').bind(u.id, new Date(Date.now() - 7 * 864e5).toISOString()).first()) || { n: 0 };
-  const kn = Object.fromEntries((await env.DB.prepare("SELECT type, COUNT(*) AS n FROM mk_objects WHERE status IN ('current','modified') AND id NOT LIKE 'ea.u%' GROUP BY type").all()).results.map((r) => [r.type, r.n]));
-  const ingest = Object.fromEntries((await env.DB.prepare("SELECT json_extract(body, '$.ingest_state') AS s, COUNT(*) AS n FROM mk_objects WHERE type = 'Source' GROUP BY s").all()).results.map((r) => [r.s, r.n]));
   return {
     at: nowIso(), owner, selection: sel,
     summary: { mastery: avg('mastery'), confidence: avg('confidence'), concepts_with_evidence: concept.length, review_burden: concept.filter((x) => (x.retention?.forgetting_risk || 0) >= 40).length, due_reviews: due, learning_events_7d: events.n,
       calibration: concept.reduce((a, x) => { const c = x.calibration || {}; for (const k of Object.keys(c)) a[k] = (a[k] || 0) + c[k]; return a; }, {}) },
     specialty, competency, domain,
     misconceptions: mis.map((m) => ({ ...m, name: mn[m.object_id]?.name || m.object_id })), changed_knowledge: rec.map((r) => ({ ...r, name: mn[r.object_id]?.name || r.object_id })),
-    plan: (await curriculumPlan(env, u.id, { limit: 8, exam: examKeyOf(sel.family) })).plan,
-    board: await boardPlan(env, u.id, { limit: 8 }).catch((e) => ({ error: String(e.message || e) })),
-    topics: await topicPriorities(env, u.id, sel.blueprint_id),
-    flags: (await assetFlags(env, u)).flags, pronunciations: await ttsList(env),
+    plan: plan.plan,
+    board,
+    topics,
+    flags: flags.flags, pronunciations,
     knowledge: { objects: kn, sources: ingest },
-    assets: await assetSummary(env, u),
-    registry: await sourceRegistry(env),
-    // The owner sees the knowledge build's progress on the MKOS card (progress.js).
-    build: owner ? await progress(env).catch(() => null) : null,
+    assets,
+    registry,
+    build,
   };
 }
 
 // The library's sources registry as the app reads it (drive file id -> label, citation, DOI, organisations, status, year): one shared
 // registry in MKOS instead of a copy cached in every account (the app keeps only entries for files MKOS does not know).
+// Only the fields it shows are read (about a tenth of the Source bodies), and the result is reused until mk_objects changes.
 async function sourceRegistry(env) {
-  const { results } = await env.DB.prepare("SELECT body FROM mk_objects WHERE type = 'Source' AND json_extract(body, '$.drive_file_id') IS NOT NULL").all().catch(() => ({ results: [] }));
-  const out = {};
-  for (const r of results) { const x = J(r.body); if (!x || !x.drive_file_id) continue;
-    out[x.drive_file_id] = { l: String(x.short_label || x.title || x.name || '').slice(0, 90), c: String(x.citation || '').slice(0, 120), d: String(x.doi || '').slice(0, 80), o: (x.responsible_orgs || []).map(String).slice(0, 5).join('/'),
-      s: x.status === 'superseded' || x.status === 'withdrawn' ? x.status : 'active', y: x.year ? String(x.year) : '' }; }
-  return out;
+  const build = async () => {
+    const { results } = await env.DB.prepare(`SELECT json_extract(body, '$.drive_file_id') AS f, json_extract(body, '$.short_label') AS sl, json_extract(body, '$.title') AS ti, json_extract(body, '$.name') AS nm,
+      json_extract(body, '$.citation') AS ci, json_extract(body, '$.doi') AS doi, json_extract(body, '$.responsible_orgs') AS orgs, json_extract(body, '$.status') AS st, json_extract(body, '$.year') AS yr
+      FROM mk_objects WHERE type = 'Source' AND json_extract(body, '$.drive_file_id') IS NOT NULL`).all();
+    const out = {};
+    for (const r of results) { if (!r.f) continue; const orgs = r.orgs == null ? null : J(r.orgs, r.orgs);
+      out[r.f] = { l: String(r.sl || r.ti || r.nm || '').slice(0, 90), c: String(r.ci || '').slice(0, 120), d: String(r.doi || '').slice(0, 80), o: (orgs || []).map(String).slice(0, 5).join('/'),
+        s: r.st === 'superseded' || r.st === 'withdrawn' ? r.st : 'active', y: r.yr ? String(r.yr) : '' }; }
+    return out;
+  };
+  return objectsCached(env, 'bundle_registry', build).catch(() => ({}));
 }
 
 // Guideline families that speak to a topic: by its concepts' recommendations, else by topic words in the family name/topic key.

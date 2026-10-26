@@ -82,6 +82,21 @@ const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const str = (v, max) => typeof v === 'string' ? v.trim().slice(0, max) : '';
 
 let schema;
+/* Columns added after a table was first made: each is added once, only when the table does not have it yet (one batch reads every
+   table's columns, so a warmed-up database costs one round trip here instead of one per column). */
+const ADDED = [
+  ['drive_accounts', 'v', 'INTEGER NOT NULL DEFAULT 0'],
+  ['drive_accounts', 'adf', 'TEXT'],   // ADF: when the account folder got its standard layout (once)
+  /* Sign in with Google: the account's Google link, sha256("google-sub:" + sub) (never the raw sub, never a token) and when it was made.
+     A password-less (Google) account has an empty salt and hash. */
+  ['users', 'google_sub', 'TEXT'],
+  ['users', 'google_linked', 'TEXT'],
+  /* Account standard (2026-10-25): optional demographics given at sign-up or setup ('' = prefer not to say). Kept in D1 like the name,
+     never in the Drive account file. */
+  ['users', 'gender', 'TEXT'],
+  ['users', 'gender_self', 'TEXT'],
+  ['users', 'dob', 'TEXT'],
+];
 function init(env) {
   schema = schema || env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, hash TEXT NOT NULL,
@@ -100,19 +115,15 @@ function init(env) {
       lease INTEGER NOT NULL DEFAULT 0, synced TEXT, error TEXT)`),
     /* Which Drive file holds each record, and the version of the record that file holds. */
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS drive_docs (user_id TEXT NOT NULL, path TEXT NOT NULL, file_id TEXT NOT NULL, synced TEXT NOT NULL, PRIMARY KEY (user_id, path))`),
-  ]).then(() => env.DB.prepare('ALTER TABLE drive_accounts ADD COLUMN v INTEGER NOT NULL DEFAULT 0').run().catch(() => { }))   // added later; fails harmlessly once it is there
-    .then(() => env.DB.prepare('ALTER TABLE drive_accounts ADD COLUMN adf TEXT').run().catch(() => { }))   // ADF: when the account folder got its standard layout (once)
-    /* Sign in with Google: the account's Google link, sha256("google-sub:" + sub) (never the raw sub, never a token) and when it was made.
-       A password-less (Google) account has an empty salt and hash. */
-    .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN google_sub TEXT').run().catch(() => { }))
-    .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN google_linked TEXT').run().catch(() => { }))
-    /* Account standard (2026-10-25): optional demographics given at sign-up or setup ('' = prefer not to say). Kept in D1 like the name,
-       never in the Drive account file. */
-    .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN gender TEXT').run().catch(() => { }))
-    .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN gender_self TEXT').run().catch(() => { }))
-    .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN dob TEXT').run().catch(() => { }))
     /* Life OS sign-in tickets: sha256 of the code only, 120 seconds, single use. */
-    .then(() => env.DB.prepare('CREATE TABLE IF NOT EXISTS sso_tickets (code_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)').run())
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS sso_tickets (code_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)'),
+    env.DB.prepare(`SELECT 'users' AS t, name FROM pragma_table_info('users') UNION ALL SELECT 'drive_accounts' AS t, name FROM pragma_table_info('drive_accounts')`),
+  ]).then(async out => {
+    const rows = (out[out.length - 1] && out[out.length - 1].results) || [];
+    const have = new Set(rows.map(r => r.t + '.' + r.name));
+    for (const [t, col, type] of ADDED) if (!rows.length || !have.has(t + '.' + col))   // no column list at all: try each, as before
+      await env.DB.prepare(`ALTER TABLE ${t} ADD COLUMN ${col} ${type}`).run().catch(() => { });   // fails harmlessly once it is there
+  })
     .catch(e => { schema = null; throw e; });
   return schema;
 }
@@ -505,9 +516,14 @@ async function sayList(env, user) {
 /* The site owner's list is the central one: it is used for every account. Anyone else's list applies to their own account only,
    on top of the owner's, and wins where both give the same word (respell keeps the first entry it meets for a word and skips
    entries that are switched off, so a person's own entries go first). */
+/* The owner's account id is looked up on most requests (whose records a read covers), so an isolate keeps a found id for a minute;
+   "no owner account yet" is never kept, and deleting an account forgets it at once. */
+let OWNER_ID = { t: 0, email: '', id: null };
 async function ownerId(env) {
   if (!env.OWNER_EMAIL) return null;
-  try { const r = await env.DB.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(String(env.OWNER_EMAIL).trim().toLowerCase()).first(); return r ? r.id : null; } catch (e) { return null; }
+  const email = String(env.OWNER_EMAIL).trim().toLowerCase();
+  if (OWNER_ID.id && OWNER_ID.email === email && Date.now() - OWNER_ID.t < 60000) return OWNER_ID.id;
+  try { const r = await env.DB.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(email).first(); OWNER_ID = { t: Date.now(), email, id: r ? r.id : null }; return r ? r.id : null; } catch (e) { return null; }
 }
 /* ---------- Central registry records (MKOS Data Domain Separation) ----------
    The owner's pronunciation list (med/says), its change log (med/saylog) and their daily copies (bak/says-<day>, bak/saylog-<day>)
@@ -1100,8 +1116,8 @@ const profileSoon = (env, ctx, uid) => { if (ctx && storeOn(env)) ctx.waitUntil(
 const syncSoon = (env, ctx, uid) => { if (ctx && storeOn(env)) ctx.waitUntil(syncUser(env, uid, { n: 14 }).catch(e => console.error(e))); };
 /* How much of one account's record is in Drive. */
 async function storage(env, user) {
-  const row = await env.DB.prepare('SELECT folder, backup_day, synced, error FROM drive_accounts WHERE user_id = ?').bind(user.id).first();
-  const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM docs WHERE user_id = ?').bind(user.id).first(), w = await env.DB.prepare('SELECT COUNT(*) AS n ' + DIRTY + ' AND d.user_id = ?').bind(user.id).first();
+  const [row, n, w] = await Promise.all([env.DB.prepare('SELECT folder, backup_day, synced, error FROM drive_accounts WHERE user_id = ?').bind(user.id).first(),
+    env.DB.prepare('SELECT COUNT(*) AS n FROM docs WHERE user_id = ?').bind(user.id).first(), env.DB.prepare('SELECT COUNT(*) AS n ' + DIRTY + ' AND d.user_id = ?').bind(user.id).first()]);
   return { on: storeOn(env), mode: DRIVE.mode, records: (n && n.n) || 0, waiting: (w && w.n) || 0, folder: !!(row && row.folder), synced: (row && row.synced) || '', backupDay: (row && row.backup_day) || '', error: (row && row.error) || '',
     url: row && row.folder && isOwner(env, user) ? 'https://drive.google.com/drive/folders/' + row.folder : '' };
 }
@@ -1453,7 +1469,10 @@ async function api(request, env, url, ctx) {
     try { body = text ? JSON.parse(text) : {}; } catch { return fail(400, 'Bad request.'); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'Bad request.');
   }
-  await init(env); await driveState(env);
+  await init(env);
+  /* The session lookup runs alongside the Drive state read (both are reads; the routes before sign-in simply do not use it). */
+  const userP = currentUser(request, env); userP.catch(() => { });
+  await driveState(env);
 
   /* Sign in with Google: what the login page may show (the client id is public), and the sign-in arriving at the reused Drive
      callback. Only a gsi_state cookie whose state matches Google's `state` makes it a sign-in; anything else is the Drive flow below. */
@@ -1569,7 +1588,7 @@ async function api(request, env, url, ctx) {
     return json({ ok: true });
   }
 
-  const user = await currentUser(request, env);
+  const user = await userP;
   if (request.method === 'GET' && url.pathname === '/api/lifeos/connect') return lifeosConnect(env, user);
   if (route === 'POST /api/logout') {
     for (const m of (request.headers.get('Cookie') || '').matchAll(/(?:^|;\s*)dcc_session=([a-f0-9]{64})/g)) await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(await sha(m[1])).run();
@@ -1660,10 +1679,12 @@ async function api(request, env, url, ctx) {
     return json({ recovery: rows.map(r => r.question) });
   }
   if (route === 'GET /api/me') {
-    const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
-    const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user), admin = await adminOf(env, user);
-    return json({ ...profile(user), setup: await setupOf(env, user), gender: user.gender || '', genderSelf: user.gender_self || '', dob: user.dob || '', password: !!user.hash, google: user.google_linked ? { linked_at: user.google_linked } : null, reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), says: await siteSays(env, user), connector: link ? link.created : null, areas: await summary(env, user.id),
-      library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: await storage(env, user), owner, admin,
+    /* Every part is a read of its own, so they are asked for together (one wait instead of one per part). */
+    const [link, H, used, admin, setup, rec, says, areas, store] = await Promise.all([env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first(),
+      hierarchy(env), aiUsed(env, user.id), adminOf(env, user), setupOf(env, user), recoveryOf(env, user.id), siteSays(env, user), summary(env, user.id), storage(env, user)]);
+    const providers = aiList(env, used, H), owner = isOwner(env, user);
+    return json({ ...profile(user), setup, gender: user.gender || '', genderSelf: user.gender_self || '', dob: user.dob || '', password: !!user.hash, google: user.google_linked ? { linked_at: user.google_linked } : null, reset: resetMode(env), recovery: rec.map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), says, connector: link ? link.created : null, areas,
+      library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: store, owner, admin,
       drive: admin ? { mode: DRIVE.mode, account: owner ? DRIVE.email : maskMail(DRIVE.email), canConnect: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET), canEdit: admin.integrations === 'edit', redirect: url.origin + '/api/google/callback' } : undefined });
   }
   /* The owner connects their own Google account once, so this server can write the account folders in their Drive. Google sends
@@ -1837,6 +1858,7 @@ async function api(request, env, url, ctx) {
       env.DB.prepare('DELETE FROM sso_tickets WHERE user_id = ?').bind(user.id),
       env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
     ]);
+    if (OWNER_ID.id === user.id) OWNER_ID = { t: 0, email: '', id: null };
     return withCookies(json({ ok: true }), clearCookies());
   }
   return fail(404, 'Not found.');
@@ -2006,8 +2028,8 @@ const MCP_TOOLS = [
 ];
 async function mcpServer(request, env, token, ctx) {
   if (request.method !== 'POST') return new Response('This address is for the Doctor Career Companion connector in Claude.', { status: 405, headers: { Allow: 'POST' } });
-  await init(env); await driveState(env);
-  const link = /^[a-f0-9]{64}$/.test(token) ? await env.DB.prepare('SELECT user_id FROM links WHERE token_hash = ?').bind(await sha(token)).first() : null;
+  await init(env);
+  const [link] = await Promise.all([/^[a-f0-9]{64}$/.test(token) ? env.DB.prepare('SELECT user_id FROM links WHERE token_hash = ?').bind(await sha(token)).first() : null, driveState(env)]);
   if (!link) return json({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'This connector link is not valid. Make a new one on the Doctor Career Companion account page.' } }, 401);
   const text = await request.text();
   if (text.length > MAX_DOC + 200000) return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Request too large.' } }, 413);
@@ -2039,9 +2061,9 @@ async function mcpServer(request, env, token, ctx) {
       /* The app's Profile tab (website, Claude and Life OS alike): the account's own settings, plus for USAP admins what the account
          page's admin part shows (role, the Drive connection, masked for admins other than the owner). Read only: changes to the
          password, recovery questions, connector link and the Drive connection happen on the website's account page. */
-      const admin = await adminOf(env, u), owner = isOwner(env, u), link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(uid).first();
-      return out({ firstName: u.first || '', lastName: u.last || '', email: u.email || '', gender: u.gender || '', genderSelf: u.gender_self || '', dob: u.dob || '', setup, areas: await summary(env, uid),
-        recovery: (await recoveryOf(env, uid)).length, connector: link ? link.created : null, storage: await storage(env, u), owner, admin,
+      const owner = isOwner(env, u), [admin, link, areas, rec, store] = await Promise.all([adminOf(env, u), env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(uid).first(), summary(env, uid), recoveryOf(env, uid), storage(env, u)]);
+      return out({ firstName: u.first || '', lastName: u.last || '', email: u.email || '', gender: u.gender || '', genderSelf: u.gender_self || '', dob: u.dob || '', setup, areas,
+        recovery: rec.length, connector: link ? link.created : null, storage: store, owner, admin,
         drive: admin ? { mode: DRIVE.mode, account: owner ? DRIVE.email : maskMail(DRIVE.email), canEdit: admin.integrations === 'edit' } : undefined });
     }
     if (name === 'ai_providers' || name === 'ask_ai' || name === 'storage_status') {

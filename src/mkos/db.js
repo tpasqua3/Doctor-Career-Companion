@@ -149,6 +149,16 @@ export const TABLES = [
   `CREATE TABLE IF NOT EXISTS mk_ite_dirty (user_id TEXT PRIMARY KEY, reason TEXT NOT NULL, marked_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS mk_ite_audit (user_id TEXT NOT NULL, report_id TEXT NOT NULL, exam_key TEXT, counts_json TEXT NOT NULL, stall_json TEXT NOT NULL, updated TEXT NOT NULL,
      PRIMARY KEY (user_id, report_id))`,
+  // Change-driven caches of central figures (SR-44): every write to mk_objects (any writer, including json_set updates) moves the
+  // 'objects' counter in the same transaction, so a figure computed from mk_objects is reused exactly while the counter is unchanged
+  // and recomputed the first time it moves. The counter starts at a random value, so a row made again never matches an older cache.
+  // Derived run state only: never mirrored to Drive, never restored, safe to empty (it is then simply rebuilt).
+  `CREATE TABLE IF NOT EXISTS mk_change (k TEXT PRIMARY KEY, n INTEGER NOT NULL)`,
+  `INSERT OR IGNORE INTO mk_change (k, n) VALUES ('objects', abs(random() % 1000000000000))`,
+  `CREATE TRIGGER IF NOT EXISTS mk_objects_chg_i AFTER INSERT ON mk_objects BEGIN UPDATE mk_change SET n = n + 1 WHERE k = 'objects'; END`,
+  `CREATE TRIGGER IF NOT EXISTS mk_objects_chg_u AFTER UPDATE ON mk_objects BEGIN UPDATE mk_change SET n = n + 1 WHERE k = 'objects'; END`,
+  `CREATE TRIGGER IF NOT EXISTS mk_objects_chg_d AFTER DELETE ON mk_objects BEGIN UPDATE mk_change SET n = n + 1 WHERE k = 'objects'; END`,
+  `CREATE TABLE IF NOT EXISTS mk_cache (k TEXT PRIMARY KEY, stamp TEXT NOT NULL, v TEXT NOT NULL, at TEXT NOT NULL)`,
 ];
 
 let ready = '';
@@ -156,9 +166,10 @@ let ready = '';
 export const _resetInit = () => { ready = ''; };
 export async function mkInit(env) {
   if (ready === FRAMEWORK_HASH) return;
-  await env.DB.batch(TABLES.map((s) => env.DB.prepare(s)));
-  // Settings overlay the framework defaults; record which framework version the store was last opened with.
-  const prev = await getSetting(env, 'framework_hash');
+  // One round trip: the tables, and which framework version the store was last opened with (settings overlay the framework defaults).
+  const out = await env.DB.batch([...TABLES.map((s) => env.DB.prepare(s)), env.DB.prepare("SELECT v FROM mk_settings WHERE k = 'framework_hash'")]);
+  const last = out && out[out.length - 1], row = last && Array.isArray(last.results) ? last.results[0] : undefined;
+  const prev = last && Array.isArray(last.results) ? (row ? row.v : null) : await getSetting(env, 'framework_hash');
   if (prev !== FRAMEWORK_HASH) {
     await setSetting(env, 'framework_hash', FRAMEWORK_HASH);
     await audit(env, 'system', 'framework_loaded', null, prev || '', FRAMEWORK_HASH, { versions: Object.fromEntries(Object.entries(FRAMEWORK.frameworks).map(([k, v]) => [k, v.version])) });
@@ -189,3 +200,26 @@ export function fwGet(path, ovr = {}) {
   return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), FRAMEWORK.frameworks);
 }
 export const resetOverrides = () => { OVR = { t: 0, v: {} }; };
+
+/* A figure computed only from mk_objects, reused while nothing in mk_objects has changed (see mk_change above). One round trip when it
+   is still valid (the counter and, unless this isolate already holds it, the stored value come back together); on a change it is
+   computed again and stored under the counter read before computing, so a value is never served for a state older than it reflects. */
+const MEMO = new Map();
+export async function objectsCached(env, key, compute) {
+  const mem = MEMO.get(key);
+  let row = null;
+  try {
+    row = await env.DB.prepare(`SELECT (SELECT n FROM mk_change WHERE k = 'objects') AS cur, c.stamp AS stamp, CASE WHEN c.stamp = ? THEN NULL ELSE c.v END AS v
+      FROM (SELECT 1) LEFT JOIN mk_cache c ON c.k = ?`).bind(mem ? mem.stamp : '', key).first();
+  } catch (e) { row = null; }
+  if (!row || row.cur == null) return compute();   // no counter (a database without the triggers yet): compute as before
+  const cur = String(row.cur);
+  if (mem && mem.stamp === cur) return mem.v;
+  if (row.stamp === cur) {
+    const v = J(row.v, undefined); if (v !== undefined) { MEMO.set(key, { stamp: cur, v }); return v; }
+  }
+  const v = await compute();
+  MEMO.set(key, { stamp: cur, v });
+  try { await env.DB.prepare('INSERT INTO mk_cache (k, stamp, v, at) VALUES (?, ?, ?, ?) ON CONFLICT (k) DO UPDATE SET stamp = excluded.stamp, v = excluded.v, at = excluded.at').bind(key, cur, JSON.stringify(v), nowIso()).run(); } catch (e) { /* the value is still returned */ }
+  return v;
+}

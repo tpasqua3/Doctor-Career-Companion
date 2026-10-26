@@ -11,11 +11,12 @@ export function d1(file = ':memory:', { strict = false } = {}) {
     all: async () => ({ results: db.prepare(sql).all(...norm(args)).map((r) => ({ ...r })), success: true }),
     run: async () => { const r = db.prepare(sql).run(...norm(args)); return { success: true, meta: { changes: r.changes, last_row_id: Number(r.lastInsertRowid) } }; },
     raw: async () => db.prepare(sql).all(...norm(args)).map((r) => Object.values(r)),
-    _exec: () => db.prepare(sql).run(...norm(args)),
+    // In a batch, D1 returns each statement's rows (empty for writes) beside its meta.
+    _exec: () => /^\s*(select|with)\b/i.test(sql) ? { results: db.prepare(sql).all(...norm(args)).map((r) => ({ ...r })), meta: { changes: 0 } } : { results: [], meta: db.prepare(sql).run(...norm(args)) },
   });
   return {
     prepare: (sql) => stmt(sql),
-    batch: async (list) => { db.exec('BEGIN'); try { const out = list.map((s) => ({ success: true, meta: s._exec() })); db.exec('COMMIT'); return out; } catch (e) { db.exec('ROLLBACK'); throw e; } },
+    batch: async (list) => { db.exec('BEGIN'); try { const out = list.map((s) => ({ success: true, ...s._exec() })); db.exec('COMMIT'); return out; } catch (e) { db.exec('ROLLBACK'); throw e; } },
     exec: async (sql) => { db.exec(sql); return { count: 1 }; },
     _db: db,
   };

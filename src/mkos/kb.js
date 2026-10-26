@@ -26,10 +26,13 @@ const bump = (v, part) => { const [a, b, c] = String(v || '0.0.0').split('.').ma
 
 export async function getObject(env, id) { const r = await env.DB.prepare('SELECT body FROM mk_objects WHERE id = ?').bind(id).first(); return r ? J(r.body) : null; }
 export async function getObjects(env, ids) {
-  const out = {}, list = [...new Set(ids)].filter(Boolean);
-  for (let i = 0; i < list.length; i += 90) {
-    const part = list.slice(i, i + 90), { results } = await env.DB.prepare(`SELECT id, body FROM mk_objects WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all();
-    for (const r of results) out[r.id] = J(r.body);
+  const out = {}, list = [...new Set(ids)].filter(Boolean), parts = [];
+  for (let i = 0; i < list.length; i += 90) parts.push(list.slice(i, i + 90));
+  // The chunks are independent reads: asked for up to six at a time (one wait per six chunks instead of one per chunk), merged in
+  // chunk order as before.
+  for (let i = 0; i < parts.length; i += 6) {
+    const got = await Promise.all(parts.slice(i, i + 6).map((part) => env.DB.prepare(`SELECT id, body FROM mk_objects WHERE id IN (${part.map(() => '?').join(',')})`).bind(...part).all()));
+    for (const { results } of got) for (const r of results) out[r.id] = J(r.body);
   }
   return out;
 }

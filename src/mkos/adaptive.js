@@ -12,14 +12,19 @@ const F = FRAMEWORK.frameworks;
 /* What To Teach / Review / Assess / Reinforce / Remediate / Prioritize / Delay, for one learner, from learner state + board relevance +
    open reconciliation items (knowledge that changed under them) + misconceptions. Deterministic. */
 export async function curriculumPlan(env, uid, { limit = 12, exam = 'lka' } = {}) {
-  const o = await overrides(env), low = fwGet('scoring.low_confidence.threshold', o);
-  const states = (await env.DB.prepare("SELECT object_id, mastery, conf, priority, body FROM mk_learner WHERE user_id = ? AND level IN ('concept','blueprint_topic')").bind(uid).all()).results.map((r) => ({ ...J(r.body, {}), object_id: r.object_id }));
+  // Five independent reads, asked for together.
+  const [o, st, top, mi, re] = await Promise.all([overrides(env),
+    env.DB.prepare("SELECT object_id, mastery, conf, priority, body FROM mk_learner WHERE user_id = ? AND level IN ('concept','blueprint_topic')").bind(uid).all(),
+    // Missing concepts: highest-weight blueprint topics the learner has no state for.
+    env.DB.prepare(`SELECT id, name, json_extract(body, '$.est_pct') AS w, json_extract(body, '$.tier') AS tier FROM mk_objects WHERE type = 'BlueprintTopic' AND status = 'current' AND id LIKE ?
+    ORDER BY w DESC LIMIT 200`).bind('bpt.' + exam + '.%').all(),
+    env.DB.prepare("SELECT object_id, kind, n, body FROM mk_misconceptions WHERE user_id = ? AND status != 'resolved' ORDER BY n DESC LIMIT ?").bind(uid, limit).all(),
+    env.DB.prepare("SELECT object_id, event_id, reason FROM mk_reconcile WHERE user_id = ? AND state = 'open' LIMIT ?").bind(uid, limit).all()]);
+  const low = fwGet('scoring.low_confidence.threshold', o);
+  const states = st.results.map((r) => ({ ...J(r.body, {}), object_id: r.object_id }));
   const seen = new Set(states.map((s) => s.object_id));
-  // Missing concepts: highest-weight blueprint topics the learner has no state for.
-  const missing = (await env.DB.prepare(`SELECT id, name, json_extract(body, '$.est_pct') AS w, json_extract(body, '$.tier') AS tier FROM mk_objects WHERE type = 'BlueprintTopic' AND status = 'current' AND id LIKE ?
-    ORDER BY w DESC LIMIT 200`).bind('bpt.' + exam + '.%').all()).results.filter((r) => !seen.has(r.id) && r.tier !== 'excluded').slice(0, limit);
-  const mis = (await env.DB.prepare("SELECT object_id, kind, n, body FROM mk_misconceptions WHERE user_id = ? AND status != 'resolved' ORDER BY n DESC LIMIT ?").bind(uid, limit).all()).results;
-  const rec = (await env.DB.prepare("SELECT object_id, event_id, reason FROM mk_reconcile WHERE user_id = ? AND state = 'open' LIMIT ?").bind(uid, limit).all()).results;
+  const missing = top.results.filter((r) => !seen.has(r.id) && r.tier !== 'excluded').slice(0, limit);
+  const mis = mi.results, rec = re.results;
   const by = (f, s = (a, b) => b.priority - a.priority) => states.filter(f).sort(s).slice(0, limit);
   const plan = {
     teach: missing.map((m) => ({ object_id: m.id, name: m.name, why: `not yet studied; ${Number(m.w || 0).toFixed(2)}% of the exam (est.)` })),

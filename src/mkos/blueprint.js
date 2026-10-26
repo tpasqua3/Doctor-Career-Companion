@@ -145,16 +145,20 @@ export async function blueprintDetail(env, id, { limit = 200 } = {}) {
    weak areas, recommended objectives, recommended review queue, readiness with its confidence. */
 export async function boardPlan(env, uid, { limit = 15 } = {}) {
   const sel = await selection(env, uid); if (!sel.blueprint_id) return { selection: sel, note: 'The selected blueprint has not been imported yet.' };
-  const objs = (await env.DB.prepare('SELECT * FROM mk_blueprint_objectives WHERE blueprint_id = ? ORDER BY priority_score DESC LIMIT 400').bind(sel.blueprint_id).all()).results;
-  const topics = await getObjects(env, objs.map((o) => o.objective_id));
+  // The objectives (then their topics), the learner's states and the domains are independent reads, asked for together.
+  const objsP = env.DB.prepare('SELECT * FROM mk_blueprint_objectives WHERE blueprint_id = ? ORDER BY priority_score DESC LIMIT 400').bind(sel.blueprint_id).all()
+    .then(async ({ results }) => ({ objs: results, topics: await getObjects(env, results.map((o) => o.objective_id)) }));
+  const [{ objs, topics }, st, dm] = await Promise.all([objsP,
+    env.DB.prepare("SELECT object_id, body FROM mk_learner WHERE user_id = ? AND level IN ('concept','blueprint_topic','domain','competency')").bind(uid).all(),
+    env.DB.prepare('SELECT * FROM mk_blueprint_domains WHERE blueprint_id = ? ORDER BY blueprint_weight DESC').bind(sel.blueprint_id).all()]);
   for (const o of objs) o.concept_id = ((topics[o.objective_id] || {}).concepts || [])[0] || null;
-  const states = Object.fromEntries((await env.DB.prepare("SELECT object_id, body FROM mk_learner WHERE user_id = ? AND level IN ('concept','blueprint_topic','domain','competency')").bind(uid).all()).results.map((r) => [r.object_id, J(r.body)]));
+  const states = Object.fromEntries(st.results.map((r) => [r.object_id, J(r.body)]));
   const rows = objs.map((o) => { const st = states[o.objective_id] || states[o.concept_id]; const sc = scoresFor({ frequency_score: o.frequency_score, importance_score: o.importance_score, relevance_score: o.importance_score, priority_score: o.priority_score }, st);
     return { objective_id: o.objective_id, concept_id: o.concept_id, name: o.objective_text, domain: o.domain_id, blueprint_priority: o.priority_score, frequency: o.frequency_score, importance: o.importance_score, studied: !!st, mastery: st ? st.mastery : null, confidence: st ? st.confidence : null, ...sc }; });
   const studied = rows.filter((r) => r.studied), totalW = rows.reduce((a, r) => a + r.blueprint_priority, 0) || 1;
   const readiness = clamp(rows.reduce((a, r) => a + r.blueprint_priority * (r.mastery || 0) / 100, 0) / totalW * 100);
   const coverage = clamp(studied.reduce((a, r) => a + r.blueprint_priority, 0) / totalW * 100);
-  const domains = (await env.DB.prepare('SELECT * FROM mk_blueprint_domains WHERE blueprint_id = ? ORDER BY blueprint_weight DESC').bind(sel.blueprint_id).all()).results.map((d) => ({ ...d, learner: states[d.domain_id] ? { mastery: states[d.domain_id].mastery, confidence: states[d.domain_id].confidence } : null }));
+  const domains = dm.results.map((d) => ({ ...d, learner: states[d.domain_id] ? { mastery: states[d.domain_id].mastery, confidence: states[d.domain_id].confidence } : null }));
   return {
     selection: sel, generated: nowIso(),
     readiness: { score: readiness, coverage, confidence: clamp(Math.min(coverage, studied.length ? studied.reduce((a, r) => a + (r.confidence || 0), 0) / studied.length : 0)), note: 'Readiness weighs mastery by blueprint priority over every objective; its confidence is limited by how much of the blueprint has evidence.' },
