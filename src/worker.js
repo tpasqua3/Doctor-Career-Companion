@@ -1598,6 +1598,26 @@ async function api(request, env, url, ctx) {
     const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
     return json({ ok: true, ...profile(u), password: !!u.hash, setup: await setupOf(env, u) });
   }
+  /* Edit the profile after sign-up (Account page and the app's Profile, website): only the fields sent change. Names cannot be
+     emptied; gender ('' = prefer not to say, `self` with its own words) and date of birth (YYYY-MM-DD, in the past, '' clears it)
+     stay in D1 users, never in the Drive account file. Passwords are never changed here (Change password / setup do that). */
+  if (route === 'PUT /api/profile') {
+    if (['password', 'confirm', 'current'].some(k => k in body)) return fail(400, 'Passwords are changed under Account, with Change password.');
+    const has = k => k in body, sets = [], args = [];
+    if (!['firstName', 'lastName', 'gender', 'genderSelf', 'dob'].some(has)) return fail(400, 'Nothing to change.');
+    for (const [k, col, what] of [['firstName', 'first', 'first'], ['lastName', 'last', 'last']]) if (has(k)) {
+      const n = str(body[k], 60); if (!n) return fail(400, `Enter your ${what} name.`); sets.push(col + ' = ?'); args.push(n);
+    }
+    if (has('gender') || has('genderSelf') || has('dob')) {
+      const d = demographics({ gender: has('gender') ? body.gender : user.gender || '', genderSelf: has('genderSelf') ? body.genderSelf : user.gender_self || '', dob: has('dob') ? body.dob : user.dob || '' });
+      if (d.error) return fail(400, d.error);
+      if (has('gender') || has('genderSelf')) { sets.push('gender = ?', 'gender_self = ?'); args.push(d.gender, d.self); }
+      if (has('dob')) { sets.push('dob = ?'); args.push(d.dob); }
+    }
+    if (sets.length) await env.DB.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).bind(...args, user.id).run();
+    const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
+    return json({ ok: true, ...profile(u), gender: u.gender || '', genderSelf: u.gender_self || '', dob: u.dob || '', setup: await setupOf(env, u) });
+  }
 
   /* MKOS, the Medical Knowledge Operating System (src/mkos): /api/mkos/<op>[/<id>]. Knowledge is central and readable by every
      account; learner state is the caller's own; administration is the owner's. */
@@ -1965,7 +1985,7 @@ const MCP_TOOLS = [
   ...MKOS_TOOLS,
   { name: 'load_progress', description: "Load this physician's saved study and career record: the documents changed since `since` (milliseconds since 1970; 0 for everything), the list of every document path, and the server time to pass as `since` next time. `area` defaults to \"med\". `only` (a list of document names such as [\"says\", \"saylog\"]) returns just those documents, whenever they changed.",
     inputSchema: { type: 'object', properties: { area: { type: 'string' }, since: { type: 'number' }, only: { type: 'array', items: { type: 'string' } } } }, annotations: { readOnlyHint: true } },
-  { name: 'get_profile', description: "The account's first name, last name and email, how much is saved, its storage status, whether recovery questions and a connector link are set, and for USAP admins their role and the Google Drive connection (read only).",
+  { name: 'get_profile', description: "The account's first name, last name, email, gender and date of birth (if given), how much is saved, its storage status, whether recovery questions and a connector link are set, and for USAP admins their role and the Google Drive connection (read only).",
     inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
   { name: 'save_doc', description: "Save one document, replacing what was there. The path starts with the area, e.g. med/state or med/bank_cv.",
     inputSchema: { type: 'object', properties: { path: { type: 'string' }, body: { type: 'object' } }, required: ['path', 'body'] }, annotations: { readOnlyHint: false, destructiveHint: false } },
@@ -2013,14 +2033,14 @@ async function mcpServer(request, env, token, ctx) {
       return out({ now: Date.now(), area: lang, paths, docs });
     }
     if (name === 'get_profile') {
-      const u = await env.DB.prepare('SELECT id, first, last, email, hash FROM users WHERE id = ?').bind(uid).first();
+      const u = await env.DB.prepare('SELECT id, first, last, email, hash, gender, gender_self, dob FROM users WHERE id = ?').bind(uid).first();
       if (!u) return bad('This account no longer exists.');
       const setup = await setupOf(env, u); delete u.hash;   // whether the account still needs its setup on the website (never the hash itself)
       /* The app's Profile tab (website, Claude and Life OS alike): the account's own settings, plus for USAP admins what the account
          page's admin part shows (role, the Drive connection, masked for admins other than the owner). Read only: changes to the
          password, recovery questions, connector link and the Drive connection happen on the website's account page. */
       const admin = await adminOf(env, u), owner = isOwner(env, u), link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(uid).first();
-      return out({ firstName: u.first || '', lastName: u.last || '', email: u.email || '', setup, areas: await summary(env, uid),
+      return out({ firstName: u.first || '', lastName: u.last || '', email: u.email || '', gender: u.gender || '', genderSelf: u.gender_self || '', dob: u.dob || '', setup, areas: await summary(env, uid),
         recovery: (await recoveryOf(env, uid)).length, connector: link ? link.created : null, storage: await storage(env, u), owner, admin,
         drive: admin ? { mode: DRIVE.mode, account: owner ? DRIVE.email : maskMail(DRIVE.email), canEdit: admin.integrations === 'edit' } : undefined });
     }

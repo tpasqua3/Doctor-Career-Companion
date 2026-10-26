@@ -163,6 +163,12 @@ Server in `src/worker.js` (`setupOf`, `questionOf`, `demographics`, `passwordPai
   your account." `POST /api/forgot/direct { email, question, answer, password, confirm }` sets the password (a password-less account's
   first one too) and ends every session; wrong answers strike toward the 15-minute lock; an unknown email answers like a wrong answer.
   The email link (`/api/forgot`, `/api/reset`) also sets a first password.
+- Profile edits after sign-up (`PUT /api/profile`): only the fields sent change; first and last name cannot be emptied, `gender`
+  (+ `genderSelf`) and `dob` are checked by `demographics` ('' clears to prefer not to say), still only in D1 `users`; any password
+  field is refused. Website: the account page's "Your profile" card (`profileCard`, ids prefixed `pf`) and the app's Profile
+  "Your details" (`profDetails`/`profSave`, draft in `PFD`). The connector's `get_profile` carries `gender`, `genderSelf`, `dob`
+  read only; the Claude copy shows them with a link to the website (no connector tool writes the profile). Tests:
+  `node --test test/profile.test.mjs`.
 
 ## AI order of operations
 The app's AI order of operations (`SERVICES`, `TIERS`, `JOBS`, `AI_ORDER` in `src/worker.js`) was deliberately worked out and is changed
