@@ -76,7 +76,6 @@ const withCookies = (res, list) => { for (const c of [].concat(list)) res.header
 /* A frame navigation (/auth/lifeos, the Google callback in a frame). A password log-in or sign-up is a fetch from the page
    (sec-fetch-dest "empty"), so the page itself says `framed: true` when it runs inside a frame (Life OS). */
 const frameReq = request => request.headers.get('sec-fetch-dest') === 'iframe';
-const INVITE_MSG = 'This site is by invitation. Enter the invitation code you were given.';
 const LANG_OK = /^[a-z]{2,3}$/;
 const PATH_OK = /^[a-z]{2,3}\/[A-Za-z0-9_\-.~:@+]{1,120}$/;
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -107,6 +106,11 @@ function init(env) {
        A password-less (Google) account has an empty salt and hash. */
     .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN google_sub TEXT').run().catch(() => { }))
     .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN google_linked TEXT').run().catch(() => { }))
+    /* Account standard (2026-10-25): optional demographics given at sign-up or setup ('' = prefer not to say). Kept in D1 like the name,
+       never in the Drive account file. */
+    .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN gender TEXT').run().catch(() => { }))
+    .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN gender_self TEXT').run().catch(() => { }))
+    .then(() => env.DB.prepare('ALTER TABLE users ADD COLUMN dob TEXT').run().catch(() => { }))
     /* Life OS sign-in tickets: sha256 of the code only, 120 seconds, single use. */
     .then(() => env.DB.prepare('CREATE TABLE IF NOT EXISTS sso_tickets (code_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)').run())
     .catch(e => { schema = null; throw e; });
@@ -139,13 +143,14 @@ async function strike(env, u) {
   const fails = u.fails + 1;
   await env.DB.prepare('UPDATE users SET fails = ?, locked_until = ? WHERE id = ?').bind(fails >= 5 ? 0 : fails, fails >= 5 ? Date.now() + 15 * 60000 : 0, u.id).run();
 }
-/* How a forgotten password is replaced on this site:
-     email    a one-hour link sent to the recovery email. On as soon as a RESEND_API_KEY secret is set.
-     direct   no email: the person gives the account's email, picks one of the recovery questions that account set on its account page,
-              answers it, and chooses a new password on the spot. An account that has not set any questions yet is checked against the
-              name it was made under instead. Used while email is not set up. PASSWORD_RESET = "direct" keeps it on alongside email; "off" switches it off.
-     off      neither. */
-const resetMode = env => { const want = String(env.PASSWORD_RESET || '').toLowerCase(); return want === 'off' ? (env.RESEND_API_KEY ? 'email' : 'off') : want === 'direct' || !env.RESEND_API_KEY ? 'direct' : 'email'; };
+/* How a forgotten password is replaced on this site (account standard, 2026-10-25):
+     direct   the standard way, always on: the person gives the account's email, the security question tied to it appears (an unknown
+              email gets a steady decoy question, so nobody learns which emails have accounts), they answer it and set a new password
+              (new and confirm). An account without a password yet (made by Google or Life OS) sets its first one this way. Only older
+              accounts that truly have no question are checked against the name they were made under instead.
+     email    also, when a RESEND_API_KEY secret is set: a one-hour link sent to the recovery email.
+     PASSWORD_RESET = "off" switches the question way off (then only the email link, if there is one). */
+const resetMode = env => String(env.PASSWORD_RESET || '').toLowerCase() === 'off' ? (env.RESEND_API_KEY ? 'email' : 'off') : 'direct';
 /* The recovery questions an account may choose from. An answer is compared ignoring capitals, punctuation and extra spaces. */
 const QUESTIONS = ['What was the name of your first pet?', 'What city were you born in?', 'What was the name of your elementary school?', 'What was the make and model of your first car?',
   'What is your mother\'s maiden name?', 'What was the name of the street you grew up on?', 'What was your childhood nickname?', 'What is the middle name of your oldest sibling?',
@@ -153,6 +158,37 @@ const QUESTIONS = ['What was the name of your first pet?', 'What city were you b
 const MAX_RECOVERY = 3, ANSWER_ROUNDS = 25000;
 const answerKey = a => String(a || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 200);
 const recoveryOf = async (env, uid) => (await env.DB.prepare('SELECT slot, question, salt, hash FROM recovery WHERE user_id = ? ORDER BY slot').bind(uid).all()).results;
+/* The steady decoy question for an email with no account: the same email always gets the same question, chosen by a keyed hash. */
+const decoyQuestion = async (env, email) => QUESTIONS[parseInt((await sha('dcc-decoy:' + (env.GOOGLE_OAUTH_CLIENT_SECRET || env.GOOGLE_CLIENT_SECRET || 'dcc') + ':' + email)).slice(0, 8), 16) % QUESTIONS.length];
+const NO_QUESTION = 'Sign in with Google with this email, then finish setting up your account.';
+/* Optional demographics (sign-up and setup): gender from the list ('' = prefer not to say; `self` with its own words) and date of birth. */
+const GENDERS = ['', 'woman', 'man', 'nonbinary', 'self'];
+function demographics(body) {
+  const gender = str(body.gender, 20).toLowerCase(), self = gender === 'self' ? str(body.genderSelf, 60) : '', dob = str(body.dob, 10);
+  if (!GENDERS.includes(gender)) return { error: 'Choose a gender from the list, or Prefer not to say.' };
+  if (dob) {
+    const t = Date.parse(dob + 'T00:00:00Z');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dob) || !t || new Date(t).toISOString().slice(0, 10) !== dob || t > Date.now() || dob < '1900-01-01') return { error: 'Enter a real date of birth, or leave it empty.' };
+  }
+  return { gender, self, dob };
+}
+/* The security question given at sign-up or setup: one from the list, with an answer of at least 2 letters or numbers. */
+function questionOf(body) {
+  const question = str(body.question, 200), answer = answerKey(body.answer);
+  if (!QUESTIONS.includes(question)) return { error: 'Choose a security question from the list.' };
+  if (answer.length < 2) return { error: 'Enter an answer to your security question (at least 2 letters or numbers).' };
+  return { question, answer };
+}
+const passwordPair = body => !PASSWORD_OK(body.password) ? PASSWORD_RULE : body.confirm !== body.password ? 'The two passwords do not match.' : '';
+/* An account is complete with a first and last name, a password and a security question. Accounts made by Google or Life OS start
+   without a password; older ones may lack the last name or the question. An incomplete account sees only the setup screen. */
+async function setupOf(env, u) {
+  const q = await env.DB.prepare('SELECT 1 AS x FROM recovery WHERE user_id = ? LIMIT 1').bind(u.id).first();
+  const missing = [!str(u.first, 60) && 'first', !str(u.last, 60) && 'last', !u.hash && 'password', !q && 'question'].filter(Boolean);
+  return { complete: !missing.length, missing };
+}
+const SETUP_MSG = 'Finish setting up your account first.';
+const SETUP_OPEN = new Set(['GET /api/me', 'POST /api/account/setup', 'DELETE /api/account', 'GET /api/backup']);
 const sameName = (a, b) => same(String(a || '').trim().toLowerCase(), String(b || '').trim().toLowerCase());
 /* `stay` (default on): a 30-day session; off: a browser-session cookie whose server session ends within a day. `frame`: the cookie
    for the Life OS frame (see cookie above), always a lasting one. */
@@ -1112,7 +1148,7 @@ const adfTickSafe = env => adfTick(env).catch(e => { console.error('adf', e); re
 const PAGE_DATE = 'October 25, 2026';
 const PAGES = {
   privacy: { title: 'Privacy policy', text: `## What this is
-Doctor Career Companion is a study and career development app for physicians. It is an independent personal project, offered by invitation to colleagues. This page says what the app keeps about you, where it goes, and how to remove it.
+Doctor Career Companion is a study and career development app for physicians. It is an independent personal project for colleagues. This page says what the app keeps about you, where it goes, and how to remove it.
 
 The app is for study. Do not enter patient information into it.
 
@@ -1120,7 +1156,7 @@ The app is for study. Do not enter patient information into it.
 Lessons, questions and flashcards draw on a central reference library of published clinical practice guidelines from professional societies and board study resources. The library is updated regularly so that content is informed by current, authoritative sources. Each lesson names the sources it used and flags anything that should be verified.
 
 ## What the app keeps
-- **Your account:** first name, last name, the email address you sign up with, and your password. The password is stored only as a salted hash and cannot be read back.
+- **Your account:** first name, last name, the email address you sign up with, your password and your security question with its answer. The password and the answer are stored only as salted hashes and cannot be read back. Gender and date of birth only if you choose to give them; they stay in the app's database and are not sent anywhere.
 - **Your study record:** the lessons, questions, flashcards and plans written for you, your answers and ratings, time spent, the questions you ask the study companion, your settings, and any exam report or blueprint you upload.
 - **Usage counts:** how many AI requests your account has made each day, to apply the daily allowance.
 
@@ -1162,7 +1198,7 @@ If this policy changes, the date at the top changes with it.
 ## Contact
 Questions or requests: [tpasqua3@gmail.com](mailto:tpasqua3@gmail.com)` },
   terms: { title: 'Terms of service', text: `## The short version
-Doctor Career Companion is a study aid for physicians, run as an independent personal project and offered by invitation. Its lessons and questions are written by AI and can be wrong. It is not medical advice and must not be used to make decisions about a patient. By creating an account you agree to these terms.
+Doctor Career Companion is a study aid for physicians, run as an independent personal project. Its lessons and questions are written by AI and can be wrong. It is not medical advice and must not be used to make decisions about a patient. By creating an account you agree to these terms.
 
 ## For education only
 - The app is for study, board preparation and career planning. It does not give medical advice, and nothing in it replaces current guidelines, the primary literature, your institution's policies or your own clinical judgment.
@@ -1171,7 +1207,7 @@ Doctor Career Companion is a study aid for physicians, run as an independent per
 - Do not enter patient information or anything that could identify a patient.
 
 ## Your account
-- Accounts are for the adult medical professionals and trainees who were invited. Use your own account and keep your password and connector link private.
+- Accounts are for adult medical professionals and trainees. Use your own account and keep your password and connector link private.
 - You are responsible for what is done through your account.
 - Each account has a daily allowance of AI requests, which may change.
 
@@ -1259,7 +1295,7 @@ async function lifeosConnect(env, user) {
 
 /* ---------- Sign in with Google and Life OS single sign-on (roadmap Phase 8, spec /specs/google_signin_sso.md) ----------
    The email is the identity. Three ways in, one account: the password (the browser may save it), "stay logged in", and Google.
-     GET  /auth/google              starts Google's redirect flow (state in the short gsi_state cookie, with stay and an invitation code)
+     GET  /auth/google              starts Google's redirect flow (state and stay in the short gsi_state cookie)
      GET  /api/google/callback      the app's existing, registered OAuth callback (the Drive connection's): a sign-in only when gsi_state
                                     matches Google's `state`; otherwise the Drive code runs exactly as before
      POST /auth/google/onetap       One Tap's credential, verified against Google's keys
@@ -1269,22 +1305,22 @@ async function lifeosConnect(env, user) {
 const GOOGLE_ONLY = 'This account signs in with Google.';
 const GSI_CALLBACK = '/api/google/callback';
 const gsiCookie = (v, age) => `gsi_state=${v}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
-/* The pending Google sign-in in this browser: signin.<stay 0|1>.<state>[.<invitation code, URI-encoded>]. */
+/* The pending Google sign-in in this browser: signin.<stay 0|1>.<state> (a trailing invitation code from before codes were retired is ignored). */
 function gsiPending(request) {
   const m = /(?:^|;\s*)gsi_state=([^;]+)/.exec(request.headers.get('Cookie') || '');
   if (!m) return null;
   const p = m[1].split('.');
   if (p[0] !== 'signin' || !/^[a-f0-9]{48}$/.test(p[2] || '')) return null;
-  let invite = ''; try { invite = decodeURIComponent(p.slice(3).join('.')); } catch { }
-  return { stay: p[1] !== '0', state: p[2], invite };
+  return { stay: p[1] !== '0', state: p[2] };
 }
 const redirect = (loc, cookies = []) => withCookies(new Response(null, { status: 302, headers: { Location: loc, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } }), cookies);
 const gsiBack = (url, msg, cookies) => redirect(url.origin + '/account.html?gsi=' + encodeURIComponent(msg), cookies);
 
 /* The account rule for a Google-verified email (`g`: email, sub or null, given, family, name). An account with the email is signed in
    and, when `link` is on, its Google link recorded or updated (the email is the identity, so a different sub still signs in). None:
-   created password-less when `create`, through the same invitation gate as the sign-up form, with the sign-up's Drive folder. */
-async function googleAccount(env, ctx, g, { create, invite, link = true }) {
+   created password-less when `create`, with the sign-up's Drive folder (sign-up is open: invitation codes are retired), and it starts
+   incomplete: the setup screen asks for the rest (setupOf). */
+async function googleAccount(env, ctx, g, { create, link = true }) {
   const now = new Date().toISOString(), subHash = g.sub ? await sha('google-sub:' + g.sub) : null;
   const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(g.email).first();
   if (u) {
@@ -1295,7 +1331,6 @@ async function googleAccount(env, ctx, g, { create, invite, link = true }) {
     return { user: u, created: false };
   }
   if (!create) return { error: 'No account uses that email address.', status: 404 };
-  if (env.SIGNUP_CODE && !same(str(invite, 100), String(env.SIGNUP_CODE))) return { error: INVITE_MSG, status: 403 };
   const words = String(g.name || '').split(/\s+/).filter(Boolean);
   const first = (g.given || words[0] || '').slice(0, 60), last = (g.family || (g.given ? '' : words.slice(1).join(' '))).slice(0, 60), id = rand(16);
   try {
@@ -1325,7 +1360,7 @@ async function googleCallback(request, env, url, ctx, pend) {
     if (!r.ok || !j.id_token) return back('Google did not complete the sign-in. Try again.');
     g = checkClaims(decodeJwt(j.id_token).payload, c.id);   // straight from Google over TLS: the claims are checked, no signature needed
   } catch (e) { return back(e && e.gsi ? e.message : 'Google could not be reached. Try again.'); }
-  const a = await googleAccount(env, ctx, g, { create: true, invite: pend.invite });
+  const a = await googleAccount(env, ctx, g, { create: true });
   if (a.error) return back(a.error);
   return redirect(url.origin + '/', [clear, await startSession(env, a.user.id, { stay: pend.stay, frame: frameReq(request) })]);
 }
@@ -1346,9 +1381,9 @@ async function authRoutes(request, env, url, ctx) {
     if (!c.id || !c.secret) return gsiBack(url, 'Sign in with Google is not switched on for this site.');
     /* Google refuses to be shown in a frame: open the sign-in in its own window instead. */
     if (frameReq(request)) return smallPage('Sign in with Google', `<h1>Sign in with Google</h1><p>Google's sign-in opens in a new window. Sign in there, then come back here and reload.</p><a href="${url.pathname}${url.search.replace(/"/g, '')}" target="_blank" rel="noopener">Open Sign in with Google</a>`);
-    const state = rand(24), stay = url.searchParams.get('stay') === '0' ? '0' : '1', invite = str(url.searchParams.get('invite'), 100);
+    const state = rand(24), stay = url.searchParams.get('stay') === '0' ? '0' : '1';
     return redirect('https://accounts.google.com/o/oauth2/v2/auth?' + form({ client_id: c.id, redirect_uri: url.origin + GSI_CALLBACK, response_type: 'code', scope: 'openid email profile', state, prompt: 'select_account' }),
-      [gsiCookie(['signin', stay, state].join('.') + (invite ? '.' + encodeURIComponent(invite) : ''), 600)]);
+      [gsiCookie(['signin', stay, state].join('.'), 600)]);
   }
   if (route === 'POST /auth/google/onetap') {
     const origin = request.headers.get('Origin');
@@ -1360,7 +1395,7 @@ async function authRoutes(request, env, url, ctx) {
     if (!body || typeof body.credential !== 'string') return json({ ok: false, error: 'Bad request.' }, 400);
     let g; try { g = await verifyIdToken(body.credential, c.id); } catch (e) { return json({ ok: false, error: e && e.gsi ? e.message : 'That Google sign-in could not be checked.' }, 401); }
     await init(env); await driveState(env);
-    const a = await googleAccount(env, ctx, g, { create: true, invite: body.invite });
+    const a = await googleAccount(env, ctx, g, { create: true });
     if (a.error) return json({ ok: false, error: a.error }, a.status);
     return withCookies(json({ ok: true, created: a.created }), await startSession(env, a.user.id, { stay: body.stay !== false, frame: frameReq(request) }));
   }
@@ -1429,18 +1464,24 @@ async function api(request, env, url, ctx) {
     if (pend && same(str(url.searchParams.get('state'), 100), pend.state)) return googleCallback(request, env, url, ctx, pend);
   }
 
+  /* The standard sign-up (account standard, 2026-10-25): first and last name, email, password and confirm, one security question and
+     its answer; gender and date of birth optional. Sign-up is open: an invitation code a request still sends is ignored. */
   if (route === 'POST /api/signup') {
     const email = str(body.email, 200).toLowerCase(), password = typeof body.password === 'string' ? body.password : '';
     const first = str(body.firstName, 60), last = str(body.lastName, 60);
-    /* Sign-up can be limited to invited people: set a SIGNUP_CODE secret and only someone who types it can create an account. */
-    if (env.SIGNUP_CODE && !same(str(body.code, 100), String(env.SIGNUP_CODE))) return fail(403, INVITE_MSG);
     if (!first) return fail(400, 'Enter your first name.');
-    if (!EMAIL_OK.test(email)) return fail(400, 'Enter a valid recovery email address.');
-    if (!PASSWORD_OK(password)) return fail(400, PASSWORD_RULE);
+    if (!last) return fail(400, 'Enter your last name.');
+    if (!EMAIL_OK.test(email)) return fail(400, 'Enter a valid email address.');
+    const pw = passwordPair(body); if (pw) return fail(400, pw);
+    const q = questionOf(body); if (q.error) return fail(400, q.error);
+    const d = demographics(body); if (d.error) return fail(400, d.error);
     if (await env.DB.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first()) return fail(409, 'An account with that email already exists. Log in instead.');
-    const id = rand(16), salt = rand(16);
-    await env.DB.prepare('INSERT INTO users (id, email, salt, hash, first, last, created) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .bind(id, email, salt, await hashPassword(password, salt), first, last, new Date().toISOString()).run();
+    const id = rand(16), salt = rand(16), qsalt = rand(16);
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO users (id, email, salt, hash, first, last, created, gender, gender_self, dob) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(id, email, salt, await hashPassword(password, salt), first, last, new Date().toISOString(), d.gender, d.self, d.dob),
+      env.DB.prepare('INSERT INTO recovery (user_id, slot, question, salt, hash) VALUES (?, 0, ?, ?, ?)').bind(id, q.question, qsalt, await hashPassword(q.answer, qsalt, ANSWER_ROUNDS)),
+    ]);
     syncSoon(env, ctx, id);   // the account's own folder in Drive is made now, before anything is saved in it
     return json(profile({ id, email, first, last }), 200, { 'Set-Cookie': await startSession(env, id, { stay: body.stay !== false, frame: frameReq(request) || body.framed === true }) });
   }
@@ -1459,38 +1500,45 @@ async function api(request, env, url, ctx) {
 
   /* The login screen asks which way a forgotten password is replaced here, so it can show the right form. */
   if (route === 'GET /api/reset/mode') return json({ mode: resetMode(env), email: !!env.RESEND_API_KEY, questions: QUESTIONS });
-  /* Forgot password without email, step 1: the recovery questions the account with this email has set (never the answers). */
+  /* Forgot password, step 1 (the standard way): the security question tied to this email (never the answer), and whether the account
+     has a password yet ("Set a password" or "Reset your password"). An unknown email gets the steady decoy question. Only an older
+     account with no question at all is checked against its name; an account with neither a question nor a password is told to sign
+     in with Google and finish setting up. */
   if (route === 'POST /api/forgot/questions') {
     if (resetMode(env) !== 'direct') return fail(403, 'Passwords are reset by email on this site.');
     const email = str(body.email, 200).toLowerCase();
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter the email address of your account.');
     const u = await env.DB.prepare('SELECT id, hash FROM users WHERE email = ?').bind(email).first();
-    if (!u) return fail(404, 'No account uses that email address.');
-    if (!u.hash) return fail(403, GOOGLE_ONLY);
-    return json({ questions: (await recoveryOf(env, u.id)).map(r => r.question) });
+    if (!u) { const q = await decoyQuestion(env, email); return json({ question: q, questions: [q], password: true }); }
+    const set = await recoveryOf(env, u.id);
+    if (set.length) return json({ question: set[0].question, questions: [set[0].question], password: !!u.hash });
+    if (!u.hash) return fail(403, NO_QUESTION);
+    return json({ question: null, questions: [], names: true, password: true });
   }
-  /* Step 2: the answer to one of those questions, and the new password. An account with no questions set gives its first and last name. */
+  /* Step 2: the answer and the new password (and its confirmation). Right answer: the password is set (a password-less account gets
+     its first one), every session of the account ends, and the person logs in. Wrong answers count toward the login lock. */
   if (route === 'POST /api/forgot/direct') {
     if (resetMode(env) !== 'direct') return fail(403, 'Passwords are reset by email on this site.');
     const email = str(body.email, 200).toLowerCase(), password = body.password;
     if (!EMAIL_OK.test(email)) return fail(400, 'Enter the email address of your account.');
     if (!PASSWORD_OK(password)) return fail(400, PASSWORD_RULE);
+    if (body.confirm !== undefined && body.confirm !== password) return fail(400, 'The two passwords do not match.');
     const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
-    if (!u) { await hashPassword('x', '00000000000000000000000000000000', ANSWER_ROUNDS); return fail(401, 'Those details do not match an account.'); }
-    if (!u.hash) return fail(403, GOOGLE_ONLY);
+    if (!u) { if (!answerKey(body.answer)) return fail(400, 'Enter your answer.'); await hashPassword('x', '00000000000000000000000000000000', ANSWER_ROUNDS); return fail(401, 'That answer is not right.'); }
     if (u.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
     const set = await recoveryOf(env, u.id);
     if (set.length) {
-      const row = set.find(r => r.question === str(body.question, 200)), answer = answerKey(body.answer);
-      if (!row) return fail(400, 'Choose one of your recovery questions.');
+      const row = set.find(r => r.question === str(body.question, 200)) || set[0], answer = answerKey(body.answer);
       if (!answer) return fail(400, 'Enter your answer.');
       if (!same(await hashPassword(answer, row.salt, ANSWER_ROUNDS), row.hash)) { await strike(env, u); return fail(401, 'That answer is not right.'); }
-    } else {
+    } else if (!u.hash) {
+      return fail(403, NO_QUESTION);
+    } else {   // an older account that truly has no question: its name (it is sent to the setup screen at its next sign-in)
       if (!str(body.firstName, 60)) return fail(400, 'Enter the first name on your account.');
       if (!sameName(body.firstName, u.first) || !sameName(body.lastName, u.last)) { await strike(env, u); return fail(401, 'Those details do not match the account.'); }
     }
     await setPassword(env, u.id, password);
-    console.log('password reset without email', u.id);
+    console.log('password set by the security question', u.id);
     return json({ ok: true });
   }
   /* Forgot password: a one-hour, single-use link to the recovery email, sent through Resend (RESEND_API_KEY secret; MAIL_FROM sets the sender). */
@@ -1529,6 +1577,29 @@ async function api(request, env, url, ctx) {
     return withCookies(json({ ok: true }), clearCookies());
   }
   if (!user) return fail(401, 'Log in to continue.');
+  /* An incomplete account (made by Google or Life OS, or an older one without a last name or a question) can use nothing but the
+     setup screen until it is complete. The app's pages treat this 401 like a lost session and go to the account page, which shows
+     "Finish setting up your account". */
+  const setup = await setupOf(env, user);
+  if (!setup.complete && !SETUP_OPEN.has(route)) return json({ error: SETUP_MSG, setup: true }, 401);
+  /* Finish setting up: everything still missing, saved at once. The name is always sent (prefilled, editable); a password only when
+     the account has none (with its confirmation; other sessions stay signed in), a question only when it has none. */
+  if (route === 'POST /api/account/setup') {
+    const first = 'firstName' in body ? str(body.firstName, 60) : str(user.first, 60), last = 'lastName' in body ? str(body.lastName, 60) : str(user.last, 60);
+    if (!first) return fail(400, 'Enter your first name.');
+    if (!last) return fail(400, 'Enter your last name.');
+    const d = 'gender' in body || 'dob' in body ? demographics(body) : null; if (d && d.error) return fail(400, d.error);
+    let pw = null, q = null;
+    if (!user.hash) { const e = passwordPair(body); if (e) return fail(400, e); pw = rand(16); }
+    if (setup.missing.includes('question')) { q = questionOf(body); if (q.error) return fail(400, q.error); }
+    const writes = [env.DB.prepare('UPDATE users SET first = ?, last = ? WHERE id = ?').bind(first, last, user.id)];
+    if (d) writes.push(env.DB.prepare('UPDATE users SET gender = ?, gender_self = ?, dob = ? WHERE id = ?').bind(d.gender, d.self, d.dob, user.id));
+    if (pw) writes.push(env.DB.prepare('UPDATE users SET salt = ?, hash = ?, fails = 0, locked_until = 0 WHERE id = ?').bind(pw, await hashPassword(body.password, pw), user.id));
+    if (q) { const qs = rand(16); writes.push(env.DB.prepare('INSERT OR REPLACE INTO recovery (user_id, slot, question, salt, hash) VALUES (?, 0, ?, ?, ?)').bind(user.id, q.question, qs, await hashPassword(q.answer, qs, ANSWER_ROUNDS))); }
+    await env.DB.batch(writes);
+    const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
+    return json({ ok: true, ...profile(u), password: !!u.hash, setup: await setupOf(env, u) });
+  }
 
   /* MKOS, the Medical Knowledge Operating System (src/mkos): /api/mkos/<op>[/<id>]. Knowledge is central and readable by every
      account; learner state is the caller's own; administration is the owner's. */
@@ -1551,6 +1622,7 @@ async function api(request, env, url, ctx) {
     if (user.locked_until > Date.now()) return fail(429, 'Too many attempts. Try again in a few minutes.');
     const items = (Array.isArray(body.items) ? body.items : []).filter(i => i && typeof i === 'object' && str(i.question, 200)).slice(0, MAX_RECOVERY + 1);
     if (items.length > MAX_RECOVERY) return fail(400, `Choose up to ${MAX_RECOVERY} questions.`);
+    if (!items.length) return fail(400, 'Keep at least one security question: it is how you get back in if you forget your password.');
     if (items.some(i => !QUESTIONS.includes(str(i.question, 200)))) return fail(400, 'Choose each question from the list.');
     if (new Set(items.map(i => str(i.question, 200))).size !== items.length) return fail(400, 'Choose a different question for each one.');
     const had = await recoveryOf(env, user.id), rows = [];
@@ -1572,7 +1644,7 @@ async function api(request, env, url, ctx) {
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
     const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user), admin = await adminOf(env, user);
-    return json({ ...profile(user), password: !!user.hash, google: user.google_linked ? { linked_at: user.google_linked } : null, reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), says: await siteSays(env, user), connector: link ? link.created : null, areas: await summary(env, user.id),
+    return json({ ...profile(user), setup, gender: user.gender || '', genderSelf: user.gender_self || '', dob: user.dob || '', password: !!user.hash, google: user.google_linked ? { linked_at: user.google_linked } : null, reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), says: await siteSays(env, user), connector: link ? link.created : null, areas: await summary(env, user.id),
       library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: await storage(env, user), owner, admin,
       drive: admin ? { mode: DRIVE.mode, account: owner ? DRIVE.email : maskMail(DRIVE.email), canConnect: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET), canEdit: admin.integrations === 'edit', redirect: url.origin + '/api/google/callback' } : undefined });
   }
@@ -1943,13 +2015,14 @@ async function mcpServer(request, env, token, ctx) {
       return out({ now: Date.now(), area: lang, paths, docs });
     }
     if (name === 'get_profile') {
-      const u = await env.DB.prepare('SELECT id, first, last, email FROM users WHERE id = ?').bind(uid).first();
+      const u = await env.DB.prepare('SELECT id, first, last, email, hash FROM users WHERE id = ?').bind(uid).first();
       if (!u) return bad('This account no longer exists.');
+      const setup = await setupOf(env, u); delete u.hash;   // whether the account still needs its setup on the website (never the hash itself)
       /* The app's Profile tab (website, Claude and Life OS alike): the account's own settings, plus for USAP admins what the account
          page's admin part shows (role, the Drive connection, masked for admins other than the owner). Read only: changes to the
          password, recovery questions, connector link and the Drive connection happen on the website's account page. */
       const admin = await adminOf(env, u), owner = isOwner(env, u), link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(uid).first();
-      return out({ firstName: u.first || '', lastName: u.last || '', email: u.email || '', areas: await summary(env, uid),
+      return out({ firstName: u.first || '', lastName: u.last || '', email: u.email || '', setup, areas: await summary(env, uid),
         recovery: (await recoveryOf(env, uid)).length, connector: link ? link.created : null, storage: await storage(env, u), owner, admin,
         drive: admin ? { mode: DRIVE.mode, account: owner ? DRIVE.email : maskMail(DRIVE.email), canEdit: admin.integrations === 'edit' } : undefined });
     }

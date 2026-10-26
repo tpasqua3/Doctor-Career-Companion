@@ -37,15 +37,12 @@ Content is generated, not hand-written. The prompts require named guidelines, fo
 
 ## Deploy
 
-Cloudflare dashboard → Workers & Pages → Create → Import a repository → this repo. Every push to `main` deploys. The D1 database is created on the first deploy. Optional: a `SIGNUP_CODE` secret limits sign-up to people who are given that code (without it, anyone with the address can create an account and use the site's AI allowance). Optional: a `RESEND_API_KEY` secret (and `MAIL_FROM`) turns on password reset by email.
+Cloudflare dashboard → Workers & Pages → Create → Import a repository → this repo. Every push to `main` deploys. The D1 database is created on the first deploy. Sign-up is open (invitation codes were retired on 2026-10-25; a `SIGNUP_CODE` left set is ignored). Optional: a `RESEND_API_KEY` secret (and `MAIL_FROM`) turns on password reset by email.
 
 ### Passwords
 
 - **Change password** (logged in, Account card on the account page): `POST /api/password` with the current and the new password. That device stays logged in; every other session of the account ends.
-- **Forgot password** on the login screen works one of two ways, reported by `GET /api/reset/mode`:
-  - `direct` (the default while no `RESEND_API_KEY` is set): `POST /api/forgot/questions` takes the account's email and returns the recovery questions that account set; `POST /api/forgot/direct` takes the email, one of those questions, its answer and the new password. Each account sets one to three questions from the list (`QUESTIONS` in `src/worker.js`) in the Recovery questions card on the account page (`PUT /api/recovery`, current password required); answers are kept only as salted hashes in the `recovery` table. An account with no questions set is checked against the first and last name it was created with instead, so until it sets one, anyone who knows its email and name can replace its password. Five wrong tries lock the account for 15 minutes.
-  - `email` (as soon as `RESEND_API_KEY` is set): `POST /api/forgot` sends a one-hour single-use link (`resets` table), and `POST /api/reset` takes the token and the new password. The direct form then switches itself off.
-- `PASSWORD_RESET` (a variable) overrides this: `direct` keeps the direct form on alongside email, `off` switches the direct form off.
+- **Forgot password** on the login screen (`GET /api/reset/mode`): the email, then the security question tied to it (`POST /api/forgot/questions`; an unknown email gets a steady decoy question), then the answer with the new password and its confirmation (`POST /api/forgot/direct`). It sets a first password for an account that has none. Every account chooses a question at sign-up or on the setup screen (one to three later on the account page, `PUT /api/recovery`); answers are kept only as salted hashes. Only older accounts with no question at all are checked against their first and last name. Five wrong tries lock the account for 15 minutes. With `RESEND_API_KEY` set, "Email me a reset link instead" also works (`POST /api/forgot`, `POST /api/reset`). `PASSWORD_RESET=off` switches the question way off. See CLAUDE.md, "Account standard".
 - All three paths end in `setPassword` in `src/worker.js`.
 
 ### Google Drive: the knowledge folder and the account folders

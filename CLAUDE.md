@@ -108,25 +108,23 @@ queued for the owner wholesale. Rules only, no AI calls; the code is `src/mkos/d
 Tests: `node --test test/dadd.test.mjs`.
 
 ## Sign in with Google and Life OS sign-on (roadmap Phase 8, spec `/specs/google_signin_sso.md`)
-Website only (the account page `public/account.html`; the Claude copy's sign-in stays its connector link, and `app/companion.html` is
-unchanged). Server: the routes in `src/worker.js` ("Sign in with Google and Life OS single sign-on"), token checks in `src/gsi.js`.
+Website only (the account page `public/account.html`; the Claude copy's sign-in stays its connector link). Server: the routes in `src/worker.js` ("Sign in with Google and Life OS single sign-on"), token checks in `src/gsi.js`.
 - Client: this app's own, `GOOGLE_OAUTH_CLIENT_ID`/`_SECRET` (the Drive connection's), else `GOOGLE_CLIENT_ID`/`_SECRET`.
   `GET /api/auth/config` gives the page `{ google, client_id, redirect }`.
-- `GET /auth/google[?stay=0|1&invite=]` redirects to Google with the EXISTING registered callback `<origin>/api/google/callback`; the
-  cookie `gsi_state` (`signin.<stay>.<state>[.<invite>]`, 10 minutes) makes Google's answer a sign-in only when its state matches,
+- `GET /auth/google[?stay=0|1]` redirects to Google with the EXISTING registered callback `<origin>/api/google/callback`; the
+  cookie `gsi_state` (`signin.<stay>.<state>`, 10 minutes; a trailing old invitation part is ignored) makes Google's answer a sign-in only when its state matches,
   otherwise the Drive connection code runs exactly as before. In a frame it answers a page that opens the sign-in in a new window.
   Failures land on `/account.html?gsi=<message>`.
-- `POST /auth/google/onetap { credential, stay, invite }`: One Tap (account page, signed out, top level only), verified against
+- `POST /auth/google/onetap { credential, stay }`: One Tap (account page, signed out, top level only), verified against
   Google's JWKS (RS256, keys cached an hour), then the claim checks (aud, iss, exp, email_verified, email).
 - Account rule (`googleAccount`): the email is the identity. An existing account signs in and records `users.google_sub` =
-  sha256("google-sub:" + sub) and `google_linked` (a new sub updates it); none: created password-less (empty salt and hash) through
-  the `SIGNUP_CODE` gate (an invitation code typed on the sign-up form goes with the Google button and One Tap), with the sign-up's
-  Drive folder. The link is also in the Drive `account.json` (`google: { sub_hash, linked_at }`). Password login of a password-less
-  account answers "This account signs in with Google."; its direct reset (recovery questions or name) is refused; it can set a
-  password (and recovery questions) without a current one, and then has both.
+  sha256("google-sub:" + sub) and `google_linked` (a new sub updates it); none: created password-less (empty salt and hash, names from
+  the token), with the sign-up's Drive folder, and incomplete until setup (see the account standard below). The link is also in the
+  Drive `account.json` (`google: { sub_hash, linked_at }`). Password login of a password-less account answers "This account signs in
+  with Google." until setup gives it a password; then it has both.
 - Life OS: `POST /api/lifeos/sso` only over its Service Binding (no `cf-connecting-ip` and `x-lifeos-hub: binding`, else 404), checked
   before the cross-site check. `{ op: "ticket", link }` (a `links` token) or `{ op: "ticket", email, verified: "google", name?, create?,
-  want_link? }` (creates password-less through the same gate; `want_link` adds a `links` token like `/api/lifeos/connect`; the account's
+  want_link? }` (creates password-less and incomplete, as above; `want_link` adds a `links` token like `/api/lifeos/connect`; the account's
   Google link is not recorded from Life OS's word). Answer `{ ok, code, created, link? }`; the code is kept as sha256 in `sso_tickets`,
   120 seconds, single use. `GET /auth/lifeos?code=&to=` redeems it (DELETE ... RETURNING) and 302s to the same-origin path (`safePath`).
 - Cookies: a frame navigation (`sec-fetch-dest: iframe`), or a log-in/sign-up whose body says `framed: true` (the page inside a frame),
@@ -134,6 +132,31 @@ unchanged). Server: the routes in `src/worker.js` ("Sign in with Google and Life
   cookie and a one-day server session. Sign-out and account deletion clear both kinds. `currentUser` accepts any live `dcc_session`.
 - Login and sign-up are real `<form>`s (`autocomplete` username/email, current-password/new-password) so browsers save passwords.
 Tests: `node --test test/gsi.test.mjs` (D1 stand-in over `node:sqlite`, Google stubbed).
+
+## Account standard: creation, setup and recovery (owner 2026-10-25, spec `/specs/account_standard.md`, extends the section above)
+Server in `src/worker.js` (`setupOf`, `questionOf`, `demographics`, `passwordPair`, `decoyQuestion`, the sign-up, forgot and
+`/api/account/setup` routes), page `public/account.html` (`auth`, `setupView`). Tests: `node --test test/account.test.mjs`.
+- Sign-up (`POST /api/signup`): first and last name, email, password and `confirm`, one security question from `QUESTIONS` with its
+  answer (hashed in `recovery` slot 0; up to three can be set later on the account page, `PUT /api/recovery`, never fewer than one),
+  optional `gender` ('' prefer not to say, woman, man, nonbinary, self with `genderSelf`) and `dob` (YYYY-MM-DD). Demographics live in
+  D1 `users` (`gender`, `gender_self`, `dob`) like the name, never in the Drive account file. Invitation codes are retired: a
+  `SIGNUP_CODE` left set and a `code` a request still sends are ignored, for the form, Google and Life OS alike.
+- Complete = first name, last name, a password and a security question (`setupOf` -> `{ complete, missing }`, in `/api/me` and the
+  connector's `get_profile`). An incomplete account (made by Google or Life OS, or an older one without a last name or question) gets
+  401 `{ setup: true }` from every route except `SETUP_OPEN` (`GET /api/me`, `POST /api/account/setup`, `DELETE /api/account`,
+  `GET /api/backup`) plus log out and Life OS connect; the app's pages treat the 401 like a lost session and open
+  `/account.html?next=1`, which shows only "Finish setting up your account" (the app's boot also goes there when `me.setup` is
+  incomplete). `POST /api/account/setup` saves it all at once: names (sent = required), demographics (when sent), password + confirm
+  only when the account has none (no session is ended), a question only when it has none. The Claude copy shows a notice with a link
+  to finish on the website (`setupNote` in `app/companion.html`); connector tools never set passwords and are not gated.
+- Forgot password (`resetMode` is `direct` unless `PASSWORD_RESET=off`; the email link stays on with `RESEND_API_KEY`):
+  `POST /api/forgot/questions { email }` -> `{ question, questions: [question], password }` (the first question; `password: false`
+  makes the page say "Set a password"); an unknown email gets a steady decoy (`decoyQuestion`, keyed hash) in the same shape. An older
+  account with a password and no question answers `{ names: true }` (the first-and-last-name fallback, kept only for them; they meet the
+  setup screen at their next login); an account with neither gets 403 "Sign in with Google with this email, then finish setting up
+  your account." `POST /api/forgot/direct { email, question, answer, password, confirm }` sets the password (a password-less account's
+  first one too) and ends every session; wrong answers strike toward the 15-minute lock; an unknown email answers like a wrong answer.
+  The email link (`/api/forgot`, `/api/reset`) also sets a first password.
 
 ## AI order of operations
 The app's AI order of operations (`SERVICES`, `TIERS`, `JOBS`, `AI_ORDER` in `src/worker.js`) was deliberately worked out and is changed

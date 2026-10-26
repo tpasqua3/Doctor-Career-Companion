@@ -57,7 +57,7 @@ textarea{font:inherit;font-size:.88rem;line-height:1.5;color:var(--ink);backgrou
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LANGS={med:'Study and career record'};
-let me=null,mode='login',resetMode='direct',pwOpen=false,fgQs=null,fgEmail='',rqOpen=false,newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
+let me=null,mode='login',resetMode='direct',resetEmail=false,qlist=[],pwOpen=false,fg=null,fgEmail='',rqOpen=false,newLink='',msg='',confirmDel=false,backups=null,accounts=null,test=null,syncing=false;
 const driveMsg=new URLSearchParams(location.search).get('drive')||'';
 const when=t=>t?new Date(t).toLocaleString():'never';
 const nextUrl=new URLSearchParams(location.search).has('next');
@@ -68,36 +68,63 @@ if(gsiMsg){try{const u=new URL(location.href);u.searchParams.delete('gsi');histo
 const G_ICON='<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>';
 const resetTok=(new URLSearchParams(location.search).get('reset')||'').match(/^[a-f0-9]{64}$/)?.[0]||'';
 async function api(method,path,body){const r=await fetch(path,{method,headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});let j={};try{j=await r.json()}catch(e){}if(!r.ok)throw new Error(j.error||'Something went wrong. Try again.');return j}
+/* The standard account pieces (account standard, 2026-10-25), shared by sign-up and the setup screen: the security question and the
+   optional demographics ("Prefer not to say" by default). */
+const GEN=[['','Prefer not to say'],['woman','Woman'],['man','Man'],['nonbinary','Non-binary'],['self','Prefer to self-describe']];
+const today=()=>new Date().toISOString().slice(0,10);
+function demoFields(d){d=d||{};return `<div class="row"><label style="flex:1">Gender (optional)<select id="gender" name="gender">${GEN.map(([k,n])=>`<option value="${k}" ${(d.gender||'')===k?'selected':''}>${n}</option>`).join('')}</select></label>
+   <label style="flex:1">Date of birth (optional)<input id="dob" name="bday" type="date" autocomplete="bday" min="1900-01-01" max="${today()}" value="${esc(d.dob||'')}"></label></div>
+   <label id="gselfw" ${d.gender==='self'?'':'hidden'}>Gender in your own words<input id="gself" maxlength="60" autocomplete="off" value="${esc(d.genderSelf||'')}"></label>`}
+function qFields(){return `<label>Security question<select id="sq" name="security-question" required><option value="">Choose a question</option>${qlist.map(q=>`<option>${esc(q)}</option>`).join('')}</select></label>
+   <label>Answer<input id="sa" name="security-answer" autocomplete="off" autocapitalize="off" required></label>
+   <span class="small muted">If you forget your password, you answer this to set a new one. Capitals, punctuation and extra spaces do not matter.</span>`}
+const demoBody=()=>({gender:v('gender'),genderSelf:v('gself'),dob:v('dob')});
+const pwPair=(auto)=>`<label>Password<input id="pw" name="password" type="password" autocomplete="${auto||'new-password'}" minlength="8" required></label>
+   <label>Confirm password<input id="pw2" name="password-confirm" type="password" autocomplete="new-password" minlength="8" required></label><span class="small muted">At least 8 characters.</span>`;
 function auth(){
-  if(resetTok)return `<h1>Choose a new password</h1><div class="card"><label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label>${msg}<div class="row"><button class="btn pri" data-act="reset">Save password</button></div></div>`;
-  const su=mode==='signup',fg=mode==='forgot';
-  /* No email on this site yet: the forgotten password is replaced on the spot, against the email and name the account was made under. */
-  if(fg&&resetMode==='direct'){const pws=`<label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label>
-   <label>New password again<input id="pw2" type="password" autocomplete="new-password" minlength="8"></label>`,back='<div class="row small"><button class="btn link" data-act="fgback">Use a different email</button><button class="btn link" data-mode="login">Back to log in</button></div>';
-   return `<div><h1>Doctor Career Companion</h1></div><div class="card"><h2>Choose a new password</h2>
-   ${!fgQs?`<p class="small muted">Enter the email of your account. You will then answer one of the recovery questions you set.</p>
+  if(resetTok)return `<h1>Choose a new password</h1><div class="card"><label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8"></label><label>Confirm new password<input id="pw2" type="password" autocomplete="new-password" minlength="8"></label>${msg}<div class="row"><button class="btn pri" data-act="reset">Save password</button></div></div>`;
+  const su=mode==='signup',fgm=mode==='forgot';
+  /* Forgot password (the standard way): the email, then the security question tied to it, then the new password and its confirmation.
+     An account without a password yet sets one the same way. */
+  if(fgm&&resetMode==='direct'){const pws=`<label>New password<input id="pw" type="password" autocomplete="new-password" minlength="8" required></label>
+   <label>Confirm new password<input id="pw2" type="password" autocomplete="new-password" minlength="8" required></label>`,back='<div class="row small"><button class="btn link" data-act="fgback">Use a different email</button><button class="btn link" data-mode="login">Back to log in</button></div>';
+   const title=fg&&fg.password===false?'Set a password':'Reset your password';
+   return `<div><h1>Doctor Career Companion</h1></div><div class="card"><h2>${title}</h2>
+   ${!fg?`<p class="small muted">Enter the email of your account. Your security question appears next.</p>
      <label>Email<input id="email" type="email" autocomplete="email"></label>${msg}
-     <div class="row"><button class="btn pri" data-act="fgnext">Continue</button></div><div class="row small"><button class="btn link" data-mode="login">Back to log in</button></div>`
-   :fgQs.length?`<p class="small muted">${esc(fgEmail)}</p>
-     <label>Recovery question<select id="rq">${fgQs.map(q=>`<option>${esc(q)}</option>`).join('')}</select></label>
-     <label>Your answer<input id="ra" autocomplete="off" autocapitalize="off"></label>${pws}${msg}
-     <div class="row"><button class="btn pri" data-act="direct">Change password</button></div>${back}`
-   :`<p class="small muted">${esc(fgEmail)} has no recovery questions set yet. Enter the first and last name the account was created with instead.</p>
+     <div class="row"><button class="btn pri" data-act="fgnext">Continue</button>${resetEmail?'<button class="btn" data-act="fgmail">Email me a reset link instead</button>':''}</div><div class="row small"><button class="btn link" data-mode="login">Back to log in</button></div>`
+   :!fg.names?`<p class="small muted">${esc(fgEmail)}</p>
+     <p><b>${esc(fg.question)}</b></p>
+     <label>Your answer<input id="ra" autocomplete="off" autocapitalize="off" required></label>${pws}${msg}
+     <div class="row"><button class="btn pri" data-act="direct">${esc(title)}</button></div>${back}`
+   :`<p class="small muted">${esc(fgEmail)} has no security question yet. Enter the first and last name the account was created with instead; you will be asked to choose a question when you next log in.</p>
      <div class="row"><label style="flex:1">First name<input id="first" autocomplete="given-name"></label><label style="flex:1">Last name<input id="last" autocomplete="family-name"></label></div>${pws}${msg}
-     <div class="row"><button class="btn pri" data-act="direct">Change password</button></div>${back}`}</div>`}
-  if(fg&&resetMode==='off')return `<div><h1>Doctor Career Companion</h1></div><div class="card"><h2>Reset your password</h2><p class="small muted">Password reset is switched off on this site. Ask the person who invited you to help.</p><div class="row small"><button class="btn link" data-mode="login">Back to log in</button></div></div>`;
+     <div class="row"><button class="btn pri" data-act="direct">Reset your password</button></div>${back}`}</div>`}
+  if(fgm&&resetMode==='off')return `<div><h1>Doctor Career Companion</h1></div><div class="card"><h2>Reset your password</h2><p class="small muted">Password reset is switched off on this site. Ask the site owner to help.</p><div class="row small"><button class="btn link" data-mode="login">Back to log in</button></div></div>`;
   return `<div><h1>Doctor Career Companion</h1><p class="muted">Your account keeps your study record (question history, mastery by topic, lessons, career plans) whether you use the app here or inside Claude.</p></div>
-  <form class="card" id="authf" data-act="${su?'signup':fg?'forgot':'login'}" method="post" action="#" autocomplete="on" novalidate><h2>${su?'Create your account':fg?'Reset your password':'Log in'}</h2>
-   ${!fg&&gsi&&gsi.redirect?`<a class="btn gbtn" href="/auth/google" data-gsi>${G_ICON}<span>${su?'Sign up with Google':'Sign in with Google'}</span></a><div class="or">or with ${su?'a password':'your password'}</div>`:''}
-   ${su?`<div class="row"><label style="flex:1">First name<input id="first" name="given-name" autocomplete="given-name"></label><label style="flex:1">Last name<input id="last" name="family-name" autocomplete="family-name"></label></div>`:''}
-   <label>${su||fg?'Recovery email':'Email'}<input id="email" name="email" type="email" autocomplete="${su||fg?'email':'username'}"></label>
-   ${su?'<span class="small muted">Used only to send you a password reset link.</span><span class="small muted">By creating an account you agree to the <a href="/terms.html">terms of service</a> and <a href="/privacy.html">privacy policy</a>.</span>':''}
-   ${su?'<label>Invitation code<input id="code" name="invite" autocomplete="off" placeholder="Only if you were given one"></label>':''}
-   ${fg?'':`<label>Password<input id="pw" name="password" type="password" autocomplete="${su?'new-password':'current-password'}"></label>
-   <label class="check"><input type="checkbox" id="stay" name="stay" checked> Stay logged in</label>`}
+  <form class="card" id="authf" data-act="${su?'signup':fgm?'forgot':'login'}" method="post" action="#" autocomplete="on" novalidate><h2>${su?'Create your account':fgm?'Reset your password':'Log in'}</h2>
+   ${!fgm&&gsi&&gsi.redirect?`<a class="btn gbtn" href="/auth/google" data-gsi>${G_ICON}<span>${su?'Sign up with Google':'Sign in with Google'}</span></a><div class="or">or with ${su?'a password':'your password'}</div>`:''}
+   ${su?`<div class="row"><label style="flex:1">First name<input id="first" name="given-name" autocomplete="given-name" required></label><label style="flex:1">Last name<input id="last" name="family-name" autocomplete="family-name" required></label></div>`:''}
+   <label>${fgm?'Recovery email':'Email'}<input id="email" name="email" type="email" autocomplete="${su||fgm?'email':'username'}" required></label>
+   ${su?pwPair()+qFields()+demoFields():fgm?'':`<label>Password<input id="pw" name="password" type="password" autocomplete="current-password"></label>`}
+   ${fgm?'':'<label class="check"><input type="checkbox" id="stay" name="stay" checked> Stay logged in</label>'}
+   ${su?'<span class="small muted">By creating an account you agree to the <a href="/terms.html">terms of service</a> and <a href="/privacy.html">privacy policy</a>.</span>':''}
    ${msg}
-   <div class="row"><button class="btn pri" type="submit">${su?'Create account':fg?'Email me a reset link':'Log in'}</button></div>
-   <div class="row small">${su?'<button type="button" class="btn link" data-mode="login">I already have an account</button>':`<button type="button" class="btn link" data-mode="signup">Create an account</button>${fg?'<button type="button" class="btn link" data-mode="login">Back to log in</button>':'<button type="button" class="btn link" data-mode="forgot">Forgot password?</button>'}`}</div></form>`}
+   <div class="row"><button class="btn pri" type="submit">${su?'Create account':fgm?'Email me a reset link':'Log in'}</button></div>
+   <div class="row small">${su?'<button type="button" class="btn link" data-mode="login">I already have an account</button>':`<button type="button" class="btn link" data-mode="signup">Create an account</button>${fgm?'<button type="button" class="btn link" data-mode="login">Back to log in</button>':'<button type="button" class="btn link" data-mode="forgot">Forgot password?</button>'}`}</div></form>`}
+/* Finish setting up your account: an account made by Google or Life OS (no password yet), or an older one without a last name or a
+   security question, sees only this until it is complete. Only what is missing is asked; the email is fixed. */
+function setupView(){const miss=(me.setup&&me.setup.missing)||[],full=me.password===false,names=full||miss.includes('first')||miss.includes('last');
+  return `<div class="row" style="justify-content:space-between"><h1>Finish setting up your account</h1><button class="btn link" data-act="logout">Log out</button></div>
+  <form class="card" id="setupf" data-act="setup" method="post" action="#" autocomplete="on" novalidate>
+   <p class="small muted">${full?'One step before you start: choose a password and a security question, so you can always get back into your account.':'One more step: your account needs '+[miss.includes('first')&&'your first name',miss.includes('last')&&'your last name',miss.includes('question')&&'a security question'].filter(Boolean).join(' and ')+'.'}</p>
+   <label>Email<input id="email" name="email" type="email" value="${esc(me.email)}" readonly autocomplete="username"></label>
+   ${names?`<div class="row"><label style="flex:1">First name<input id="first" name="given-name" autocomplete="given-name" value="${esc(me.firstName||'')}" required></label><label style="flex:1">Last name<input id="last" name="family-name" autocomplete="family-name" value="${esc(me.lastName||'')}" required></label></div>`:''}
+   ${full?demoFields(me):''}
+   ${me.password===false?pwPair():''}
+   ${miss.includes('question')?qFields():''}
+   ${msg}
+   <div class="row"><button class="btn pri" type="submit">Save and continue</button></div></form>`}
 function home(){
   const langs=me.areas||[];
   return `<div class="row" style="justify-content:space-between"><h1>${esc(me.firstName?'Dr. '+(me.lastName||me.firstName):'Your account')}</h1><button class="btn link" data-act="logout">Log out</button></div>
@@ -163,6 +190,7 @@ function labour(){const h=me.hierarchy;if(!h)return '';const sel=(kind,id,cur)=>
    <div class="jobs">${h.jobs.map(j=>`<div class="job"><div class="row" style="justify-content:space-between"><b>${esc(j.name)}</b>${sel('jobs',j.id,j.need)}</div><span class="small muted">${esc(j.what)}</span>
      <span class="small">${j.order.length?'Done by '+esc(j.order.join(', then ')):'<span style="color:var(--bad)">Nobody can do this: add a key or lower the tier</span>'}${j.differ?'. Never the one that wrote it, when another is available':''}${j.pick&&j.id!=='chat'?'. The user\'s "Teaching by" choice goes first':''}.</span></div>`).join('')}</div>
    ${me.owner?'<div class="row"><button class="btn" data-act="hreset">Back to the built-in defaults</button></div>':''}</div>`}
+document.addEventListener('change',e=>{if(e.target.id==='gender'){const w=$('#gselfw');if(w)w.hidden=e.target.value!=='self'}});
 document.addEventListener('change',async e=>{const d=e.target.dataset||{};if(!d.h)return;try{me.hierarchy=await api('PUT','/api/admin/hierarchy',{[d.h]:{[d.id]:e.target.value}});msg='';draw()}catch(x){show(x.message)}});
 /* The owner rewrites the privacy policy and the terms of service here. */
 let doc=null;
@@ -177,39 +205,43 @@ async function syncAll(){if(syncing)return;syncing=true;draw();try{for(let i=0;i
 let govUi=null;
 function mountGov(){const el=$('#usap-gov');if(!el)return;govUi=govUi||new Promise((ok,no)=>{const x=document.createElement('script');x.src='/usap/ui.js';x.onload=ok;x.onerror=no;document.head.appendChild(x)});
   govUi.then(()=>{if(window.UsapGovernance&&document.body.contains(el))Promise.resolve(window.UsapGovernance.mount(el)).then(r=>{el.hidden=!(r&&r.visible)}).catch(()=>{})}).catch(()=>{})}
-function draw(){$('#app').innerHTML=(me?home():auth())+'<p class="small muted" style="text-align:center"><a href="/privacy.html" style="color:inherit">Privacy policy</a> · <a href="/terms.html" style="color:inherit">Terms of service</a></p>';mountGov();startOneTap()}
+function draw(){$('#app').innerHTML=(me?(me.setup&&me.setup.complete===false?setupView():home()):auth())+'<p class="small muted" style="text-align:center"><a href="/privacy.html" style="color:inherit">Privacy policy</a> · <a href="/terms.html" style="color:inherit">Terms of service</a></p>';mountGov();startOneTap()}
 /* One Tap: only on the log in and sign-up screens, only signed out, only when this page is not in a frame, and only when the site has a
    Google client. Google's script verifies nothing here: the credential goes to the server, which checks it against Google's keys. */
 function startOneTap(){if(oneTap||me||!gsi||!gsi.google||!gsi.client_id||resetTok||(mode!=='login'&&mode!=='signup'))return;try{if(window.top!==window)return}catch(e){return}
   oneTap=true;const x=document.createElement('script');x.src='https://accounts.google.com/gsi/client';x.async=true;x.onload=()=>{try{google.accounts.id.initialize({client_id:gsi.client_id,callback:oneTapDone,auto_select:false,cancel_on_tap_outside:true,use_fedcm_for_prompt:true,itp_support:true});google.accounts.id.prompt()}catch(e){}};document.head.appendChild(x)}
-async function oneTapDone(r){try{await api('POST','/auth/google/onetap',{credential:r&&r.credential,stay:!$('#stay')||$('#stay').checked,invite:v('code')});if(nextUrl)return location.replace('/');location.replace('/account.html')}catch(x){show(x.message)}}
+async function oneTapDone(r){try{await api('POST','/auth/google/onetap',{credential:r&&r.credential,stay:!$('#stay')||$('#stay').checked});if(nextUrl)return location.replace('/');location.replace('/account.html')}catch(x){show(x.message)}}
 const v=id=>($('#'+id)||{}).value||'';
 const show=(t,ok)=>{msg=`<div class="${ok?'ok':'err'}">${esc(t)}</div>`;draw()};
 const stayOn=()=>!$('#stay')||$('#stay').checked;
 /* Inside the Life OS frame the session cookie must be partitioned to stick; the server sets it so when told. */
 const framed=(()=>{try{return window.top!==window}catch(e){return true}})();
 /* The log in and sign-up forms are real forms, so browsers offer to save the password and fill it in next time. */
-document.addEventListener('submit',e=>{const f=e.target.closest('#authf');if(!f)return;e.preventDefault();act(f.dataset.act,f.querySelector('[type=submit]'))});
+document.addEventListener('submit',e=>{const f=e.target.closest('#authf,#setupf');if(!f)return;e.preventDefault();act(f.dataset.act,f.querySelector('[type=submit]'))});
 document.addEventListener('click',async e=>{
-  const m=e.target.closest('[data-mode]');if(m){mode=m.dataset.mode;msg='';fgQs=null;draw();if(mode==='forgot'){try{const was=resetMode;resetMode=(await api('GET','/api/reset/mode')).mode;if(resetMode!==was&&mode==='forgot')draw()}catch(x){}}return}
-  /* Sign in with Google: the stay-logged-in choice and an invitation code typed on the sign-up form go with it. */
-  const g=e.target.closest('[data-gsi]');if(g){e.preventDefault();const q=new URLSearchParams({stay:stayOn()?'1':'0'});if(v('code').trim())q.set('invite',v('code').trim());location.href='/auth/google?'+q;return}
+  const m=e.target.closest('[data-mode]');if(m){mode=m.dataset.mode;msg='';fg=null;draw();if(mode==='forgot'){try{const was=resetMode;await resetInfo();if(resetMode!==was&&mode==='forgot')draw()}catch(x){}}return}
+  /* Sign in with Google: the stay-logged-in choice goes with it. */
+  const g=e.target.closest('[data-gsi]');if(g){e.preventDefault();const q=new URLSearchParams({stay:stayOn()?'1':'0'});location.href='/auth/google?'+q;return}
   const b=e.target.closest('[data-act]');if(!b||b.tagName==='FORM')return;act(b.dataset.act,b)});
 async function act(a,b){msg='';
   try{
     if(a==='login'){await api('POST','/api/login',{email:v('email'),password:v('pw'),stay:stayOn(),framed});if(nextUrl)return location.replace('/');return load()}
-    if(a==='signup'){await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw'),code:v('code'),stay:stayOn(),framed});if(nextUrl)return location.replace('/');return load()}
-    if(a==='forgot'){try{await api('POST','/api/forgot',{email:v('email')})}catch(x){if(/not switched on/.test(x.message)){resetMode='direct';return draw()}throw x}return show('Check your email for a reset link. It works for one hour.',true)}
-    if(a==='fgnext'){const em=v('email').trim();try{fgQs=(await api('POST','/api/forgot/questions',{email:em})).questions;fgEmail=em}catch(x){if(/reset by email/.test(x.message)){resetMode='email';return show('This site resets passwords by email. Enter your recovery email.')}throw x}return draw()}
-    if(a==='fgback'){fgQs=null;return draw()}
+    if(a==='signup'){if(!v('first').trim()||!v('last').trim())return show('Enter your first and last name.');if(v('pw')!==v('pw2'))return show('The two passwords do not match.');if(!v('sq'))return show('Choose a security question.');
+      await api('POST','/api/signup',{firstName:v('first'),lastName:v('last'),email:v('email'),password:v('pw'),confirm:v('pw2'),question:v('sq'),answer:v('sa'),...demoBody(),stay:stayOn(),framed});if(nextUrl)return location.replace('/');return load()}
+    if(a==='setup'){if(me.password===false&&v('pw')!==v('pw2'))return show('The two passwords do not match.');const full=me.password===false,b=$('#first')?{firstName:v('first'),lastName:v('last')}:{};
+      if(full)Object.assign(b,demoBody(),{password:v('pw'),confirm:v('pw2')});if($('#sq'))Object.assign(b,{question:v('sq'),answer:v('sa')});
+      await api('POST','/api/account/setup',b);if(nextUrl)return location.replace('/');return load()}
+    if(a==='forgot'||a==='fgmail'){try{await api('POST','/api/forgot',{email:v('email')})}catch(x){if(/not switched on/.test(x.message)){resetMode='direct';return draw()}throw x}return show('Check your email for a reset link. It works for one hour.',true)}
+    if(a==='fgnext'){const em=v('email').trim();try{fg=await api('POST','/api/forgot/questions',{email:em});fgEmail=em}catch(x){if(/reset by email/.test(x.message)){resetMode='email';return show('This site resets passwords by email. Enter your recovery email.')}throw x}return draw()}
+    if(a==='fgback'){fg=null;return draw()}
     if(a==='rqopen'){rqOpen=true;return draw()}
     if(a==='rqclose'){rqOpen=false;return draw()}
     if(a==='rqsave'){const r=await api('PUT','/api/recovery',{current:v('rcur'),items:[0,1,2].map(i=>({question:v('rq'+i),answer:v('ra'+i)}))});me.recovery=r.recovery;rqOpen=false;return show('Recovery questions saved.',true)}
-    if(a==='direct'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/forgot/direct',{email:fgEmail,question:v('rq'),answer:v('ra'),firstName:v('first'),lastName:v('last'),password:v('pw')});fgQs=null;mode='login';return show('Password changed. Log in with your new password.',true)}
+    if(a==='direct'){if(!v('pw'))return show('Enter a new password.');if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');const was=fg&&fg.password===false;await api('POST','/api/forgot/direct',{email:fgEmail,question:fg&&fg.question,answer:v('ra'),firstName:v('first'),lastName:v('last'),password:v('pw'),confirm:v('pw2')});fg=null;mode='login';return show(was?'Password set. Log in with your email and new password.':'Password changed. Log in with your new password.',true)}
     if(a==='pwopen'){pwOpen=true;return draw()}
     if(a==='pwclose'){pwOpen=false;return draw()}
     if(a==='pwsave'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/password',{current:v('cur'),password:v('pw')});pwOpen=false;return show('Password changed.',true)}
-    if(a==='reset'){await api('POST','/api/reset',{token:resetTok,password:v('pw')});location.replace('/account.html?next=1');return}
+    if(a==='reset'){if(v('pw')!==v('pw2'))return show('The two new passwords do not match.');await api('POST','/api/reset',{token:resetTok,password:v('pw')});location.replace('/account.html?next=1');return}
     if(a==='logout'){await api('POST','/api/logout');me=null;mode='login';draw();return}
     if(a==='mklink'){const r=await api('POST','/api/connector');newLink=r.url;return load()}
     if(a==='offlink'){await api('DELETE','/api/connector');newLink='';return load()}
@@ -230,7 +262,8 @@ async function act(a,b){msg='';
   }catch(x){show(x.message)}
 }
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.tagName==='INPUT'&&!e.target.form){const p=document.querySelector('.btn.pri');if(p)p.click()}});
-async function load(){try{me=await api('GET','/api/me')}catch(e){me=null}if(!me){try{resetMode=(await api('GET','/api/reset/mode')).mode}catch(e){}if(!gsi){try{gsi=await api('GET','/api/auth/config')}catch(e){gsi={}}}if(gsiMsg&&!msg)msg=`<div class="err">${esc(gsiMsg)}</div>`}draw();if(me&&me.storage&&me.storage.on&&me.storage.waiting&&!me.storage.error)syncAll()}
+async function resetInfo(){const r=await api('GET','/api/reset/mode');resetMode=r.mode;resetEmail=!!r.email;qlist=Array.isArray(r.questions)?r.questions:qlist}
+async function load(){try{me=await api('GET','/api/me')}catch(e){me=null}if(me&&Array.isArray(me.questions))qlist=me.questions;if(!me){try{await resetInfo()}catch(e){}if(!gsi){try{gsi=await api('GET','/api/auth/config')}catch(e){gsi={}}}if(gsiMsg&&!msg)msg=`<div class="err">${esc(gsiMsg)}</div>`}draw();if(me&&me.storage&&me.storage.on&&me.storage.waiting&&!me.storage.error)syncAll()}
 load();
 </script>
 </body>

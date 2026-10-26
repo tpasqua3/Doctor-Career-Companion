@@ -1671,6 +1671,11 @@ function drawTeach(){const el=$('#teachpick');if(el)el.innerHTML=aiPick('teach',
    role granted by the owner) also see their role and the Drive connection, read only here. Changing the password, recovery questions,
    connector link or the Drive connection happens on the website's account page (a sign-in there, never inside Claude). */
 let PROF=null,PROFAT=0,PROFERR='',PROFBUSY=false;
+/* Account standard (2026-10-25): an account made by Google or Life OS, or an older one without a last name or a security question, is
+   finished on the website (the connector never sets passwords). On the website the account page shows the setup screen; inside Claude
+   a short notice links there and everything else stays as it is. */
+let SETUPNOTE=false;
+const setupNote=()=>SETUPNOTE&&!WEB?`<div class="note"><b>Finish setting up your account.</b> Add a password and a security question on the website, so you can always get back in. <a href="${GOVSITE}/account.html" target="_blank" rel="noopener">Finish on the website ↗</a></div>`:'';
 const ACCT=()=>WEB?'/account.html':GOVSITE+'/account.html',acctLink=(t,cls)=>`<a class="btn ${cls||''}" href="${ACCT()}"${WEB?'':' target="_blank" rel="noopener"'}>${esc(t)}${WEB?'':' ↗'}</a>`;
 async function profLoad(force){if(PROFBUSY||(!force&&PROF&&Date.now()-PROFAT<60000))return;PROFBUSY=true;PROFERR='';
   try{if(WEB){const r=await fetch('/api/me',{cache:'no-store'});if(r.status===401){location.replace('/account.html?next=1');return}if(!r.ok)throw 0;PROF=await r.json()}
@@ -1704,7 +1709,7 @@ function render(){drawTeach(); $('#tabs').innerHTML=TABS.map(([id,n])=>`<button 
   /* A screen that fails to draw says so, instead of leaving the last tab's content under the new tab's name. */
   let v;try{v=S.quiz?vQuiz():S.lesson?vLesson():({today:vToday,boards:vBoards,history:vHistory,learn:vLearn,knowledge:vKnowledge,questions:vQuestions,cards:vCards,progress:vProgress,ask:vAsk,career:vCareer,settings:vSettings,profile:vProfile}[S.tab])()}catch(e){console.error(e);v=`<div class="err">This screen could not be shown: ${esc(String((e&&e.message)||e).slice(0,160))}. Send this message to Claude.</div>`}
   if(mkOn()&&!MKLOAD&&(!MKAT||Date.now()-MKAT>300000))setTimeout(()=>mkLoad(),0);
-  $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+v;if(S.tab==='settings'&&!S.quiz&&!S.lesson)govAttach();syncNote();drawPlayer();drawAsk();hydrateFigs();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1,P.q[P.i].say)}
+  $('#app').innerHTML=(S.err?`<div class="err">${esc(S.err)}</div>`:'')+setupNote()+v;if(S.tab==='settings'&&!S.quiz&&!S.lesson)govAttach();syncNote();drawPlayer();drawAsk();hydrateFigs();if(P.on&&P.q[P.i])mark(P.q[P.i].seg??-1,P.q[P.i].say)}
 const busy=t=>S.busy?`<div class="card">${thinking(S.busy)}<p class="small muted">${/lesson/.test(S.busy)?'Writing a lesson takes about a minute. '+(st.prefs.auto?'It starts playing as soon as it is ready; keep this screen open.':'It opens as text as soon as it is ready.'):''}</p><p class="tiny muted">${st.prefs.audit?'Everything is written, then fact-checked by a second review pass before you see or hear it.':''}</p></div>`:'';
 const modeRow=()=>`<div class="plain"><span class="eyebrow">When the lesson is ready</span>${segBtns('auto',[[true,'Listen: play it aloud'],[false,'Read: show the text']],st.prefs.auto)}<span class="small muted">${st.prefs.auto?'Audio starts by itself and the text follows along on screen. Controls sit at the bottom.':'The lesson opens as text. A Listen button on it plays the audio whenever you want.'}</span></div>`;
 /* How many questions to write: one number, asked for wherever a set is started, remembered between visits. */
@@ -2845,12 +2850,14 @@ document.addEventListener('click',async e=>{const k=e.target.closest('[data-kobj
   if(!C){let r=null;try{r=await fetch('/api/me',{cache:'no-store'})}catch(e){}
     if(r&&r.status===401){location.replace('/account.html?next=1');return}
     let me=null;if(r&&r.ok){try{me=await r.json()}catch(e){}}
+    if(me&&me.setup&&me.setup.complete===false){location.replace('/account.html?next=1');return}
     if(me&&me.id){siteSeen(me);WEB=true;WEBAI=me.ai||'workers';AIS=Array.isArray(me.providers)?me.providers:[];HIER=me.hierarchy&&Array.isArray(me.hierarchy.jobs)?me.hierarchy:null;WEBLIB=!!me.library;LIBMAIL=String(me.libraryEmail||'');LIBWHY=String(me.libraryWhy||'');let d=null;try{d=await fetchServer()}catch(e){}
       if(d)docs=strip(d);else{try{const c=JSON.parse(localStorage.getItem('dcc:cache'));if(c){OFFLINE=true;docs=c}}catch(e){}}
       LINKED=true;SAMPLE=webSample();lastPull=Date.now();cacheDocs()}}
   else if(MCP){/* The connector may be saved in Claude under either name. */
     for(const name of LIBCONN){try{const r=await MCP.callTool(name,'load_progress',{area:AREA,since:0},{cache:false});const p=r&&(r.payload??r.structuredContent);if(p&&p.docs&&typeof p.docs==='object'){sdocs=strip(p.docs);CONN=name;break}}catch(e){}}
     if(sdocs&&SAMPLE){NATIVE=SAMPLE;AIS=[{id:'claude',name:'Claude',tier:'lead'}];try{const r=await MCP.callTool(CONN,'ai_providers',{},{cache:false}),q=r&&(r.payload??r.structuredContent);if(q&&Array.isArray(q.providers)){aiSeen(q);if(AIS.length>1)SAMPLE=routed(NATIVE,webSample(mcpSend))}}catch(e){}}}
+  if(sdocs&&MCP&&CONN)MCP.callTool(CONN,'get_profile',{},{cache:false}).then(r=>{const p=r&&(r.payload??r.structuredContent);if(p&&p.setup&&p.setup.complete===false){SETUPNOTE=true;render()}}).catch(()=>{});
   if(sdocs){LINKED=true;docs=sdocs;lastPull=Date.now();
     Object.keys(cdocs).forEach(n=>{const c=cdocs[n],s=docs[n];if(!s||((c&&c._t)||0)>(s._t||0)){docs[n]=c;if(!jget(n))jset(n,'PUT',clone(c))}})}
   else if(DB)docs=cdocs;

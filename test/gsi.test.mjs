@@ -69,13 +69,14 @@ test('a ticket signs in once, in the frame with a partitioned cookie, and only t
   assert.equal(safePath('/\\evil'), '/'); assert.equal(safePath('https://x'), '/'); assert.equal(safePath('/a/b?c=1'), '/a/b?c=1');
 });
 
-test('a password-less account: password login refused with the message; it can set a password, then has both', async () => {
+test('a password-less account: password login refused with the message; it finishes setup with a password, then has both', async () => {
   const me = await (await call('/api/me', { headers: { Cookie: cookie } })).json();
-  assert.equal(me.email, 'hub@example.com'); assert.equal(me.password, false);
+  assert.equal(me.email, 'hub@example.com'); assert.equal(me.password, false); assert.equal(me.setup.complete, false);
   const r = await call('/api/login', { method: 'POST', body: { email: 'hub@example.com', password: 'whatever1' } });
   assert.equal(r.status, 401); assert.equal((await r.json()).error, 'This account signs in with Google.');
-  assert.equal((await call('/api/forgot/questions', { method: 'POST', body: { email: 'hub@example.com' } })).status, 403);
-  assert.equal((await call('/api/password', { method: 'POST', headers: { Cookie: cookie }, body: { password: 'brand-new-pw' } })).status, 200);
+  const nq = await call('/api/forgot/questions', { method: 'POST', body: { email: 'hub@example.com' } });   // no question yet: told to use Google
+  assert.equal(nq.status, 403); assert.match((await nq.json()).error, /Sign in with Google with this email, then finish setting up/);
+  assert.equal((await call('/api/account/setup', { method: 'POST', headers: { Cookie: cookie }, body: { firstName: 'Hal', lastName: 'Bee', password: 'brand-new-pw', confirm: 'brand-new-pw', question: 'What city were you born in?', answer: 'Rome' } })).status, 200);
   const ok = await call('/api/login', { method: 'POST', body: { email: 'hub@example.com', password: 'brand-new-pw', stay: false } });
   assert.equal(ok.status, 200); assert.doesNotMatch(ok.headers.get('set-cookie'), /Max-Age/);   // stay logged in off: a browser-session cookie
   assert.equal((await (await call('/api/me', { headers: { Cookie: cookie } })).json()).password, true);
@@ -89,11 +90,11 @@ test('sign-out clears the ordinary and the partitioned cookie', async () => {
   assert.equal((await call('/api/me', { headers: { Cookie: c } })).status, 401);
 });
 
-test('creation respects the invitation gate', async () => {
+test('invitation codes are retired: a SIGNUP_CODE left set is ignored by Life OS creation', async () => {
   const gated = { ...env, SIGNUP_CODE: 'letmein' };
   const r = await sso({ op: 'ticket', email: 'gate@example.com', verified: 'google', create: true }, gated);
-  assert.equal(r.status, 403); assert.match((await r.json()).error, /by invitation/);
-  assert.equal(DB.raw.prepare("SELECT COUNT(*) AS n FROM users WHERE email = 'gate@example.com'").get().n, 0);
+  assert.equal(r.status, 200); assert.equal((await r.json()).created, true);
+  assert.equal(DB.raw.prepare("SELECT COUNT(*) AS n FROM users WHERE email = 'gate@example.com'").get().n, 1);
 });
 
 test('/auth/google starts at Google with the reused callback; in a frame it opens a new window', async () => {
@@ -166,7 +167,7 @@ test('One Tap: the signature is checked against Google keys, then aud, email ver
 });
 
 test('ordinary password sign-up and login keep working, stay logged in by default', async () => {
-  const r = await call('/api/signup', { method: 'POST', headers: { Origin: O }, body: { firstName: 'Pat', email: 'pat@example.com', password: 'longenough1' } });
+  const r = await call('/api/signup', { method: 'POST', headers: { Origin: O }, body: { firstName: 'Pat', lastName: 'Ray', email: 'pat@example.com', password: 'longenough1', confirm: 'longenough1', question: 'What was your childhood nickname?', answer: 'Patty' } });
   assert.equal(r.status, 200); assert.match(r.headers.get('set-cookie'), /Max-Age=2592000/); assert.match(r.headers.get('set-cookie'), /SameSite=Lax/);
   assert.equal((await call('/api/login', { method: 'POST', body: { email: 'pat@example.com', password: 'wrong-password' } })).status, 401);
   assert.equal((await call('/api/login', { method: 'POST', body: { email: 'pat@example.com', password: 'longenough1' } })).status, 200);
