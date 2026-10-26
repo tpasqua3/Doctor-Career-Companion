@@ -181,14 +181,13 @@ function questionOf(body) {
 }
 const passwordPair = body => !PASSWORD_OK(body.password) ? PASSWORD_RULE : body.confirm !== body.password ? 'The two passwords do not match.' : '';
 /* An account is complete with a first and last name, a password and a security question. Accounts made by Google or Life OS start
-   without a password; older ones may lack the last name or the question. An incomplete account sees only the setup screen. */
+   without a password; older ones may lack the last name or the question. An incomplete account is never blocked: the pages remind it
+   with the "Finish adding your info" popup each time the app opens. */
 async function setupOf(env, u) {
   const q = await env.DB.prepare('SELECT 1 AS x FROM recovery WHERE user_id = ? LIMIT 1').bind(u.id).first();
   const missing = [!str(u.first, 60) && 'first', !str(u.last, 60) && 'last', !u.hash && 'password', !q && 'question'].filter(Boolean);
   return { complete: !missing.length, missing };
 }
-const SETUP_MSG = 'Finish setting up your account first.';
-const SETUP_OPEN = new Set(['GET /api/me', 'POST /api/account/setup', 'DELETE /api/account', 'GET /api/backup']);
 const sameName = (a, b) => same(String(a || '').trim().toLowerCase(), String(b || '').trim().toLowerCase());
 /* `stay` (default on): a 30-day session; off: a browser-session cookie whose server session ends within a day. `frame`: the cookie
    for the Life OS frame (see cookie above), always a lasting one. */
@@ -1319,7 +1318,7 @@ const gsiBack = (url, msg, cookies) => redirect(url.origin + '/account.html?gsi=
 /* The account rule for a Google-verified email (`g`: email, sub or null, given, family, name). An account with the email is signed in
    and, when `link` is on, its Google link recorded or updated (the email is the identity, so a different sub still signs in). None:
    created password-less when `create`, with the sign-up's Drive folder (sign-up is open: invitation codes are retired), and it starts
-   incomplete: the setup screen asks for the rest (setupOf). */
+   incomplete: the "Finish adding your info" popup asks for the rest (setupOf). */
 async function googleAccount(env, ctx, g, { create, link = true }) {
   const now = new Date().toISOString(), subHash = g.sub ? await sha('google-sub:' + g.sub) : null;
   const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(g.email).first();
@@ -1533,7 +1532,7 @@ async function api(request, env, url, ctx) {
       if (!same(await hashPassword(answer, row.salt, ANSWER_ROUNDS), row.hash)) { await strike(env, u); return fail(401, 'That answer is not right.'); }
     } else if (!u.hash) {
       return fail(403, NO_QUESTION);
-    } else {   // an older account that truly has no question: its name (it is sent to the setup screen at its next sign-in)
+    } else {   // an older account that truly has no question: its name (the setup popup asks for a question at its next sign-in)
       if (!str(body.firstName, 60)) return fail(400, 'Enter the first name on your account.');
       if (!sameName(body.firstName, u.first) || !sameName(body.lastName, u.last)) { await strike(env, u); return fail(401, 'Those details do not match the account.'); }
     }
@@ -1577,14 +1576,13 @@ async function api(request, env, url, ctx) {
     return withCookies(json({ ok: true }), clearCookies());
   }
   if (!user) return fail(401, 'Log in to continue.');
-  /* An incomplete account (made by Google or Life OS, or an older one without a last name or a question) can use nothing but the
-     setup screen until it is complete. The app's pages treat this 401 like a lost session and go to the account page, which shows
-     "Finish setting up your account". */
-  const setup = await setupOf(env, user);
-  if (!setup.complete && !SETUP_OPEN.has(route)) return json({ error: SETUP_MSG, setup: true }, 401);
+  /* Never block, always remind (account standard section 7): an incomplete account (made by Google or Life OS, or an older one
+     without a last name or a question) uses every route like any other. The pages show the "Finish adding your info" popup each time
+     the app opens while `setup.missing` is not empty (in /api/me). */
   /* Finish setting up: everything still missing, saved at once. The name is always sent (prefilled, editable); a password only when
      the account has none (with its confirmation; other sessions stay signed in), a question only when it has none. */
   if (route === 'POST /api/account/setup') {
+    const setup = await setupOf(env, user);
     const first = 'firstName' in body ? str(body.firstName, 60) : str(user.first, 60), last = 'lastName' in body ? str(body.lastName, 60) : str(user.last, 60);
     if (!first) return fail(400, 'Enter your first name.');
     if (!last) return fail(400, 'Enter your last name.');
@@ -1644,7 +1642,7 @@ async function api(request, env, url, ctx) {
   if (route === 'GET /api/me') {
     const link = await env.DB.prepare('SELECT created FROM links WHERE user_id = ?').bind(user.id).first();
     const H = await hierarchy(env), providers = aiList(env, await aiUsed(env, user.id), H), owner = isOwner(env, user), admin = await adminOf(env, user);
-    return json({ ...profile(user), setup, gender: user.gender || '', genderSelf: user.gender_self || '', dob: user.dob || '', password: !!user.hash, google: user.google_linked ? { linked_at: user.google_linked } : null, reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), says: await siteSays(env, user), connector: link ? link.created : null, areas: await summary(env, user.id),
+    return json({ ...profile(user), setup: await setupOf(env, user), gender: user.gender || '', genderSelf: user.gender_self || '', dob: user.dob || '', password: !!user.hash, google: user.google_linked ? { linked_at: user.google_linked } : null, reset: resetMode(env), recovery: (await recoveryOf(env, user.id)).map(r => r.question), questions: QUESTIONS, ai: (providers[0] || {}).id || 'none', providers, hierarchy: chart(env, H), says: await siteSays(env, user), connector: link ? link.created : null, areas: await summary(env, user.id),
       library: libraryOn(env, user), libraryEmail: libraryOn(env, user) && owner ? libraryEmail() : '', libraryWhy: libraryWhy(env, user), storage: await storage(env, user), owner, admin,
       drive: admin ? { mode: DRIVE.mode, account: owner ? DRIVE.email : maskMail(DRIVE.email), canConnect: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET), canEdit: admin.integrations === 'edit', redirect: url.origin + '/api/google/callback' } : undefined });
   }

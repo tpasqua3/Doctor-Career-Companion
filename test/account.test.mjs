@@ -1,5 +1,5 @@
-// Standard account creation, setup and recovery (spec /specs/account_standard.md): the sign-up form's rules, codes retired, the setup
-// gate for accounts made by Google or Life OS (and older incomplete ones), forgot password by the security question (setting a first
+// Standard account creation, setup and recovery (spec /specs/account_standard.md): the sign-up form's rules, codes retired, setup for
+// accounts made by Google or Life OS (and older incomplete ones), never blocking them (section 7), forgot password by the security question (setting a first
 // password too), the steady decoy for unknown emails, and the name fallback kept only for older accounts with no question.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,7 +44,7 @@ test('sign-up requires the standard fields, with clear messages; a code a reques
 
 const hub = body => post('/api/lifeos/sso', body, { 'x-lifeos-hub': 'binding' });
 let gcookie = '';
-test('a Life OS ticket for a new email creates the account, which shows setup in the frame and can use nothing else', async () => {
+test('a Life OS ticket for a new email creates the account, which reports setup in the frame and is never blocked', async () => {
   const t = await (await hub({ op: 'ticket', email: 'new@example.com', verified: 'google', name: 'Nia Park', create: true })).json();
   assert.equal(t.ok, true); assert.equal(t.created, true);
   const r = await call('/auth/lifeos?code=' + t.code + '&to=/', { headers: { 'sec-fetch-dest': 'iframe' } });
@@ -54,8 +54,9 @@ test('a Life OS ticket for a new email creates the account, which shows setup in
   assert.equal(me.setup.complete, false); assert.deepEqual(me.setup.missing, ['password', 'question']); assert.equal(me.firstName, 'Nia'); assert.equal(me.lastName, 'Park');
   for (const [m, path] of [['GET', '/api/progress?area=med'], ['PUT', '/api/doc'], ['POST', '/api/connector'], ['POST', '/api/mkos/asset_find'], ['POST', '/api/password']]) {
     const x = await call(path, { method: m, headers: { Cookie: gcookie }, body: m === 'GET' ? undefined : {} });
-    assert.equal(x.status, 401, path); assert.equal((await x.json()).setup, true);
+    assert.notEqual(x.status, 401, path); assert.notEqual(x.status, 403, path); assert.equal((await x.json()).setup, undefined, path);
   }
+  assert.equal((await call('/api/progress?area=med', { headers: { Cookie: gcookie } })).status, 200);   // the app works while incomplete
   /* The connector (the Claude copy) reports that setup is still needed, and sets no password. */
   const { link } = await (await hub({ op: 'ticket', email: 'new@example.com', verified: 'google', want_link: true })).json();
   const mcp = await post('/mcp/' + link, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_profile', arguments: {} } });
@@ -78,7 +79,7 @@ test('forgot password sets a password for a password-less account that has a que
   const u = DB.raw.prepare("SELECT id FROM users WHERE email = 'gq@example.com'").get();
   const t = await (await hub({ op: 'ticket', email: 'gq@example.com', verified: 'google' })).json();
   const c = sessionOf(await call('/auth/lifeos?code=' + t.code));
-  assert.equal((await call('/api/recovery', { method: 'PUT', headers: { Cookie: c }, body: { items: [{ question: Q, answer: 'Spot' }] } })).status, 401);   // gated until setup
+  assert.equal((await call('/api/progress?area=med', { headers: { Cookie: c } })).status, 200);   // never blocked while incomplete
   /* A question but still no password (as one set on the account page before the standard would be): copy a known answer hash. */
   await post('/api/signup', full({ email: 'tmp@example.com', answer: 'Spot' }));
   const row = DB.raw.prepare("SELECT r.salt, r.hash FROM recovery r JOIN users x ON x.id = r.user_id WHERE x.email = 'tmp@example.com'").get();
@@ -103,7 +104,7 @@ test('an unknown email gets the same steady decoy question, and the same answers
   assert.equal(r.status, 401); assert.equal((await r.json()).error, 'That answer is not right.');
 });
 
-test('an older account with no question: name fallback still resets it, and it is sent to setup at its next login', async () => {
+test('an older account with no question: name fallback still resets it, and setup asks for the question at its next login', async () => {
   await post('/api/signup', full({ email: 'old@example.com', firstName: 'Olga', lastName: 'Old' }));
   const u = DB.raw.prepare("SELECT id FROM users WHERE email = 'old@example.com'").get();
   DB.raw.prepare('DELETE FROM recovery WHERE user_id = ?').run(u.id);
@@ -112,7 +113,7 @@ test('an older account with no question: name fallback still resets it, and it i
   assert.equal((await post('/api/forgot/direct', { email: 'old@example.com', firstName: 'olga', lastName: 'OLD', password: 'olga-password', confirm: 'olga-password' })).status, 200);
   const l = await post('/api/login', { email: 'old@example.com', password: 'olga-password' }); const c = sessionOf(l);
   const me = await (await call('/api/me', { headers: { Cookie: c } })).json(); assert.deepEqual(me.setup.missing, ['question']);
-  assert.equal((await call('/api/progress?area=med', { headers: { Cookie: c } })).status, 401);
+  assert.equal((await call('/api/progress?area=med', { headers: { Cookie: c } })).status, 200);   // never blocked
   const s = await post('/api/account/setup', { question: Q, answer: 'Fido' }, { Cookie: c });   // only what is missing: no password asked again
   assert.equal(s.status, 200); assert.equal((await s.json()).setup.complete, true);
   assert.equal((await call('/api/progress?area=med', { headers: { Cookie: c } })).status, 200);

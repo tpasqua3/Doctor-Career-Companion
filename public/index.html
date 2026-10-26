@@ -220,6 +220,9 @@ figure.fig figcaption b{font:600 .9rem/1.4 var(--ui)}
 [data-tip]{cursor:help}.meter[data-tip]:focus-visible,.bars div[data-tip]:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
 .sbar{display:flex;height:12px;border-radius:4px;overflow:hidden;background:var(--line);min-width:120px}.sbar i{display:block;height:100%}
 .surebg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40;display:flex;align-items:center;justify-content:center;padding:16px}.surebox{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:18px;max-width:420px;width:100%;display:flex;flex-direction:column;gap:14px}.surebox .row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.finbg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:41;display:flex;align-items:flex-start;justify-content:center;padding:max(24px,env(safe-area-inset-top,0px)) 16px 24px;overflow-y:auto}.finbox{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:18px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:12px;box-shadow:0 18px 50px rgba(0,0,0,.25)}.finbox input{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:9px 11px;width:100%;min-width:0}.finbox input[readonly]{color:var(--muted)}.finbox h2{margin:0}
+@media (pointer:coarse){.finbox input,.finbox select{font-size:16px}}
+.missing{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(120px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:9px 14px;border-radius:9px;font-size:.88rem;z-index:20;max-width:calc(100% - 32px)}
 </style>
 <div class="wrap">
@@ -1671,11 +1674,62 @@ function drawTeach(){const el=$('#teachpick');if(el)el.innerHTML=aiPick('teach',
    role granted by the owner) also see their role and the Drive connection, read only here. Changing the password, recovery questions,
    connector link or the Drive connection happens on the website's account page (a sign-in there, never inside Claude). */
 let PROF=null,PROFAT=0,PROFERR='',PROFBUSY=false;
-/* Account standard (2026-10-25): an account made by Google or Life OS, or an older one without a last name or a security question, is
-   finished on the website (the connector never sets passwords). On the website the account page shows the setup screen; inside Claude
-   a short notice links there and everything else stays as it is. */
+/* Account standard (2026-10-25, section 7): an account made by Google or Life OS, or an older one without a last name or a security
+   question, is never blocked. On the website the "Finish adding your info" popup reminds it (below); inside Claude (the connector never
+   sets passwords) a short notice links to the website and everything else stays as it is. */
 let SETUPNOTE=false;
-const setupNote=()=>SETUPNOTE&&!WEB?`<div class="note"><b>Finish setting up your account.</b> Add a password and a security question on the website, so you can always get back in. <a href="${GOVSITE}/account.html" target="_blank" rel="noopener">Finish on the website ↗</a></div>`:'';
+/* Never block, always remind (account standard section 7): on the website (also inside the Life OS frame) an incomplete account
+   uses the app normally, and the "Finish adding your info" popup comes up once each time the app opens while something is missing.
+   It asks only what is missing and saves with POST /api/account/setup. "Remind me later" closes it for this page load only; it
+   comes back at the next sign-in or app open, and nothing turns it off while the account is incomplete. Profile shows a line
+   "Your account is missing: …" with a button that opens it. Inside Claude the connector never sets passwords, so the notice and
+   the Profile line link to the website instead; nothing is blocked there either. */
+let FINME=null,FINOPEN=false;
+const FINMISS={first:'your first name',last:'your last name',password:'a password',question:'a security question'};
+const finMissing=m=>(m&&m.setup&&m.setup.complete===false&&Array.isArray(m.setup.missing))?m.setup.missing:[];
+const finText=m=>{const t=m.map(k=>FINMISS[k]||k);return t.length>1?t.slice(0,-1).join(', ')+' and '+t[t.length-1]:t[0]||''};
+const FINGEN=[['','Prefer not to say'],['woman','Woman'],['man','Man'],['nonbinary','Non-binary'],['self','Prefer to self-describe']];
+function finView(m){const miss=finMissing(m),full=m.password===false,names=full||miss.includes('first')||miss.includes('last'),qs=Array.isArray(m.questions)?m.questions:[],today=new Date().toISOString().slice(0,10);
+  return `<div class="finbg" role="dialog" aria-modal="true" aria-labelledby="fin-t"><form class="finbox" id="finf" method="post" action="#" autocomplete="on" novalidate>
+   <h2 id="fin-t">Finish adding your info</h2>
+   <p class="small muted">Your account is missing ${esc(finText(miss))}.${miss.includes('password')||miss.includes('question')?' With a password and a security question you can always get back into your account.':''}</p>
+   <label class="f">Email<input id="fin-email" name="email" type="email" value="${esc(m.email||'')}" readonly autocomplete="username"></label>
+   ${names?`<div class="row"><label class="f">First name<input id="fin-first" name="given-name" autocomplete="given-name" value="${esc(m.firstName||'')}" required></label><label class="f">Last name<input id="fin-last" name="family-name" autocomplete="family-name" value="${esc(m.lastName||'')}" required></label></div>`:''}
+   ${full?`<div class="row"><label class="f">Gender (optional)<select id="fin-gender" name="gender">${FINGEN.map(([k,n])=>`<option value="${k}" ${(m.gender||'')===k?'selected':''}>${n}</option>`).join('')}</select></label>
+     <label class="f">Date of birth (optional)<input id="fin-dob" name="bday" type="date" autocomplete="bday" min="1900-01-01" max="${today}" value="${esc(m.dob||'')}"></label></div>
+     <label class="f" id="fin-selfw" ${m.gender==='self'?'':'hidden'}>Gender in your own words<input id="fin-self" maxlength="60" autocomplete="off" value="${esc(m.genderSelf||'')}"></label>`:''}
+   ${full?`<label class="f">Password<input id="fin-pw" name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+     <label class="f">Confirm password<input id="fin-pw2" name="password-confirm" type="password" autocomplete="new-password" minlength="8" required></label><span class="small muted">At least 8 characters.</span>`:''}
+   ${miss.includes('question')?`<label class="f">Security question<select id="fin-sq" name="security-question" required><option value="">Choose a question</option>${qs.map(q=>`<option>${esc(q)}</option>`).join('')}</select></label>
+     <label class="f">Answer<input id="fin-sa" name="security-answer" autocomplete="off" autocapitalize="off" required></label>
+     <span class="small muted">If you forget your password, you answer this to set a new one. Capitals, punctuation and extra spaces do not matter.</span>`:''}
+   <div id="fin-msg"></div>
+   <div class="row"><button class="btn pri" type="submit" id="fin-save">Save</button><button class="btn" type="button" data-fin="later">Remind me later</button></div></form></div>`}
+/* The popup has its own container outside #app, so the app's redraws never wipe what is being typed into it. */
+function drawFin(){let el=document.getElementById('finpop');if(!el){el=document.createElement('div');el.id='finpop';document.body.appendChild(el)}
+  if(!(WEB&&FINOPEN&&FINME&&finMissing(FINME).length)){FINOPEN=false;if(el.firstChild)el.innerHTML='';return}
+  if(!el.firstChild){el.innerHTML=finView(FINME);const f=el.querySelector('input:not([readonly]),select');if(f)try{f.focus({preventScroll:true})}catch(e){}}}
+function finOpen(m){if(m)FINME=m;FINOPEN=true;drawFin()}
+async function finSave(){const v=id=>(document.getElementById('fin-'+id)||{}).value||'',msg=t=>{const el=document.getElementById('fin-msg');if(el)el.innerHTML=t?`<div class="err">${esc(t)}</div>`:''};msg('');
+  const m=FINME,full=m.password===false,b={};
+  if(document.getElementById('fin-first')){b.firstName=v('first');b.lastName=v('last');if(!b.firstName.trim()||!b.lastName.trim())return msg('Enter your first and last name.')}
+  if(full){if(v('pw')!==v('pw2'))return msg('The two passwords do not match.');Object.assign(b,{gender:v('gender'),genderSelf:v('self'),dob:v('dob'),password:v('pw'),confirm:v('pw2')})}
+  if(document.getElementById('fin-sq')){if(!v('sq'))return msg('Choose a security question.');Object.assign(b,{question:v('sq'),answer:v('sa')})}
+  const btn=document.getElementById('fin-save');if(btn)btn.disabled=true;
+  try{const r=await fetch('/api/account/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});let j={};try{j=await r.json()}catch(e){}
+    if(r.status===401){location.replace('/account.html?next=1');return}if(!r.ok)throw new Error(j.error||'That could not be saved. Try again.');
+    FINME=Object.assign({},m,j);FINOPEN=false;drawFin();if(PROF&&!PROF.local)PROF=Object.assign({},PROF,j);render();toast(finMissing(FINME).length?'Saved.':'Saved. Your account is complete.')}
+  catch(x){msg(x.message||'That could not be saved. Try again.');if(btn)btn.disabled=false}}
+document.addEventListener('submit',e=>{if(e.target&&e.target.id==='finf'){e.preventDefault();finSave()}});
+document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('[data-fin]');if(!b)return;e.preventDefault();e.stopPropagation();
+  if(b.dataset.fin==='later'){FINOPEN=false;drawFin();return}
+  if(b.dataset.fin==='open'){finOpen(PROF&&!PROF.local?PROF:FINME);return}},true);
+document.addEventListener('change',e=>{if(e.target&&e.target.id==='fin-gender'){const w=document.getElementById('fin-selfw');if(w)w.hidden=e.target.value!=='self'}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&FINOPEN){FINOPEN=false;drawFin()}});
+/* The persistent Profile line while something is missing: on the website its button opens the popup; inside Claude it links to the
+   website's account page, where the popup opens. */
+const finLine=p=>{const m=finMissing(p);if(!m.length)return '';return `<div class="note missing"><span>Your account is missing: ${esc(finText(m))}.</span>${WEB?'<button class="btn pri sm" data-fin="open">Finish adding your info</button>':`<a class="btn pri sm" href="${GOVSITE}/account.html" target="_blank" rel="noopener">Finish on the website ↗</a>`}</div>`};
+const setupNote=()=>SETUPNOTE&&!WEB?`<div class="note"><b>Finish adding your info.</b> Your account is missing ${esc(typeof SETUPNOTE==='string'&&SETUPNOTE?SETUPNOTE:'some details')}. Add it on the website, so you can always get back in. <a href="${GOVSITE}/account.html" target="_blank" rel="noopener">Finish on the website ↗</a></div>`:'';
 const ACCT=()=>WEB?'/account.html':GOVSITE+'/account.html',acctLink=(t,cls)=>`<a class="btn ${cls||''}" href="${ACCT()}"${WEB?'':' target="_blank" rel="noopener"'}>${esc(t)}${WEB?'':' ↗'}</a>`;
 async function profLoad(force){if(PROFBUSY||(!force&&PROF&&Date.now()-PROFAT<60000))return;PROFBUSY=true;PROFERR='';
   try{if(WEB){const r=await fetch('/api/me',{cache:'no-store'});if(r.status===401){location.replace('/account.html?next=1');return}if(!r.ok)throw 0;PROF=await r.json()}
@@ -1691,6 +1745,7 @@ function vProfile(){if(!PROF&&!PROFERR){profLoad();return `<div class="plain"><h
   const areas=(p.areas||[]).map(a=>`<tr><td>${a.lang==='med'?'Study and career record':esc(a.lang)}</td><td class="n">${a.n}</td><td>${esc(new Date(a.updated).toLocaleDateString())}</td></tr>`).join('');
   const rec=typeof p.recovery==='number'?p.recovery:(p.recovery||[]).length,ais=AIS.filter(a=>a&&a.cap);
   return `<div class="plain"><div class="row between"><h1>${esc(name)}</h1>${ad?`<span class="chip">${esc(ROLEN[ad.role]||ad.role)}</span>`:''}</div><p class="muted small">${esc(p.email||'')}</p></div>
+  ${finLine(p)}
   <section class="card"><h3>Your record</h3>${areas?`<div class="tablewrap"><table><thead><tr><th>Area</th><th class="n">Saved items</th><th>Last saved</th></tr></thead><tbody>${areas}</tbody></table></div>`:'<p class="small muted">Nothing saved yet.</p>'}
    <p class="small muted">A backup of everything is under Settings.</p></section>
   <section class="card"><div class="row between"><h3>Google Drive copy</h3><span class="chip ${!s.on?'off':s.error?'bad':s.waiting?'warn':'good'}">${!s.on?'Off':s.error?'Problem':s.waiting?s.waiting+' waiting':'Up to date'}</span></div>
@@ -2850,19 +2905,19 @@ document.addEventListener('click',async e=>{const k=e.target.closest('[data-kobj
   if(!C){let r=null;try{r=await fetch('/api/me',{cache:'no-store'})}catch(e){}
     if(r&&r.status===401){location.replace('/account.html?next=1');return}
     let me=null;if(r&&r.ok){try{me=await r.json()}catch(e){}}
-    if(me&&me.setup&&me.setup.complete===false){location.replace('/account.html?next=1');return}
+    if(me&&finMissing(me).length){FINME=me;FINOPEN=true}   // the reminder, once for this app open (never a redirect)
     if(me&&me.id){siteSeen(me);WEB=true;WEBAI=me.ai||'workers';AIS=Array.isArray(me.providers)?me.providers:[];HIER=me.hierarchy&&Array.isArray(me.hierarchy.jobs)?me.hierarchy:null;WEBLIB=!!me.library;LIBMAIL=String(me.libraryEmail||'');LIBWHY=String(me.libraryWhy||'');let d=null;try{d=await fetchServer()}catch(e){}
       if(d)docs=strip(d);else{try{const c=JSON.parse(localStorage.getItem('dcc:cache'));if(c){OFFLINE=true;docs=c}}catch(e){}}
       LINKED=true;SAMPLE=webSample();lastPull=Date.now();cacheDocs()}}
   else if(MCP){/* The connector may be saved in Claude under either name. */
     for(const name of LIBCONN){try{const r=await MCP.callTool(name,'load_progress',{area:AREA,since:0},{cache:false});const p=r&&(r.payload??r.structuredContent);if(p&&p.docs&&typeof p.docs==='object'){sdocs=strip(p.docs);CONN=name;break}}catch(e){}}
     if(sdocs&&SAMPLE){NATIVE=SAMPLE;AIS=[{id:'claude',name:'Claude',tier:'lead'}];try{const r=await MCP.callTool(CONN,'ai_providers',{},{cache:false}),q=r&&(r.payload??r.structuredContent);if(q&&Array.isArray(q.providers)){aiSeen(q);if(AIS.length>1)SAMPLE=routed(NATIVE,webSample(mcpSend))}}catch(e){}}}
-  if(sdocs&&MCP&&CONN)MCP.callTool(CONN,'get_profile',{},{cache:false}).then(r=>{const p=r&&(r.payload??r.structuredContent);if(p&&p.setup&&p.setup.complete===false){SETUPNOTE=true;render()}}).catch(()=>{});
+  if(sdocs&&MCP&&CONN)MCP.callTool(CONN,'get_profile',{},{cache:false}).then(r=>{const p=r&&(r.payload??r.structuredContent);if(p&&p.setup&&p.setup.complete===false){SETUPNOTE=finText(finMissing(p))||true;render()}}).catch(()=>{});
   if(sdocs){LINKED=true;docs=sdocs;lastPull=Date.now();
     Object.keys(cdocs).forEach(n=>{const c=cdocs[n],s=docs[n];if(!s||((c&&c._t)||0)>(s._t||0)){docs[n]=c;if(!jget(n))jset(n,'PUT',clone(c))}})}
   else if(DB)docs=cdocs;
   else if(!WEB){try{docs=JSON.parse(localStorage.getItem(LS))||{}}catch(e){docs={}}}
-  overlay();loadState();pickVoice();render();flush();mkLoad();iteBoot();
+  overlay();loadState();pickVoice();render();drawFin();flush();mkLoad();iteBoot();
   if(mkOn())gqModels().then(()=>{gqRefresh();if(S.tab==='today'||S.tab==='learn'||S.tab==='boards')render()});
 })();
 </script>

@@ -135,25 +135,31 @@ Tests: `node --test test/gsi.test.mjs` (D1 stand-in over `node:sqlite`, Google s
 
 ## Account standard: creation, setup and recovery (owner 2026-10-25, spec `/specs/account_standard.md`, extends the section above)
 Server in `src/worker.js` (`setupOf`, `questionOf`, `demographics`, `passwordPair`, `decoyQuestion`, the sign-up, forgot and
-`/api/account/setup` routes), page `public/account.html` (`auth`, `setupView`). Tests: `node --test test/account.test.mjs`.
+`/api/account/setup` routes), page `public/account.html` (`auth`, `setupView`, `missingLine`) and the app's popup (`finView`, `drawFin`, `finSave`, `finLine` in
+`app/companion.html`). Tests: `node --test test/account.test.mjs test/reminder.test.mjs`.
 - Sign-up (`POST /api/signup`): first and last name, email, password and `confirm`, one security question from `QUESTIONS` with its
   answer (hashed in `recovery` slot 0; up to three can be set later on the account page, `PUT /api/recovery`, never fewer than one),
   optional `gender` ('' prefer not to say, woman, man, nonbinary, self with `genderSelf`) and `dob` (YYYY-MM-DD). Demographics live in
   D1 `users` (`gender`, `gender_self`, `dob`) like the name, never in the Drive account file. Invitation codes are retired: a
   `SIGNUP_CODE` left set and a `code` a request still sends are ignored, for the form, Google and Life OS alike.
 - Complete = first name, last name, a password and a security question (`setupOf` -> `{ complete, missing }`, in `/api/me` and the
-  connector's `get_profile`). An incomplete account (made by Google or Life OS, or an older one without a last name or question) gets
-  401 `{ setup: true }` from every route except `SETUP_OPEN` (`GET /api/me`, `POST /api/account/setup`, `DELETE /api/account`,
-  `GET /api/backup`) plus log out and Life OS connect; the app's pages treat the 401 like a lost session and open
-  `/account.html?next=1`, which shows only "Finish setting up your account" (the app's boot also goes there when `me.setup` is
-  incomplete). `POST /api/account/setup` saves it all at once: names (sent = required), demographics (when sent), password + confirm
-  only when the account has none (no session is ended), a question only when it has none. The Claude copy shows a notice with a link
-  to finish on the website (`setupNote` in `app/companion.html`); connector tools never set passwords and are not gated.
+  connector's `get_profile`). **Never block, always remind** (spec section 7, owner 2026-10-25 21:28): an incomplete account (made by
+  Google or Life OS, or an older one without a last name or question) uses every route like any other; no route answers
+  `{ setup: true }` and no page redirects to a setup screen (the remaining 401 -> `/account.html?next=1` redirects are only for a lost
+  session). Instead the "Finish adding your info" popup (a modal in the page's own look, in its own container outside `#app` so redraws
+  never wipe it) opens once per page load / app open while `setup.missing` is not empty: on the app (`FINME`/`FINOPEN`, set at boot from
+  `/api/me`, website and Life OS frame) and on the account page (`remind`/`reminded`, set by `load()`, so every sign-in there too). It
+  asks only what is missing (names, demographics and password + confirm for a password-less account, question + answer when there is
+  none), with "Save" (`POST /api/account/setup`: names (sent = required), demographics (when sent), password + confirm only when the
+  account has none (no session is ended), a question only when it has none) and "Remind me later" (closes it for this page load
+  only; Escape does the same). Nothing turns the reminder off while incomplete. Profile (app) and the account page show a persistent
+  line "Your account is missing: …" with a button that opens the popup. The Claude copy shows `setupNote` (what is missing, a link to
+  finish on the website) and its Profile line links there too; nothing in it is blocked and connector tools never set passwords.
 - Forgot password (`resetMode` is `direct` unless `PASSWORD_RESET=off`; the email link stays on with `RESEND_API_KEY`):
   `POST /api/forgot/questions { email }` -> `{ question, questions: [question], password }` (the first question; `password: false`
   makes the page say "Set a password"); an unknown email gets a steady decoy (`decoyQuestion`, keyed hash) in the same shape. An older
-  account with a password and no question answers `{ names: true }` (the first-and-last-name fallback, kept only for them; they meet the
-  setup screen at their next login); an account with neither gets 403 "Sign in with Google with this email, then finish setting up
+  account with a password and no question answers `{ names: true }` (the first-and-last-name fallback, kept only for them; the
+  "Finish adding your info" popup asks for a question at their next login); an account with neither gets 403 "Sign in with Google with this email, then finish setting up
   your account." `POST /api/forgot/direct { email, question, answer, password, confirm }` sets the password (a password-less account's
   first one too) and ends every session; wrong answers strike toward the 15-minute lock; an unknown email answers like a wrong answer.
   The email link (`/api/forgot`, `/api/reset`) also sets a first password.
