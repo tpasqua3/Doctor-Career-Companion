@@ -161,7 +161,7 @@ async function runPair(env, P, cfg, M, until, frozenNow) {
     s.schema_differ = sc.differ;
     while (s.ti < sc.tables.length && Date.now() < until && M.q < M.max - 8) {
       const t = sc.tables[s.ti], ts = (s.tables[t] = s.tables[t] || {}), cur = { n: ts.n, after: s.after };
-      const C = await columns(src, t, M);
+      const C = M.cols.get(P.key + '/' + t) || await columns(src, t, M); M.cols.set(P.key + '/' + t, C);
       let r = await chunk(src, dst, t, C, cur, cfg, M);
       if (r.retry) { ts.n = cur.n; continue; }
       ts.n = cur.n; chunks++;
@@ -200,6 +200,6 @@ export async function migrateTick(env) {
   const cfg = await migCfg(env, true);
   if (!cfg || cfg.off) return;
   const fz = !!cfg.freeze, until = Date.now() + 1000 * (fz ? cfg.freeze_wall_s : cfg.wall_s);
-  const M = { q: 0, bytes: 0, max: fz ? cfg.freeze_q : cfg.q };
+  const M = { q: 0, bytes: 0, max: fz ? cfg.freeze_q : cfg.q, cols: new Map() };
   for (const P of PAIRS) { if (Date.now() >= until || M.q >= M.max - 8) break; await runPair(env, P, cfg, M, until, fz); }
 }
