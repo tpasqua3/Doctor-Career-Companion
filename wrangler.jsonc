@@ -13,7 +13,10 @@
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*", "/mcp/*", "/auth/*", "/usap/*", "/voice/hf/*", "/voice/ort/*", "/privacy.html", "/terms.html", "/privacy", "/terms", "/policy", "/policy.html", "/google*.html"] },
   // No database_id: wrangler creates the database on the first deploy and reuses it afterwards.
   // DRILL_DB: an empty database used only to prove MKOS can be rebuilt from Google Drive (the restore drill); the app never reads it.
-  "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }, { "binding": "DRILL_DB", "database_name": "mkos-restore-drill", "database_id": "92faf66e-4071-463d-ac3e-3ad51cf8a4f8" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "doctor-career-companion" }, { "binding": "DRILL_DB", "database_name": "mkos-restore-drill", "database_id": "92faf66e-4071-463d-ac3e-3ad51cf8a4f8" },
+    // Temporary (src/migrate.js): the new databases the timer copies DB and DRILL_DB into; removed when the app is switched to them.
+    { "binding": "NEW_DB", "database_name": "usa_doctor_career_companion_east", "database_id": "3ef05fff-8d07-4afc-a75a-e213cecf7b46" },
+    { "binding": "NEW_DRILL", "database_name": "usa_mkos_restore_drill_east", "database_id": "32889774-c2da-44e0-855a-a6cb63feb365" }],
   // The website's AI. Three services, each on when its setting is there: Gemini (GEMINI_API_KEY secret), Claude (ANTHROPIC_API_KEY
   // secret) and Cloudflare Workers AI (this binding). The app picks one; the others take over when it is over its limit.
   "ai": { "binding": "AI" },

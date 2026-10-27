@@ -35,6 +35,7 @@ import { driveAdapter, adfOnce, adfConformance, adfExport } from './adf.js';
 /* USAP AI governance (kit 1.3.0): the catalog action of each AI call. Labels only; see src/aigov.js. */
 import { govDims, govOf, GOV_APP } from './aigov.js';
 /* Sign in with Google and Life OS single sign-on (Phase 8): Google's ID token checks; the routes are further down. */
+import { migrateTick, migCfg, frozen as migFrozen, readOnly as migReadOnly } from './migrate.js';   // temporary: the move to the new databases
 import { gsiClient, checkClaims, decodeJwt, verifyIdToken, safePath } from './gsi.js';
 /* Route templates only: the connector token in /mcp/<token> and any id never leave the app. */
 const usapRoute = url => url.pathname.startsWith('/mcp') ? '/mcp/:token'
@@ -2045,6 +2046,7 @@ async function mcpServer(request, env, token, ctx) {
     if (m.method !== 'tools/call') return err(-32601, 'Method not found');
     const name = m.params && m.params.name, a = (m.params && m.params.arguments) || {};
     const out = o => ok({ content: [{ type: 'text', text: JSON.stringify(o) }], structuredContent: o }), bad = t => ok({ content: [{ type: 'text', text: t }], isError: true });
+    if (env.MIG_FROZEN && ['save_doc', 'delete_doc', 'ask_ai', 'mkos'].includes(name)) return bad('Updating, back in a minute.');   // temporary: database move
     if (name === 'load_progress') {
       const lang = String(a.area || 'med'); if (!LANG_OK.test(lang)) return bad('Give an area such as "med".');
       const since = Number(a.since) || 0, docs = {}, paths = [];
@@ -2115,25 +2117,40 @@ const app = {
   /* Every five minutes: copy waiting records to Drive first; when nothing was waiting, the same run gives MKOS its turn (scan, jobs,
      mirror). Splitting the run this way keeps each invocation inside the platform's per-run limits. */
   async scheduled(event, env, ctx) {
+    /* Temporary (database move, src/migrate.js): during the write freeze only the copier runs, with the old database read-only;
+       with pause_jobs the background MKOS jobs skip their turn while user writes go on. The copier runs after the app's own jobs. */
+    const mig = env.NEW_DB ? await migCfg(env, true).catch(() => null) : null;
+    if (mig && mig.freeze) { env = { ...env, DB: migReadOnly(env.DB) }; ctx.waitUntil(migrateTick(env).catch(e => console.error('migrate', e)).then(() => usapStatus(env, event, ctx)).catch(() => { }).then(() => usap.flush(env))); return; }
+    const pause = !!(mig && mig.pause_jobs);
     const drive = (async () => {
       const spent = await sweep(env).catch(e => { console.error(e); return 34; });
       /* USAP ADF: when the copy job was light, one account folder still waiting gets its standard layout (once per account). */
       if (spent <= 6) await adfTickSafe(env);
       /* MKOS runs when the sweep had little to copy, and in every third run regardless, so it is never starved. */
       const third = Math.floor(new Date(event.scheduledTime || Date.now()).getUTCMinutes() / 5) % 3 === 0;
-      if (env.MKOS !== 'off' && (spent <= 6 || (third && spent <= 20))) await mkTickSafe(env);
+      if (env.MKOS !== 'off' && !pause && (spent <= 6 || (third && spent <= 20))) await mkTickSafe(env);
     })();
     ctx.waitUntil(drive);
     /* The generation queue has its own turn every run: background and batch lessons, then objective seeding (src/mkos/genjobs.js). */
-    const gen = genRunSafe(env);
+    const gen = pause ? Promise.resolve() : genRunSafe(env);
     ctx.waitUntil(gen);
     /* USAP: once both are done, the hourly status figures, then everything observed in this run is sent. */
-    ctx.waitUntil(Promise.allSettled([drive, gen]).then(() => usapStatus(env, event, ctx)).catch(() => { }).then(() => usap.flush(env)));
+    ctx.waitUntil(Promise.allSettled([drive, gen]).then(() => usapStatus(env, event, ctx)).catch(() => { })
+      .then(() => mig ? migrateTick(env).catch(e => console.error('migrate', e)) : null).then(() => usap.flush(env)));
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const gv = url.pathname.slice(1);
     if (GOOGLE_VERIFY.includes(gv)) return new Response('google-site-verification: ' + gv, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    /* Temporary (database move): during the short write freeze, reads work and every write answers 503; the old database is
+       read-only for the app, so nothing written there can be left behind. */
+    if (env.NEW_DB && (url.pathname.startsWith('/api/') && url.pathname !== '/api/usap/client' || url.pathname.startsWith('/auth/') || url.pathname.startsWith('/mcp/')) && await migFrozen(env)) {
+      const reading = request.method === 'GET' || request.method === 'HEAD' || request.method === 'OPTIONS' || url.pathname.startsWith('/mcp/');
+      if (!reading || url.pathname.startsWith('/auth/') || url.pathname === '/api/usap/remediate') return url.pathname.startsWith('/auth/') && request.method === 'GET'
+        ? new Response('Updating, back in a minute.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '60', 'Cache-Control': 'no-store' } })
+        : json({ error: 'Updating, back in a minute.', updating: true }, 503, { 'Retry-After': '60' });
+      env = { ...env, DB: migReadOnly(env.DB), MIG_FROZEN: '1' };
+    }
     if (url.pathname.startsWith('/mcp/')) {
       try { return await mcpServer(request, env, url.pathname.slice(5).replace(/\/+$/, ''), ctx); }
       catch (e) { console.error(e); return json({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Server error' } }, 500); }
